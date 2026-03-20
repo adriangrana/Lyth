@@ -26,6 +26,8 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
 void task_run_ready(void);
 int task_has_runnable(void);
 void task_on_tick(void);
+unsigned int task_schedule_on_timer(unsigned int current_esp);
+unsigned int task_schedule_on_syscall(unsigned int current_esp);
 void task_sleep(unsigned int ticks);
 void task_yield(void);
 void task_exit(int exit_code);

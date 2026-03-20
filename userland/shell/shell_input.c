@@ -4,7 +4,6 @@
 #include "keyboard.h"
 #include "task.h"
 
-#define VGA_WIDTH 80
 #define PROMPT_TEXT "> "
 
 #define INPUT_MAX 256
@@ -55,9 +54,16 @@ static int max_int(int a, int b) {
 }
 
 static void compute_cursor_position(int offset, int* row, int* col) {
-    int absolute = prompt_row * VGA_WIDTH + prompt_col + offset;
-    *row = absolute / VGA_WIDTH;
-    *col = absolute % VGA_WIDTH;
+    int width = terminal_columns();
+    int absolute;
+
+    if (width <= 0) {
+        width = 80;
+    }
+
+    absolute = prompt_row * width + prompt_col + offset;
+    *row = absolute / width;
+    *col = absolute % width;
 }
 
 static void shell_input_capture_prompt(void) {

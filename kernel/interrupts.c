@@ -2,6 +2,22 @@
 #include "idt.h"
 #include "keyboard.h"
 #include "timer.h"
+#include "syscall.h"
+#include "task.h"
+
+typedef struct {
+    unsigned int edi;
+    unsigned int esi;
+    unsigned int ebp;
+    unsigned int esp;
+    unsigned int ebx;
+    unsigned int edx;
+    unsigned int ecx;
+    unsigned int eax;
+    unsigned int eip;
+    unsigned int cs;
+    unsigned int eflags;
+} interrupt_frame_t;
 
 static inline void outb(unsigned short port, unsigned char value) {
     __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -41,14 +57,28 @@ static void pic_send_eoi(unsigned char irq) {
     outb(0x20, 0x20);
 }
 
-void timer_callback(void) {
+unsigned int timer_interrupt_handler(unsigned int current_esp) {
     timer_handle_interrupt();
     pic_send_eoi(0);
+    return task_schedule_on_timer(current_esp);
 }
 
-void keyboard_callback(void) {
+unsigned int keyboard_interrupt_handler(unsigned int current_esp) {
     keyboard_handle_interrupt();
     pic_send_eoi(1);
+    return current_esp;
+}
+
+unsigned int syscall_interrupt_handler(unsigned int current_esp) {
+    interrupt_frame_t* frame = (interrupt_frame_t*)current_esp;
+
+    frame->eax = syscall_callback(frame->eax,
+                                  frame->ebx,
+                                  frame->ecx,
+                                  frame->edx,
+                                  frame->esi);
+
+    return task_schedule_on_syscall(current_esp);
 }
 
 void interrupts_init(void) {

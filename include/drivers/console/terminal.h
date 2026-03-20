@@ -13,5 +13,7 @@ void terminal_put_char_with_color(char c, unsigned char color);
 void terminal_get_cursor(int* row, int* col);
 void terminal_set_cursor(int row, int col);
 void terminal_update_cursor(void);
+int terminal_rows(void);
+int terminal_columns(void);
 
 #endif

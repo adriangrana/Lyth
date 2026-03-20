@@ -27,11 +27,11 @@
 - [x] Fuente 8x16 real vía PSF
 - [x] Mostrar diagnóstico de framebuffer al arranque
 - [x] Cursor lógico básico
-- [ ] Cursor parpadeante robusto sin borrar texto subyacente
-- [ ] Márgenes/padding de consola
+- [x] Cursor parpadeante robusto sin borrar texto subyacente
+- [x] Márgenes/padding de consola
 - [ ] Prompt visual mejorado
-- [ ] Buffer de pantalla independiente del renderer
-- [ ] Backend de consola desacoplado
+- [x] Buffer de pantalla independiente del renderer
+- [x] Backend de consola desacoplado
 - [ ] Soporte UTF-8 básico
 - [ ] Consolas virtuales múltiples
 
@@ -72,14 +72,14 @@
 - [x] Scheduler cooperativo
 - [x] Sleep / yield
 - [x] Cancelación de tareas
-- [ ] Multitarea preemptiva
+- [x] Multitarea preemptiva
 - [ ] Prioridades
 - [ ] Bloqueo por eventos
 
 ## 7. Memoria
 - [x] Heap básico
-- [ ] Gestor de memoria física
-- [ ] Paginación
+- [x] Gestor de memoria física
+- [x] Paginación
 - [ ] Espacio virtual por proceso
 
 ## 8. Syscalls

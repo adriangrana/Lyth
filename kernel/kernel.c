@@ -8,6 +8,8 @@
 #include "heap.h"
 #include "fs.h"
 #include "task.h"
+#include "physmem.h"
+#include "paging.h"
 
 static void terminal_write_uint(uint32_t value) {
     char buffer[16];
@@ -59,19 +61,44 @@ static void print_framebuffer_info(void) {
     terminal_print("Font: 8x16 PSF\n\n");
 }
 
+static void print_memory_info(void) {
+    terminal_print("Phys mem total: ");
+    terminal_write_uint(physmem_total_bytes());
+    terminal_print(" bytes\n");
+
+    terminal_print("Phys mem libre: ");
+    terminal_write_uint(physmem_free_bytes());
+    terminal_print(" bytes\n");
+
+    terminal_print("Paging: ");
+    terminal_print_line(paging_is_enabled() ? "activo" : "inactivo");
+
+    if (paging_is_enabled()) {
+        terminal_print("Identity mapped: ");
+        terminal_write_uint(paging_mapped_bytes());
+        terminal_print(" bytes\n\n");
+    } else {
+        terminal_put_char('\n');
+    }
+}
+
 void kernel_main(unsigned long mbi_ptr) {
     /* mbi_ptr: Multiboot info pointer passed in EBX by GRUB */
     multiboot_info_t* mbi = (multiboot_info_t*)(uintptr_t)mbi_ptr;
 
     terminal_init();
-    heap_init();
-    fs_init();
-    task_system_init();
     if (fb_init(mbi)) {
         terminal_clear();
     }
 
+    physmem_init(mbi);
+    paging_init(mbi);
+    heap_init();
+    fs_init();
+    task_system_init();
+
     print_framebuffer_info();
+    print_memory_info();
 
     shell_input_init();
 
@@ -84,11 +111,7 @@ void kernel_main(unsigned long mbi_ptr) {
             shell_input_handle_event(&event);
         }
 
-        task_run_ready();
         terminal_update_cursor();
-
-        if (!task_has_runnable()) {
-            __asm__ volatile ("hlt");
-        }
+        __asm__ volatile ("hlt");
     }
 }

@@ -1,9 +1,26 @@
 #include "task.h"
 #include "heap.h"
 #include "timer.h"
+#include "syscall.h"
+#include <stdint.h>
 
 #define TASK_MAX_COUNT 8
 #define TASK_NAME_MAX 24
+#define TASK_STACK_SIZE 4096
+
+typedef struct {
+    unsigned int edi;
+    unsigned int esi;
+    unsigned int ebp;
+    unsigned int esp_placeholder;
+    unsigned int ebx;
+    unsigned int edx;
+    unsigned int ecx;
+    unsigned int eax;
+    unsigned int eip;
+    unsigned int cs;
+    unsigned int eflags;
+} task_stack_frame_t;
 
 typedef struct {
     int used;
@@ -17,6 +34,8 @@ typedef struct {
     void* data;
     unsigned int data_size;
     int exit_code;
+    unsigned int saved_esp;
+    unsigned char* stack;
 } task_entry_t;
 
 static task_entry_t tasks[TASK_MAX_COUNT];
@@ -24,7 +43,11 @@ static int current_task_index = -1;
 static int next_task_id = 1;
 static int scheduler_cursor = 0;
 static int foreground_task_id = -1;
+static unsigned int idle_context_esp = 0;
+static unsigned short kernel_code_selector = 0x08;
 static void (*foreground_complete_handler)(int id, const char* name, int cancelled) = 0;
+
+static void task_thread_bootstrap(void);
 
 static unsigned int interrupt_save(void) {
     unsigned int flags;
@@ -77,6 +100,10 @@ static void clear_task(task_entry_t* task) {
         kfree(task->data);
     }
 
+    if (task->stack != 0) {
+        kfree(task->stack);
+    }
+
     task->used = 0;
     task->id = 0;
     task->name[0] = '\0';
@@ -88,6 +115,8 @@ static void clear_task(task_entry_t* task) {
     task->data = 0;
     task->data_size = 0;
     task->exit_code = 0;
+    task->saved_esp = 0;
+    task->stack = 0;
 }
 
 static void complete_task(task_entry_t* task) {
@@ -116,17 +145,127 @@ static void complete_task(task_entry_t* task) {
     clear_task(task);
 }
 
+static int select_next_ready_task(void) {
+    for (int offset = 0; offset < TASK_MAX_COUNT; offset++) {
+        int index = (scheduler_cursor + offset) % TASK_MAX_COUNT;
+
+        if (tasks[index].used && tasks[index].state == TASK_STATE_READY) {
+            scheduler_cursor = (index + 1) % TASK_MAX_COUNT;
+            return index;
+        }
+    }
+
+    return -1;
+}
+
+static unsigned int schedule_from_idle(unsigned int current_esp) {
+    int selected = select_next_ready_task();
+
+    if (selected < 0) {
+        return current_esp;
+    }
+
+    idle_context_esp = current_esp;
+    current_task_index = selected;
+    tasks[selected].state = TASK_STATE_RUNNING;
+    return tasks[selected].saved_esp;
+}
+
+static unsigned int schedule_back_to_idle(unsigned int current_esp) {
+    task_entry_t* task;
+
+    if (current_task_index < 0) {
+        return current_esp;
+    }
+
+    task = &tasks[current_task_index];
+    task->saved_esp = current_esp;
+
+    if (task->state == TASK_STATE_RUNNING) {
+        task->state = TASK_STATE_READY;
+    }
+
+    if (task->used &&
+        (task->state == TASK_STATE_FINISHED || task->state == TASK_STATE_CANCELLED)) {
+        complete_task(task);
+    }
+
+    current_task_index = -1;
+
+    if (idle_context_esp != 0) {
+        return idle_context_esp;
+    }
+
+    return current_esp;
+}
+
+static void initialize_task_stack(task_entry_t* task) {
+    task_stack_frame_t* frame;
+    unsigned int stack_top;
+
+    stack_top = (unsigned int)(task->stack + TASK_STACK_SIZE);
+    stack_top -= sizeof(task_stack_frame_t);
+    frame = (task_stack_frame_t*)stack_top;
+
+    frame->edi = 0;
+    frame->esi = 0;
+    frame->ebp = 0;
+    frame->esp_placeholder = 0;
+    frame->ebx = 0;
+    frame->edx = 0;
+    frame->ecx = 0;
+    frame->eax = 0;
+    frame->eip = (unsigned int)(uintptr_t)task_thread_bootstrap;
+    frame->cs = kernel_code_selector;
+    frame->eflags = 0x00000202U;
+
+    task->saved_esp = stack_top;
+}
+
+static void task_thread_bootstrap(void) {
+    for (;;) {
+        task_entry_t* task;
+
+        if (current_task_index < 0) {
+            syscall_yield();
+            continue;
+        }
+
+        task = &tasks[current_task_index];
+
+        if (!task->used || task->step == 0) {
+            task_exit(1);
+            syscall_yield();
+            continue;
+        }
+
+        task->step();
+
+        if (current_task_index < 0) {
+            continue;
+        }
+
+        if (tasks[current_task_index].state != TASK_STATE_RUNNING) {
+            syscall_yield();
+        }
+    }
+}
+
 void task_system_init(void) {
     for (int i = 0; i < TASK_MAX_COUNT; i++) {
         tasks[i].used = 0;
         tasks[i].data = 0;
+        tasks[i].stack = 0;
     }
 
     current_task_index = -1;
     next_task_id = 1;
     scheduler_cursor = 0;
     foreground_task_id = -1;
+    idle_context_esp = 0;
     foreground_complete_handler = 0;
+
+    __asm__ volatile ("mov %%cs, %0" : "=r"(kernel_code_selector));
 }
 
 int task_spawn(const char* name, task_step_fn step, const void* data, unsigned int data_size, int foreground) {
@@ -167,6 +306,15 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
     tasks[slot].data = 0;
     tasks[slot].data_size = data_size;
     tasks[slot].exit_code = 0;
+    tasks[slot].saved_esp = 0;
+    tasks[slot].stack = 0;
+
+    tasks[slot].stack = (unsigned char*)kmalloc(TASK_STACK_SIZE);
+    if (tasks[slot].stack == 0) {
+        clear_task(&tasks[slot]);
+        interrupt_restore(flags);
+        return -1;
+    }
 
     if (data_size > 0) {
         unsigned char* dst = (unsigned char*)kmalloc(data_size);
@@ -184,6 +332,8 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
 
         tasks[slot].data = dst;
     }
+
+    initialize_task_stack(&tasks[slot]);
 
     if (foreground) {
         foreground_task_id = tasks[slot].id;
@@ -206,47 +356,7 @@ void task_on_tick(void) {
 }
 
 void task_run_ready(void) {
-    unsigned int flags;
-    int selected = -1;
-
-    flags = interrupt_save();
-
-    for (int offset = 0; offset < TASK_MAX_COUNT; offset++) {
-        int index = (scheduler_cursor + offset) % TASK_MAX_COUNT;
-
-        if (tasks[index].used && tasks[index].state == TASK_STATE_READY) {
-            selected = index;
-            scheduler_cursor = (index + 1) % TASK_MAX_COUNT;
-            tasks[index].state = TASK_STATE_RUNNING;
-            current_task_index = index;
-            break;
-        }
-    }
-
-    interrupt_restore(flags);
-
-    if (selected < 0) {
-        return;
-    }
-
-    tasks[selected].step();
-
-    flags = interrupt_save();
-
-    if (current_task_index == selected) {
-        if (tasks[selected].used && tasks[selected].state == TASK_STATE_RUNNING) {
-            tasks[selected].state = TASK_STATE_READY;
-        }
-
-        current_task_index = -1;
-    }
-
-    if (tasks[selected].used &&
-        (tasks[selected].state == TASK_STATE_FINISHED || tasks[selected].state == TASK_STATE_CANCELLED)) {
-        complete_task(&tasks[selected]);
-    }
-
-    interrupt_restore(flags);
+    (void)0;
 }
 
 int task_has_runnable(void) {
@@ -440,4 +550,34 @@ const char* task_state_name(task_state_t state) {
         default:
             return "FREE";
     }
+}
+
+unsigned int task_schedule_on_timer(unsigned int current_esp) {
+    unsigned int flags = interrupt_save();
+    unsigned int next_esp;
+
+    if (current_task_index >= 0) {
+        next_esp = schedule_back_to_idle(current_esp);
+    } else {
+        next_esp = schedule_from_idle(current_esp);
+    }
+
+    interrupt_restore(flags);
+    return next_esp;
+}
+
+unsigned int task_schedule_on_syscall(unsigned int current_esp) {
+    unsigned int flags = interrupt_save();
+    unsigned int next_esp = current_esp;
+
+    if (current_task_index >= 0) {
+        task_entry_t* task = &tasks[current_task_index];
+
+        if (task->state != TASK_STATE_RUNNING) {
+            next_esp = schedule_back_to_idle(current_esp);
+        }
+    }
+
+    interrupt_restore(flags);
+    return next_esp;
 }

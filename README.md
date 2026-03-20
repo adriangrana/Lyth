@@ -7,65 +7,85 @@ El proyecto ya no está limitado a texto VGA puro: actualmente intenta arrancar 
 ## Estado actual
 
 - Arranque Multiboot válido con GRUB.
-- Bucle principal del kernel con teclado por eventos + scheduler cooperativo.
+- Bucle principal del kernel con teclado por eventos + scheduler preemptivo básico.
 - IDT, PIC remapeado, IRQ de timer y teclado.
 - PIT a 100 Hz con contador de ticks y conversión a milisegundos.
-- Scheduler cooperativo con tareas foreground/background, `sleep`, `yield` y cancelación.
+- Scheduler preemptivo básico por timer con tareas foreground/background, `sleep`, `yield` y cancelación.
 - Shell con parser estilo `argv`, comillas, historial, autocompletado y jobs.
 - Heap simple del kernel (`kmalloc`/`kfree`).
+- Gestor de memoria física basado en bitmap a partir del mapa Multiboot.
+- Paginación inicial con identity mapping usando páginas grandes de 4 MiB.
 - Syscalls mínimas sobre `int 0x80`.
 - Filesystem en memoria de solo lectura.
-- Consola framebuffer con fuente bitmap 8x8 escalada enteramente a 2x para texto más limpio en fullscreen.
+- Consola con backends VGA/framebuffer desacoplados, buffer de pantalla propio y fuente PSF 8x16.
+
+## Estructura del repositorio
+
+- `arch/x86/boot`: arranque Multiboot, `grub.cfg` y ASM temprano.
+- `arch/x86`: piezas específicas de x86 como stubs de interrupción y linker script.
+- `kernel`: init, IDT, interrupciones, syscalls y subsistemas internos.
+- `kernel/mem`: heap, memoria física y paginación.
+- `kernel/task`: scheduler y PIT.
+- `drivers/console`: terminal lógica y backends VGA/framebuffer.
+- `drivers/input`: teclado.
+- `userland/shell`: shell, editor de línea y parser.
+- `fs`: filesystem en memoria.
+- `lib`: utilidades base como cadenas.
+- `include`: headers organizados con la misma lógica por subsistemas.
 
 ## Flujo de arranque
 
-1. `boot.s` define el header Multiboot y solicita un modo gráfico preferido de `1280x1024x32`.
+1. `arch/x86/boot/boot.s` define el header Multiboot y solicita un modo gráfico preferido de `1280x1024x32`.
 2. GRUB carga el kernel y pasa el puntero a la estructura Multiboot en `EBX`.
 3. `_start` crea la pila inicial y llama a `kernel_main()`.
-4. `kernel_main()` inicializa terminal, heap, FS, scheduler, entrada de shell y framebuffer.
+4. `kernel/kernel.c` inicializa terminal, heap, FS, scheduler, entrada de shell y framebuffer.
 5. `interrupts_init()` crea la IDT, remapea el PIC, configura el PIT y habilita interrupciones.
-6. El loop principal consume eventos de teclado, ejecuta una tarea lista y hace `hlt` cuando no hay trabajo runnable.
+6. El loop principal consume eventos de teclado, actualiza la consola y hace `hlt`; el PIT decide cuándo preemptar tareas.
 
 ## Vídeo y consola
 
 La parte visual ha cambiado bastante respecto al estado inicial:
 
-- `grub.cfg` pide `gfxmode=1280x1024x32,1024x768x32,auto` y conserva el modo con `gfxpayload=keep`.
-- `fbconsole.c` usa el framebuffer expuesto por GRUB si el flag correspondiente de Multiboot está presente.
-- La consola actual no usa suavizado: renderiza una fuente bitmap `8x8` con escalado entero `2x`.
-- El tamaño efectivo de celda es `16x16`, lo que mejora legibilidad sin introducir blur.
-- `terminal.c` abstrae la salida y el scroll, enviando texto al framebuffer cuando está activo.
-- El cursor hardware VGA se desactiva de facto en framebuffer y sigue funcionando en fallback VGA.
+- `arch/x86/boot/grub.cfg` pide `gfxmode=1280x1024x32,1024x768x32,auto` y conserva el modo con `gfxpayload=keep`.
+- `drivers/console/fbconsole.c` usa el framebuffer expuesto por GRUB si el flag correspondiente de Multiboot está presente.
+- La consola actual renderiza una fuente PSF bitmap `8x16` sin blur ni escalado fraccional.
+- El framebuffer aplica padding para dejar márgenes visuales alrededor del área de texto.
+- `drivers/console/terminal.c` mantiene un buffer de celdas independiente del renderer y delega en un backend activo.
+- El cursor en framebuffer es un overlay parpadeante que no borra el texto subyacente; en VGA se usa el cursor hardware.
 
 ## Arquitectura por módulos
 
-- `boot.s`: header Multiboot, petición de modo gráfico, stack inicial y salto a `kernel_main()`.
-- `linker.ld`: enlaza el kernel ELF32 a partir de `1M`.
-- `kernel.c`: secuencia de init y bucle principal del kernel.
-- `fbconsole.c`, `fbconsole.h`: acceso al framebuffer, limpieza, scroll y render de caracteres bitmap escalados.
-- `terminal.c`, `terminal.h`: API de salida de texto común para VGA/framebuffer.
-- `keyboard.c`, `keyboard.h`: lectura de scancodes, cola de eventos y traducción de teclas.
-- `idt.c`, `idt.h`: estructuras e instalación de la IDT.
-- `interrupts.c`, `interrupts.h`, `interrupts.s`: PIC, IRQ0/IRQ1, `int 0x80` y stubs ASM.
-- `timer.c`, `timer.h`: programación del PIT, ticks y uptime.
-- `task.c`, `task.h`: scheduler cooperativo y gestión de tareas.
-- `shell_input.c`, `shell_input.h`: editor de línea, historial, selección, clipboard y prompt.
-- `shell.c`, `shell.h`: comandos, jobs y coordinación con la shell interactiva.
-- `parser.c`, `parser.h`: parseo de línea y enteros.
-- `heap.c`, `heap.h`: heap del kernel.
-- `syscall.c`, `syscall.h`: dispatcher de syscalls y wrappers de invocación.
-- `fs.c`, `fs.h`: filesystem estático en memoria.
-- `string.c`, `string.h`: helpers de cadenas.
+- `arch/x86/boot/boot.s`: header Multiboot, petición de modo gráfico, stack inicial y salto a `kernel_main()`.
+- `arch/x86/linker.ld`: enlaza el kernel ELF32 a partir de `1M`.
+- `kernel/kernel.c`: secuencia de init y bucle principal del kernel.
+- `drivers/console/fbconsole.c`, `include/drivers/console/fbconsole.h`: acceso al framebuffer, padding, scroll y render bitmap.
+- `drivers/console/terminal.c`, `include/drivers/console/terminal.h`: buffer lógico de pantalla, cursor y API común de texto.
+- `drivers/console/console_backend.c`, `include/drivers/console/console_backend.h`: selección y adaptación del backend VGA/framebuffer.
+- `drivers/input/keyboard.c`, `include/drivers/input/keyboard.h`: lectura de scancodes, cola de eventos y traducción de teclas.
+- `kernel/idt.c`, `include/kernel/idt.h`: estructuras e instalación de la IDT.
+- `kernel/interrupts.c`, `include/kernel/interrupts.h`, `arch/x86/interrupts.s`: PIC, IRQ0/IRQ1, `int 0x80` y stubs ASM.
+- `kernel/task/timer.c`, `include/kernel/task/timer.h`: programación del PIT, ticks y uptime.
+- `kernel/task/task.c`, `include/kernel/task/task.h`: scheduler y gestión de tareas.
+- `kernel/mem/physmem.c`, `include/kernel/mem/physmem.h`: frame allocator físico a partir del mapa de memoria.
+- `kernel/mem/paging.c`, `include/kernel/mem/paging.h`: activación de paginación e identity mapping inicial.
+- `userland/shell/shell_input.c`, `include/userland/shell/shell_input.h`: editor de línea, historial, selección, clipboard y prompt.
+- `userland/shell/shell.c`, `include/userland/shell/shell.h`: comandos, jobs y coordinación con la shell interactiva.
+- `userland/shell/parser.c`, `include/userland/shell/parser.h`: parseo de línea y enteros.
+- `kernel/mem/heap.c`, `include/kernel/mem/heap.h`: heap del kernel.
+- `kernel/syscall.c`, `include/kernel/syscall.h`: dispatcher de syscalls y wrappers de invocación.
+- `fs/fs.c`, `include/fs/fs.h`: filesystem estático en memoria.
+- `lib/string.c`, `include/lib/string.h`: helpers de cadenas.
 - `include/multiboot.h`: subset de la estructura Multiboot usado por el kernel.
-- `include/font8x8_basic.h`: fuente bitmap base usada por la consola framebuffer.
+- `include/font_psf.h`: fuente PSF generada para la consola framebuffer.
 
 ## Scheduler y tareas
 
-El planificador actual es cooperativo, no preemptivo:
+- El planificador actual usa preempción básica guiada por el PIT:
 
 - Máximo de 8 tareas (`TASK_MAX_COUNT`).
 - Estados principales: libre, lista, corriendo, dormida, finalizada, cancelada.
-- Cada tarea ejecuta un `step` por turno.
+- Cada tarea corre sobre su propio stack de kernel.
+- El PIT puede interrumpir la tarea activa y devolver el control al loop principal.
 - `task_sleep()` duerme por ticks del PIT.
 - `task_yield()` cede CPU explícitamente.
 - `Ctrl+C` marca cancelación para la tarea foreground actual.
@@ -151,42 +171,42 @@ Requisitos habituales:
 
 Comandos principales:
 
-- `make compile`: compila y enlaza `kernel.bin`.
-- `make create-iso`: genera `lyth.iso`.
-- `make execute`: arranca la ISO en QEMU.
+- `make compile`: compila y enlaza el kernel en `build/kernel.bin`.
+- `make create-iso`: genera la imagen en `dist/lyth.iso`.
+- `make execute`: arranca `dist/lyth.iso` en QEMU.
 - `make debug`: arranca QEMU con `-d int`.
 - `make run`: limpia, compila, genera ISO y ejecuta.
-- `make clean`: borra objetos, binario e ISO.
+- `make clean`: borra `build/`, `dist/` y artefactos generados.
 
 ## Observaciones del estado actual
 
-- El framebuffer actual usa escalado entero 2x, no suavizado subpíxel.
-- La resolución preferida es alta para mejorar fullscreen, pero la calidad del texto sigue limitada por la fuente bitmap base.
-- El scheduler sigue siendo cooperativo: no hay cambio de contexto real ni multitarea preemptiva.
-- El kernel continúa en un único espacio de direcciones, sin paginación ni modo usuario.
+- El framebuffer usa fuente PSF 8x16 con márgenes y cursor overlay propio.
+- La resolución preferida sigue siendo alta, pero el área útil de consola ahora se calcula respetando padding.
+- El scheduler ya hace cambio de contexto básico entre stacks de kernel, pero aún no hay prioridades ni bloqueo por eventos.
+- La paginación actual es solo identity mapping global del kernel; aún no hay espacios virtuales por proceso.
 - El link final aún avisa de un segmento `RWX`, algo aceptable por ahora pero pendiente de endurecer.
 
 ## Archivos clave para retomar el proyecto
 
 Si vuelves a tocar el proyecto, los archivos más importantes ahora son:
 
-- `boot.s`
-- `grub.cfg`
-- `kernel.c`
-- `fbconsole.c`
-- `terminal.c`
-- `shell_input.c`
-- `shell.c`
-- `task.c`
-- `keyboard.c`
-- `interrupts.c`
+- `arch/x86/boot/boot.s`
+- `arch/x86/boot/grub.cfg`
+- `kernel/kernel.c`
+- `drivers/console/fbconsole.c`
+- `drivers/console/terminal.c`
+- `userland/shell/shell_input.c`
+- `userland/shell/shell.c`
+- `kernel/task/task.c`
+- `drivers/input/keyboard.c`
+- `kernel/interrupts.c`
 - `Makefile`
 
 ## Próximos pasos razonables
 
-- Usar una fuente 8x16 real en vez de escalar la 8x8.
-- Añadir diagnóstico visible de resolución/framebuffer al arranque.
-- Implementar multitarea preemptiva.
-- Añadir paginación y memoria física.
+- Añadir page fault handler útil y excepciones CPU más completas.
+- Introducir prioridades y bloqueo por eventos en el scheduler.
+- Preparar espacio virtual por proceso sobre la base de paging actual.
 - Separar más claramente kernel interno y syscall ABI.
+- Implementar modo usuario y un ELF loader simple.
 - Evolucionar el FS a algo menos estático.

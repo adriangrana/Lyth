@@ -12,6 +12,7 @@
 #define FONT_HEIGHT (FONT_BITMAP_HEIGHT * FONT_SCALE_Y)
 #define FB_PADDING_X 8
 #define FB_PADDING_Y 8
+
 static framebuffer_info_t fbinfo;
 static int fb_is_active = 0;
 
@@ -54,6 +55,58 @@ static void fb_fill_rect(int x, int y, int width, int height, uint32_t rgb) {
     }
 }
 
+static int fb_text_area_width(void) {
+    if (!fb_is_active || fbinfo.width <= (uint32_t)(FB_PADDING_X * 2)) {
+        return 0;
+    }
+
+    return (int)fbinfo.width - (FB_PADDING_X * 2);
+}
+
+static int fb_text_area_height(void) {
+    if (!fb_is_active || fbinfo.height <= (uint32_t)(FB_PADDING_Y * 2)) {
+        return 0;
+    }
+
+    return (int)fbinfo.height - (FB_PADDING_Y * 2);
+}
+
+static int fb_content_width(void) {
+    return fb_columns() * FONT_WIDTH;
+}
+
+static int fb_content_height(void) {
+    return fb_rows() * FONT_HEIGHT;
+}
+
+static void fb_copy_rect_up(int x, int y, int width, int height, int delta_y) {
+    int bytes_per_pixel;
+    uint8_t* base;
+
+    if (!fb_is_active || width <= 0 || height <= 0 || delta_y <= 0) {
+        return;
+    }
+
+    bytes_per_pixel = fbinfo.bpp / 8;
+    base = (uint8_t*)fbinfo.addr;
+
+    for (int row = 0; row < height; row++) {
+        int src_y = y + row + delta_y;
+        int dst_y = y + row;
+
+        for (int col = 0; col < width; col++) {
+            int src_x = x + col;
+            int dst_x = x + col;
+            uint8_t* src = base + (src_y * (int)fbinfo.pitch) + (src_x * bytes_per_pixel);
+            uint8_t* dst = base + (dst_y * (int)fbinfo.pitch) + (dst_x * bytes_per_pixel);
+
+            for (int byte = 0; byte < bytes_per_pixel; byte++) {
+                dst[byte] = src[byte];
+            }
+        }
+    }
+}
+
 int fb_init(multiboot_info_t* mbi) {
     if (!mbi) {
         fb_is_active = 0;
@@ -90,11 +143,11 @@ int fb_active(void) {
 }
 
 int fb_rows(void) {
-    return fb_is_active ? (int)(fbinfo.height / FONT_HEIGHT) : 0;
+    return fb_is_active ? (fb_text_area_height() / FONT_HEIGHT) : 0;
 }
 
 int fb_columns(void) {
-    return fb_is_active ? (int)(fbinfo.width / FONT_WIDTH) : 0;
+    return fb_is_active ? (fb_text_area_width() / FONT_WIDTH) : 0;
 }
 
 void fb_clear(void) {
@@ -106,28 +159,33 @@ void fb_clear(void) {
 }
 
 void fb_scroll(unsigned char color) {
+    int content_width;
+    int content_height;
+
     if (!fb_is_active) {
         return;
     }
 
-    uint8_t* base = (uint8_t*)fbinfo.addr;
-    uint32_t scroll_bytes = fbinfo.pitch * FONT_HEIGHT;
-    uint32_t visible_bytes = fbinfo.pitch * (fbinfo.height - FONT_HEIGHT);
-    uint32_t total_bytes = fbinfo.pitch * fbinfo.height;
+    content_width = fb_content_width();
+    content_height = fb_content_height();
 
-    if (scroll_bytes >= total_bytes) {
+    if (content_width <= 0 || content_height <= FONT_HEIGHT) {
         fb_clear();
         return;
     }
 
-    for (uint32_t i = 0; i < visible_bytes; i++) {
-        base[i] = base[i + scroll_bytes];
-    }
+    fb_copy_rect_up(
+        FB_PADDING_X,
+        FB_PADDING_Y,
+        content_width,
+        content_height - FONT_HEIGHT,
+        FONT_HEIGHT
+    );
 
     fb_fill_rect(
-        0,
-        (int)fbinfo.height - FONT_HEIGHT,
-        (int)fbinfo.width,
+        FB_PADDING_X,
+        FB_PADDING_Y + content_height - FONT_HEIGHT,
+        content_width,
         FONT_HEIGHT,
         vga_palette[(color >> 4) & 0x0F]
     );
@@ -135,6 +193,10 @@ void fb_scroll(unsigned char color) {
 
 void fb_put_char_at(int row, int col, char c, unsigned char color) {
     if (!fb_is_active) {
+        return;
+    }
+
+    if (row < 0 || row >= fb_rows() || col < 0 || col >= fb_columns()) {
         return;
     }
 
@@ -173,6 +235,33 @@ void fb_put_char_at(int row, int col, char c, unsigned char color) {
         }
     }
 }
+
+void fb_draw_cursor_at(int row, int col, unsigned char color) {
+    int origin_x;
+    int origin_y;
+    int cursor_height;
+
+    if (!fb_is_active) {
+        return;
+    }
+
+    if (row < 0 || row >= fb_rows() || col < 0 || col >= fb_columns()) {
+        return;
+    }
+
+    origin_x = col * FONT_WIDTH + FB_PADDING_X;
+    origin_y = row * FONT_HEIGHT + FB_PADDING_Y;
+    cursor_height = FONT_SCALE_Y < 2 ? 2 : FONT_SCALE_Y;
+
+    fb_fill_rect(
+        origin_x,
+        origin_y + FONT_HEIGHT - cursor_height,
+        FONT_WIDTH,
+        cursor_height,
+        vga_palette[color & 0x0F]
+    );
+}
+
 uint32_t fb_width(void) {
     return fb_is_active ? fbinfo.width : 0;
 }

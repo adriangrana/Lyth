@@ -36,4 +36,11 @@ typedef struct multiboot_info {
     uint16_t reserved;
 } multiboot_info_t;
 
+typedef struct multiboot_mmap_entry {
+    uint32_t size;
+    uint64_t addr;
+    uint64_t len;
+    uint32_t type;
+} __attribute__((packed)) multiboot_mmap_entry_t;
+
 #endif

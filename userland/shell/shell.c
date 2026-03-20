@@ -7,6 +7,8 @@
 #include "timer.h"
 #include "heap.h"
 #include "syscall.h"
+#include "physmem.h"
+#include "paging.h"
 
 #define SHELL_MAX_ARGS 8
 #define SHELL_TOKEN_MAX 64
@@ -62,7 +64,7 @@ static command_t commands[] = {
     {"jobs",    cmd_ps,      "alias de ps"},
     {"kill",    cmd_kill,    "cancela una tarea: kill <id>"},
     {"task",    cmd_task,    "muestra la tarea actual y foreground"},
-    {"mem",     cmd_mem,     "estadisticas del heap del kernel"},
+    {"mem",     cmd_mem,     "estadisticas de heap, memoria fisica y paging"},
     {"ls",      cmd_ls,      "lista archivos del FS en memoria"},
     {"cat",     cmd_cat,     "muestra un archivo: cat <NOMBRE>"},
     {"yield",   cmd_yield,   "cede CPU al scheduler"},
@@ -440,6 +442,27 @@ static int cmd_mem(int argc, const char* argv[], int background) {
     terminal_print(" (libres ");
     terminal_print_uint(stats.free_block_count);
     terminal_print_line(")");
+
+    terminal_print("Frames fisicos: ");
+    terminal_print_uint(physmem_frame_count());
+    terminal_put_char('\n');
+    terminal_print("Memoria fisica total: ");
+    terminal_print_uint(physmem_total_bytes());
+    terminal_put_char('\n');
+    terminal_print("Memoria fisica usada: ");
+    terminal_print_uint(physmem_used_bytes());
+    terminal_put_char('\n');
+    terminal_print("Memoria fisica libre: ");
+    terminal_print_uint(physmem_free_bytes());
+    terminal_put_char('\n');
+    terminal_print("Paging: ");
+    terminal_print_line(paging_is_enabled() ? "activo" : "inactivo");
+    if (paging_is_enabled()) {
+        terminal_print("Identity mapped: ");
+        terminal_print_uint(paging_mapped_bytes());
+        terminal_put_char('\n');
+    }
+
     return 1;
 }
 

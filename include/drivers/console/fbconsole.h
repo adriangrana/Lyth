@@ -20,6 +20,7 @@ int fb_columns(void);
 void fb_clear(void);
 void fb_scroll(unsigned char color);
 void fb_put_char_at(int row, int col, char c, unsigned char color);
+void fb_draw_cursor_at(int row, int col, unsigned char color);
 
 uint32_t fb_width(void);
 uint32_t fb_height(void);
