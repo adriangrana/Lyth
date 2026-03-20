@@ -35,3 +35,13 @@ const char* str_after_prefix(const char* str, const char* prefix) {
 
     return str + i;
 }
+
+unsigned int str_length(const char* str) {
+    unsigned int length = 0;
+
+    while (str[length] != '\0') {
+        length++;
+    }
+
+    return length;
+}

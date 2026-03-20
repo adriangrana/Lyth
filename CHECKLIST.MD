@@ -1,0 +1,145 @@
+# Lyth OS Checklist
+
+## 1. Arranque y base mínima
+- [x] Arrancar con GRUB + Multiboot
+- [x] Tener boot.s y salto correcto a kernel_main
+- [x] Enlazar kernel ELF32 con linker.ld
+- [x] Arrancar en x86 de 32 bits
+- [x] Crear stack inicial del kernel
+- [x] Bucle principal del kernel
+- [x] Build automático con Makefile
+- [x] Generar ISO arrancable
+- [x] Ejecutar en QEMU
+- [ ] Soporte para arranque en hardware real
+- [ ] Soporte UEFI
+- [ ] Soporte SMP / múltiples CPUs
+
+## 2. Consola y salida básica
+- [x] Consola VGA texto básica
+- [x] Fallback VGA cuando no hay framebuffer
+- [x] Consola framebuffer propia
+- [x] Limpiar pantalla
+- [x] Scroll de consola
+- [x] Escribir caracteres individuales
+- [x] Imprimir cadenas
+- [x] Cambiar color de texto
+- [x] Fuente bitmap funcional
+- [x] Fuente 8x16 real vía PSF
+- [x] Mostrar diagnóstico de framebuffer al arranque
+- [x] Cursor lógico básico
+- [ ] Cursor parpadeante robusto sin borrar texto subyacente
+- [ ] Márgenes/padding de consola
+- [ ] Prompt visual mejorado
+- [ ] Buffer de pantalla independiente del renderer
+- [ ] Backend de consola desacoplado
+- [ ] Soporte UTF-8 básico
+- [ ] Consolas virtuales múltiples
+
+## 3. Interrupciones y temporización
+- [x] IDT
+- [x] PIC remapeado
+- [x] IRQ0 timer
+- [x] IRQ1 teclado
+- [x] int 0x80 para syscalls
+- [x] PIT configurado a 100 Hz
+- [x] Contador global de ticks
+- [ ] Manejadores de excepciones CPU completos
+- [ ] Page fault handler útil
+- [ ] APIC / IOAPIC
+- [ ] HPET
+
+## 4. Teclado e input
+- [x] Driver de teclado básico
+- [x] Lectura de scancodes
+- [x] Cola de eventos
+- [x] Editor de línea avanzado
+- [ ] Layouts de teclado
+- [ ] Ratón PS/2
+- [ ] Input genérico
+
+## 5. Shell
+- [x] Shell interactiva
+- [x] Parser tipo argv
+- [x] Historial
+- [x] Autocompletado
+- [x] Comandos básicos
+- [ ] Variables de entorno
+- [ ] Pipes
+- [ ] Redirección
+- [ ] Scripts
+
+## 6. Scheduler
+- [x] Scheduler cooperativo
+- [x] Sleep / yield
+- [x] Cancelación de tareas
+- [ ] Multitarea preemptiva
+- [ ] Prioridades
+- [ ] Bloqueo por eventos
+
+## 7. Memoria
+- [x] Heap básico
+- [ ] Gestor de memoria física
+- [ ] Paginación
+- [ ] Espacio virtual por proceso
+
+## 8. Syscalls
+- [x] Dispatcher
+- [x] Syscalls básicas
+- [ ] ABI estable
+- [ ] Validación de punteros
+
+## 9. Filesystem
+- [x] FS en memoria (RO)
+- [ ] FS escribible
+- [ ] VFS
+- [ ] Soporte disco real
+
+## 10. Procesos
+- [ ] Modo usuario
+- [ ] ELF loader
+- [ ] fork/exec
+- [ ] Señales
+
+## 11. Drivers
+- [x] VGA
+- [x] Framebuffer
+- [x] PIT
+- [x] Teclado
+- [ ] Disco
+- [ ] USB
+- [ ] Red
+
+## 12. Red
+- [ ] TCP/IP stack
+- [ ] Sockets
+- [ ] DHCP / DNS
+
+## 13. Seguridad
+- [ ] Separación kernel/user
+- [ ] Permisos
+- [ ] Protección memoria
+
+## 14. Debug
+- [x] QEMU debug
+- [x] Diagnóstico framebuffer
+- [ ] Logs avanzados
+- [ ] GDB remoto
+
+## 15. Interfaz gráfica
+- [x] Framebuffer
+- [ ] Primitivas gráficas
+- [ ] Ventanas
+- [ ] GUI completa
+
+## 16. UX
+- [x] Shell usable
+- [ ] Cursor mejorado
+- [ ] Tema visual
+- [ ] Config persistente
+
+## 17. Build & mantenimiento
+- [x] Makefile
+- [x] Pipeline PSF
+- [ ] CI
+- [ ] Tests
+- [ ] Documentación técnica
