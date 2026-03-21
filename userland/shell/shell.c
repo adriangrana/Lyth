@@ -1172,6 +1172,8 @@ static int cmd_uptime(int argc, const char* argv[], int background) {
     unsigned int ticks;
     unsigned int ms;
     unsigned int h, m, s;
+    unsigned int idle_ticks = 0;
+    unsigned int ctx_sw = 0;
 
     (void)argc;
     (void)argv;
@@ -1194,6 +1196,19 @@ static int cmd_uptime(int argc, const char* argv[], int background) {
     terminal_print(" ms, ");
     terminal_print_uint(ticks);
     terminal_print(" ticks)\n");
+
+    task_idle_stats(&idle_ticks, &ctx_sw);
+    terminal_print("Idle ticks: ");
+    terminal_print_uint(idle_ticks);
+    terminal_print(" | ctx switches: ");
+    terminal_print_uint(ctx_sw);
+    terminal_print("\n");
+
+    if (ticks > 0U) {
+        terminal_print("Idle %: ");
+        terminal_print_uint((idle_ticks * 100U) / ticks);
+        terminal_print("%\n");
+    }
     return 1;
 }
 
@@ -1239,14 +1254,14 @@ static int cmd_date(int argc, const char* argv[], int background) {
 }
 
 static int cmd_ps(int argc, const char* argv[], int background) {
-    task_snapshot_t snapshots[8];
+    task_snapshot_t snapshots[16];
     int count;
 
     (void)argc;
     (void)argv;
     (void)background;
 
-    count = task_list(snapshots, 8);
+    count = task_list(snapshots, 16);
     if (count == 0) {
         terminal_print_line("No hay tareas activas");
         return 1;

@@ -19,7 +19,8 @@ typedef enum {
 typedef enum {
 	TASK_PRIORITY_HIGH = 0,
 	TASK_PRIORITY_NORMAL = 1,
-	TASK_PRIORITY_LOW = 2
+	TASK_PRIORITY_LOW = 2,
+	TASK_PRIORITY_IDLE = 3		/* reserved for the system idle task only */
 } task_priority_t;
 
 typedef void (*task_step_fn)(void);
@@ -117,5 +118,7 @@ int  task_reap_zombies_for(int parent_id);
 vfs_fd_entry_t* task_current_fd_table(void);
 /* Returns a pointer to the fd table of the task with the given ID, or NULL. */
 vfs_fd_entry_t* task_get_fd_table(int task_id);
+/* Idle task statistics: ticks spent idle and total context switches. */
+void task_idle_stats(unsigned int* idle_ticks_out, unsigned int* ctx_switches_out);
 
 #endif

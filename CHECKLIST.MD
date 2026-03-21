@@ -38,8 +38,8 @@
 - [x] Preemptivo
 - [x] Prioridades
 - [x] Bloqueo por eventos
-- [ ] Idle task
-- [ ] Cola ready / blocked robusta
+- [x] Idle task
+- [x] Cola ready / blocked robusta
 
 ## 7. Memoria
 - [x] Paging

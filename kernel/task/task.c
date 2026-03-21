@@ -7,7 +7,7 @@
 #include "physmem.h"
 #include <stdint.h>
 
-#define TASK_MAX_COUNT 8
+#define TASK_MAX_COUNT 16
 #define TASK_NAME_MAX 24
 #define TASK_STACK_SIZE 4096
 #define TASK_USER_STACK_SIZE 4096
@@ -74,13 +74,25 @@ typedef struct {
     unsigned int signal_handlers[LYTH_SIGNAL_MAX + 1]; /* 0/1 special or user handler */
     uint32_t signal_trampoline_va;       /* user-space stub to restore stack after handler */
     uint32_t waitpid_status_uptr;        /* user vaddr where WAITPID status is written on wake */
+    int sched_next;                      /* next index in ready queue, -1 = tail / not queued */
 } task_entry_t;
+
+/* ── Per-priority ready queues ────────────────────────────────────────────
+ * Intrusive singly-linked FIFO: tasks[i].sched_next is the index of the
+ * next task in the same priority queue, or -1 if it is the tail.
+ * sched_ready_head[p] / sched_ready_tail[p]: head and tail indices, -1=empty.
+ * ──────────────────────────────────────────────────────────────────────── */
+#define SCHED_PRIO_COUNT 4   /* HIGH, NORMAL, LOW, IDLE */
 
 static task_entry_t tasks[TASK_MAX_COUNT];
 static int current_task_index = -1;
 static int next_task_id = 1;
-static int scheduler_cursor = 0;
 static int foreground_task_id = -1;
+static int sched_ready_head[SCHED_PRIO_COUNT]; /* heads of per-priority FIFO queues */
+static int sched_ready_tail[SCHED_PRIO_COUNT]; /* tails of per-priority FIFO queues */
+static int    idle_task_id    = -1;
+static unsigned int idle_tick_count  = 0;
+static unsigned int ctx_switch_count = 0;
 static unsigned int idle_context_esp = 0;
 static unsigned short kernel_code_selector = 0x08;
 static unsigned short user_code_selector = GDT_USER_CODE_SELECTOR;
@@ -90,6 +102,68 @@ static int sys_init_pid = -1;   /* PID of the init/reaper task */
 
 static void task_thread_bootstrap(void);
 static void complete_task(task_entry_t* task);
+
+/* ── Queue helper: derive slot index from pointer ─────────────────────── */
+static int task_slot_index(const task_entry_t* t) {
+    int idx = (int)(t - tasks);
+    return (idx >= 0 && idx < TASK_MAX_COUNT) ? idx : -1;
+}
+
+/* Append tasks[idx] to the tail of its priority ready queue (FIFO). */
+static void sched_enqueue_ready(int idx) {
+    int prio;
+    if (idx < 0 || idx >= TASK_MAX_COUNT || !tasks[idx].used) return;
+    prio = (int)tasks[idx].priority;
+    if (prio < 0 || prio >= SCHED_PRIO_COUNT) return;
+    tasks[idx].sched_next = -1;
+    if (sched_ready_tail[prio] < 0) {
+        sched_ready_head[prio] = idx;
+        sched_ready_tail[prio] = idx;
+    } else {
+        tasks[sched_ready_tail[prio]].sched_next = idx;
+        sched_ready_tail[prio] = idx;
+    }
+}
+
+/* Remove and return the head of priority queue prio (-1 if empty). */
+static int sched_dequeue_ready(int prio) {
+    int idx;
+    if (prio < 0 || prio >= SCHED_PRIO_COUNT) return -1;
+    idx = sched_ready_head[prio];
+    if (idx < 0) return -1;
+    sched_ready_head[prio] = tasks[idx].sched_next;
+    if (sched_ready_head[prio] < 0) sched_ready_tail[prio] = -1;
+    tasks[idx].sched_next = -1;
+    return idx;
+}
+
+/* Remove tasks[idx] from its priority ready queue (no-op if not present). */
+static void sched_remove_from_ready(int idx) {
+    int prio, cur, prev;
+    if (idx < 0 || idx >= TASK_MAX_COUNT || !tasks[idx].used) return;
+    prio = (int)tasks[idx].priority;
+    if (prio < 0 || prio >= SCHED_PRIO_COUNT) return;
+    prev = -1;
+    cur  = sched_ready_head[prio];
+    while (cur >= 0) {
+        if (cur == idx) {
+            if (prev < 0) sched_ready_head[prio] = tasks[cur].sched_next;
+            else          tasks[prev].sched_next  = tasks[cur].sched_next;
+            if (sched_ready_tail[prio] == idx) sched_ready_tail[prio] = prev;
+            tasks[idx].sched_next = -1;
+            return;
+        }
+        prev = cur;
+        cur  = tasks[cur].sched_next;
+    }
+    tasks[idx].sched_next = -1;
+}
+
+/* Idle task: runs HLT while no real work is available. */
+static void idle_task_step(void) {
+    idle_tick_count++;
+    __asm__ volatile("hlt");
+}
 
 static unsigned int interrupt_save(void) {
     unsigned int flags;
@@ -263,6 +337,8 @@ static void clear_task(task_entry_t* task) {
         return;
     }
 
+    sched_remove_from_ready(task_slot_index(task));
+
     /* Close all open file descriptors before releasing other resources. */
     vfs_task_fd_close_all(task->fd_table);
 
@@ -312,6 +388,7 @@ static void clear_task(task_entry_t* task) {
     task->k_errno = 0;
     task->parent_id = 0;
     task->waitpid_status_uptr = 0;
+    task->sched_next = -1;
     task->pending_signals = 0;
     task->signal_mask = 0;
     task->signal_trampoline_va = 0;
@@ -327,6 +404,8 @@ static void clear_task(task_entry_t* task) {
  */
 static void zombify_task(task_entry_t* task) {
     if (task == 0) return;
+
+    sched_remove_from_ready(task_slot_index(task));
 
     vfs_task_fd_close_all(task->fd_table);
 
@@ -379,6 +458,11 @@ static int task_queue_signal_locked(task_entry_t* target, int signum) {
         return 0;
     }
 
+    /* Idle task is indestructible */
+    if (target->id == idle_task_id) {
+        return 0;
+    }
+
     if (signum == LYTH_SIGKILL) {
         target->cancel_requested = 1;
         target->exit_code = 128 + signum;
@@ -399,6 +483,7 @@ static int task_queue_signal_locked(task_entry_t* target, int signum) {
     if (target->state == TASK_STATE_SLEEPING || target->state == TASK_STATE_BLOCKED) {
         target->blocked_event_id = -1;
         target->state = TASK_STATE_READY;
+        sched_enqueue_ready(task_slot_index(target));
     }
 
     return 1;
@@ -514,6 +599,15 @@ static void complete_task(task_entry_t* task) {
         return;
     }
 
+    /* Protect the idle task: it must never terminate. Re-enqueue it. */
+    if (task->id == idle_task_id) {
+        task->state = TASK_STATE_READY;
+        sched_enqueue_ready(task_slot_index(task));
+        return;
+    }
+
+    sched_remove_from_ready(task_slot_index(task));
+
     task_id = task->id;
     task_name = task->name;
     cancelled = task->cancel_requested || task->state == TASK_STATE_CANCELLED;
@@ -578,19 +672,10 @@ static void complete_task(task_entry_t* task) {
 }
 
 static int select_next_ready_task(void) {
-    for (int priority = TASK_PRIORITY_HIGH; priority <= TASK_PRIORITY_LOW; priority++) {
-        for (int offset = 0; offset < TASK_MAX_COUNT; offset++) {
-            int index = (scheduler_cursor + offset) % TASK_MAX_COUNT;
-
-            if (tasks[index].used &&
-                tasks[index].state == TASK_STATE_READY &&
-                tasks[index].priority == priority) {
-                scheduler_cursor = (index + 1) % TASK_MAX_COUNT;
-                return index;
-            }
-        }
+    int prio;
+    for (prio = (int)TASK_PRIORITY_HIGH; prio < SCHED_PRIO_COUNT; prio++) {
+        if (sched_ready_head[prio] >= 0) return sched_ready_head[prio];
     }
-
     return -1;
 }
 
@@ -601,9 +686,12 @@ static unsigned int schedule_from_idle(unsigned int current_esp) {
         return current_esp;
     }
 
+    sched_dequeue_ready((int)tasks[selected].priority);
+
     idle_context_esp = current_esp;
     current_task_index = selected;
     tasks[selected].state = TASK_STATE_RUNNING;
+    ctx_switch_count++;
 
     if (tasks[selected].page_directory != 0) {
         paging_switch_directory(tasks[selected].page_directory);
@@ -626,8 +714,10 @@ static unsigned int schedule_back_to_idle(unsigned int current_esp) {
 
     paging_switch_directory(paging_kernel_directory());
 
-    if (task->state == TASK_STATE_RUNNING) {
+    /* Re-enqueue if still runnable (RUNNING = preempted; READY = yielded). */
+    if (task->state == TASK_STATE_RUNNING || task->state == TASK_STATE_READY) {
         task->state = TASK_STATE_READY;
+        sched_enqueue_ready(current_task_index);
     }
 
     if (task->used &&
@@ -734,20 +824,74 @@ void task_system_init(void) {
         tasks[i].user_heap_base = 0;
         tasks[i].user_heap_size = 0;
         tasks[i].waitpid_status_uptr = 0;
+        tasks[i].sched_next = -1;
         vfs_task_fd_init(tasks[i].fd_table);
         task_signal_handlers_init(&tasks[i]);
     }
 
     current_task_index = -1;
     next_task_id = 1;
-    scheduler_cursor = 0;
     foreground_task_id = -1;
     idle_context_esp = 0;
     foreground_complete_handler = 0;
+    idle_task_id   = -1;
+    idle_tick_count  = 0;
+    ctx_switch_count = 0;
+
+    for (int p = 0; p < SCHED_PRIO_COUNT; p++) {
+        sched_ready_head[p] = -1;
+        sched_ready_tail[p] = -1;
+    }
 
     __asm__ volatile ("mov %%cs, %0" : "=r"(kernel_code_selector));
     user_code_selector = gdt_user_code_selector();
     user_data_selector = gdt_user_data_selector();
+
+    /* Spawn the system idle task — always runnable, runs HLT when nothing else
+     * is ready.  Uses TASK_PRIORITY_IDLE so it is selected last.             */
+    {
+        int slot = -1;
+        int i;
+        for (i = 0; i < TASK_MAX_COUNT; i++) {
+            if (!tasks[i].used) { slot = i; break; }
+        }
+        if (slot >= 0) {
+            tasks[slot].used             = 1;
+            tasks[slot].id               = next_task_id++;
+            copy_text(tasks[slot].name, "[idle]", TASK_NAME_MAX);
+            tasks[slot].state            = TASK_STATE_READY;
+            tasks[slot].foreground       = 0;
+            tasks[slot].cancel_requested = 0;
+            tasks[slot].wake_tick        = 0;
+            tasks[slot].blocked_event_id = -1;
+            tasks[slot].priority         = TASK_PRIORITY_IDLE;
+            tasks[slot].step             = idle_task_step;
+            tasks[slot].data             = 0;
+            tasks[slot].data_size        = 0;
+            tasks[slot].exit_code        = 0;
+            tasks[slot].saved_esp        = 0;
+            tasks[slot].user_mode        = 0;
+            tasks[slot].user_physical_base = 0;
+            tasks[slot].user_heap_base   = 0;
+            tasks[slot].user_heap_size   = 0;
+            tasks[slot].user_initial_esp = 0;
+            tasks[slot].page_directory   = 0;
+            tasks[slot].k_errno          = 0;
+            tasks[slot].parent_id        = 0;
+            tasks[slot].waitpid_status_uptr = 0;
+            tasks[slot].sched_next       = -1;
+            task_signal_handlers_init(&tasks[slot]);
+            vfs_task_fd_init(tasks[slot].fd_table);
+            tasks[slot].stack = (unsigned char*)kmalloc(TASK_STACK_SIZE);
+            if (tasks[slot].stack != 0) {
+                initialize_task_stack(&tasks[slot]);
+                sched_enqueue_ready(slot);
+                idle_task_id = tasks[slot].id;
+            } else {
+                tasks[slot].used = 0;
+            }
+        }
+    }
 }
 
 int task_spawn(const char* name, task_step_fn step, const void* data, unsigned int data_size, int foreground) {
@@ -797,6 +941,7 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
     tasks[slot].user_mode = 0;
     tasks[slot].parent_id = (current_task_index >= 0) ? tasks[current_task_index].id : 0;
     tasks[slot].waitpid_status_uptr = 0;
+    tasks[slot].sched_next = -1;
     task_signal_handlers_init(&tasks[slot]);
     vfs_task_fd_init(tasks[slot].fd_table);  /* (re-)install stdio if tty is ready */
 
@@ -830,6 +975,7 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
         foreground_task_id = tasks[slot].id;
     }
 
+    sched_enqueue_ready(slot);
     interrupt_restore(flags);
     return tasks[slot].id;
 }
@@ -893,6 +1039,7 @@ int task_spawn_user(const char* name,
     tasks[slot].user_initial_esp = initial_user_esp;
     tasks[slot].parent_id = (current_task_index >= 0) ? tasks[current_task_index].id : 0;
     tasks[slot].waitpid_status_uptr = 0;
+    tasks[slot].sched_next = -1;
     task_signal_handlers_init(&tasks[slot]);
 
     vfs_task_fd_init(tasks[slot].fd_table);  /* (re-)install stdio if tty is ready */
@@ -912,6 +1059,7 @@ int task_spawn_user(const char* name,
         foreground_task_id = tasks[slot].id;
     }
 
+    sched_enqueue_ready(slot);
     interrupt_restore(flags);
     return tasks[slot].id;
 }
@@ -923,6 +1071,7 @@ void task_on_tick(void) {
         if (tasks[i].used && tasks[i].state == TASK_STATE_SLEEPING) {
             if ((int)(now - tasks[i].wake_tick) >= 0) {
                 tasks[i].state = TASK_STATE_READY;
+                sched_enqueue_ready(i);
             }
         }
     }
@@ -933,12 +1082,10 @@ void task_run_ready(void) {
 }
 
 int task_has_runnable(void) {
-    for (int i = 0; i < TASK_MAX_COUNT; i++) {
-        if (tasks[i].used && tasks[i].state == TASK_STATE_READY) {
-            return 1;
-        }
+    int p;
+    for (p = (int)TASK_PRIORITY_HIGH; p <= (int)TASK_PRIORITY_LOW; p++) {
+        if (sched_ready_head[p] >= 0) return 1;
     }
-
     return 0;
 }
 
@@ -992,6 +1139,7 @@ int task_signal_event(int event_id) {
             tasks[i].blocked_event_id == event_id) {
             tasks[i].blocked_event_id = -1;
             tasks[i].state = TASK_STATE_READY;
+            sched_enqueue_ready(i);
             woken++;
         }
     }
@@ -1034,6 +1182,7 @@ void task_request_cancel(void) {
     if (task->state == TASK_STATE_SLEEPING || task->state == TASK_STATE_BLOCKED) {
         task->blocked_event_id = -1;
         task->state = TASK_STATE_READY;
+        sched_enqueue_ready(task_slot_index(task));
     }
 }
 
@@ -1122,11 +1271,11 @@ vfs_fd_entry_t* task_current_fd_table(void) {
     }
 
     return tasks[current_task_index].fd_table;
+}
 
 vfs_fd_entry_t* task_get_fd_table(int task_id) {
     task_entry_t* t = find_task_by_id(task_id);
     return t ? t->fd_table : 0;
-}
 }
 
 void* task_current_data(void) {
@@ -1148,6 +1297,8 @@ int task_foreground_task_id(void) {
 int task_set_priority(int id, task_priority_t priority) {
     unsigned int flags;
     task_entry_t* task;
+    int idx;
+    task_priority_t old_priority;
 
     if (priority < TASK_PRIORITY_HIGH || priority > TASK_PRIORITY_LOW) {
         return 0;
@@ -1161,7 +1312,27 @@ int task_set_priority(int id, task_priority_t priority) {
         return 0;
     }
 
-    task->priority = priority;
+    if (task->id == idle_task_id) {
+        interrupt_restore(flags);
+        return 0;
+    }
+
+    idx = task_slot_index(task);
+    old_priority = task->priority;
+
+    if (old_priority == priority) {
+        interrupt_restore(flags);
+        return 1;
+    }
+
+    if (task->state == TASK_STATE_READY) {
+        sched_remove_from_ready(idx);
+        task->priority = priority;
+        sched_enqueue_ready(idx);
+    } else {
+        task->priority = priority;
+    }
+
     interrupt_restore(flags);
     return 1;
 }
@@ -1170,6 +1341,8 @@ const char* task_priority_name(task_priority_t priority) {
     switch (priority) {
         case TASK_PRIORITY_HIGH:
             return "HIGH";
+        case TASK_PRIORITY_IDLE:
+            return "IDLE";
         case TASK_PRIORITY_LOW:
             return "LOW";
         default:
@@ -1537,6 +1710,7 @@ int task_fork_from_frame(unsigned int frame_esp) {
     tasks[slot].page_directory   = child_dir;
     tasks[slot].k_errno          = 0;
     tasks[slot].parent_id        = parent->id;   /* fork child's parent = the forking task */
+    tasks[slot].sched_next       = -1;
     task_signal_handlers_copy(&tasks[slot], parent);
     vfs_task_fd_inherit(tasks[slot].fd_table, parent->fd_table);  /* inherit open FDs */
     task_install_signal_trampoline(&tasks[slot]);
@@ -1550,6 +1724,7 @@ int task_fork_from_frame(unsigned int frame_esp) {
     tasks[slot].saved_esp = child_stack_top;
 
     interrupt_restore(flags);
+    sched_enqueue_ready(slot);
     return tasks[slot].id;   /* fork() returns child PID in the parent */
 }
 
@@ -1561,6 +1736,15 @@ void task_set_errno(int e) {
 int task_get_errno(void) {
     if (current_task_index < 0) return 0;
     return tasks[current_task_index].k_errno;
+}
+
+void task_idle_stats(unsigned int* idle_ticks_out, unsigned int* ctx_switches_out) {
+    if (idle_ticks_out != 0) {
+        *idle_ticks_out = idle_tick_count;
+    }
+    if (ctx_switches_out != 0) {
+        *ctx_switches_out = ctx_switch_count;
+    }
 }
 
 int task_parent_id(int id) {
