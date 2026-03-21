@@ -290,15 +290,9 @@ static int shell_mkdir_p(const char* path) {
 }
 
 static void shell_select_storage_root(void) {
-    const char* candidates[] = { "/hd0p1", "/hd0", "/" };
-
-    for (unsigned int i = 0; i < (sizeof(candidates) / sizeof(candidates[0])); i++) {
-        if (shell_path_is_dir(candidates[i])) {
-            copy_bounded(shell_storage_root, candidates[i], VFS_PATH_MAX);
-            return;
-        }
-    }
-
+    /* Temporalmente fijamos la raiz de sesion a '/'.
+       Las rutas bajo /hd0* pueden quedar en estados parciales (permisos/backend)
+       y provocar fallos al listar directorios de HOME. */
     copy_bounded(shell_storage_root, "/", VFS_PATH_MAX);
 }
 
