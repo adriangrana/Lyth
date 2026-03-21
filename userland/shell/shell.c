@@ -202,6 +202,7 @@ static int shell_profile_loading = 0;
 
 static void shell_apply_theme(const char* name, int print_feedback);
 static int shell_find_unquoted_char(const char* text, char target);
+static int shell_find_unquoted_andand(const char* text);
 static void shell_trim_trailing_spaces(char* text);
 static void shell_set_pipe_input(const char* text);
 static void shell_clear_pipe_input(void);
@@ -856,6 +857,46 @@ static int shell_find_unquoted_char(const char* text, char target) {
         } else if (current == '\'' || current == '"') {
             quote = current;
         } else if (current == target) {
+            return index;
+        }
+
+        index++;
+    }
+
+    return -1;
+}
+
+static int shell_find_unquoted_andand(const char* text) {
+    int index = 0;
+    char quote = 0;
+
+    if (text == 0) {
+        return -1;
+    }
+
+    while (text[index] != '\0') {
+        char current = text[index];
+
+        if (current == '\\' && text[index + 1] != '\0') {
+            index += 2;
+            continue;
+        }
+
+        if (quote != 0) {
+            if (current == quote) {
+                quote = 0;
+            }
+            index++;
+            continue;
+        }
+
+        if (current == '\'' || current == '"') {
+            quote = current;
+            index++;
+            continue;
+        }
+
+        if (current == '&' && text[index + 1] == '&') {
             return index;
         }
 
@@ -2371,7 +2412,8 @@ static int cmd_groups(int argc, const char* argv[], int background) {
 
 static int cmd_su(int argc, const char* argv[], int background) {
     const ugdb_user_t* user = 0;
-    int parsed_uid;
+    unsigned int parsed_uid = 0U;
+    int has_numeric_uid = 1;
 
     (void)background;
     if (argc < 2) {
@@ -2381,9 +2423,28 @@ static int cmd_su(int argc, const char* argv[], int background) {
 
     user = ugdb_find_by_name(argv[1]);
     if (!user) {
-        parsed_uid = parser_parse_integer(argv[1], -1);
-        if (parsed_uid >= 0) user = ugdb_find_by_uid((unsigned int)parsed_uid);
+        /* Alias robustos para nombres built-in. */
+        if (str_equals_ignore_case(argv[1], "root")) {
+            user = ugdb_find_by_uid(0U);
+        } else if (str_equals_ignore_case(argv[1], "user")) {
+            user = ugdb_find_by_uid(1U);
+        }
     }
+
+    if (!user) {
+        for (int i = 0; argv[1][i] != '\0'; i++) {
+            char c = argv[1][i];
+            if (c < '0' || c > '9') {
+                has_numeric_uid = 0;
+                break;
+            }
+            parsed_uid = parsed_uid * 10U + (unsigned int)(c - '0');
+        }
+        if (has_numeric_uid && argv[1][0] != '\0') {
+            user = ugdb_find_by_uid(parsed_uid);
+        }
+    }
+
     if (!user) {
         terminal_print("su: usuario no encontrado: ");
         terminal_print_line(argv[1]);
@@ -2563,12 +2624,46 @@ int shell_execute_line(const char* line) {
     char left_line[SHELL_PIPE_MAX];
     char right_line[SHELL_PIPE_MAX];
     char captured_output[SHELL_PIPE_MAX];
+    int and_index;
     int pipe_index;
     int right_index;
     int result;
 
     if (line == 0) {
         return 1;
+    }
+
+    and_index = shell_find_unquoted_andand(line);
+    if (and_index >= 0) {
+        int i;
+        const char* right_start;
+
+        if (and_index <= 0 || and_index >= (int)sizeof(left_line) - 1) {
+            terminal_print_line("Uso: comando1 && comando2");
+            return 1;
+        }
+
+        for (i = 0; i < and_index && i < (int)sizeof(left_line) - 1; i++) {
+            left_line[i] = line[i];
+        }
+        left_line[i] = '\0';
+        shell_trim_trailing_spaces(left_line);
+
+        right_start = line + and_index + 2;
+        while (*right_start == ' ' || *right_start == '\t') {
+            right_start++;
+        }
+
+        if (left_line[0] == '\0' || *right_start == '\0') {
+            terminal_print_line("Uso: comando1 && comando2");
+            return 1;
+        }
+
+        result = shell_execute_line(left_line);
+        if (result == 0) {
+            syscall_yield();
+        }
+        return shell_execute_line(right_start);
     }
 
     pipe_index = shell_find_unquoted_char(line, '|');
