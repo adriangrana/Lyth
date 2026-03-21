@@ -121,4 +121,13 @@ vfs_fd_entry_t* task_get_fd_table(int task_id);
 /* Idle task statistics: ticks spent idle and total context switches. */
 void task_idle_stats(unsigned int* idle_ticks_out, unsigned int* ctx_switches_out);
 
+/* ---- Resource limits (RLIMIT_NOFILE) ---- */
+/* Count how many FD slots are currently used by the running task. */
+int task_current_open_fd_count(void);
+/* Read the soft and hard NOFILE limits of the running task. */
+int task_get_fd_rlimit(unsigned int* soft_out, unsigned int* hard_out);
+/* Update limits. soft <= hard <= RLIM_NOFILE_HARD_MAX; hard is a downward ratchet.
+   Returns 0 on success, -1 on violation. */
+int task_set_fd_rlimit(unsigned int new_soft, unsigned int new_hard);
+
 #endif

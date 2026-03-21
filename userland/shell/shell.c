@@ -21,6 +21,7 @@
 #include "fat16.h"
 #include "fat32.h"
 #include "rtc.h"
+#include "rlimit.h"
 
 #define SHELL_MAX_ARGS 8
 #define SHELL_TOKEN_MAX 64
@@ -93,6 +94,7 @@ static int cmd_signal(int argc, const char* argv[], int background);
 static int cmd_mouse(int argc, const char* argv[], int background);
 static int cmd_dmesg(int argc, const char* argv[], int background);
 static int cmd_gfxdemo(int argc, const char* argv[], int background);
+static int cmd_ulimit(int argc, const char* argv[], int background);
 static int cmd_ls(int argc, const char* argv[], int background);
 static int cmd_cat(int argc, const char* argv[], int background);
 static int cmd_grep(int argc, const char* argv[], int background);
@@ -159,6 +161,7 @@ static command_t commands[] = {
     {"repeat",  cmd_repeat,  "repite un comando N veces: repeat <N> <comando...>"},
     {"getpid",  cmd_getpid,  "muestra el PID del proceso actual"},
     {"yield",   cmd_yield,   "cede CPU al scheduler"},
+    {"ulimit",  cmd_ulimit,  "muestra/cambia limites de recursos: ulimit [-n <valor>] [-H] [-S]"},
     {"vfs",     cmd_vfs,     "VFS: mounts, ls/cat/touch/rm/stat/cp/mv/rename: vfs <subcmd> ..."},
     {"disk",    cmd_disk,    "Bloques: disk [read <lba> [dev]] [mount <dev> <ruta>] [fsck <dev>] [gpt <dev>]"},
     {"cd",      cmd_cd,      "cambia directorio: cd [ruta]"},
@@ -1208,6 +1211,83 @@ static int cmd_uptime(int argc, const char* argv[], int background) {
         terminal_print("Idle %: ");
         terminal_print_uint((idle_ticks * 100U) / ticks);
         terminal_print("%\n");
+    }
+    return 1;
+}
+
+/* ---- ulimit ---- */
+static int cmd_ulimit(int argc, const char* argv[], int background) {
+    unsigned int soft = 0U, hard = 0U;
+    int show_soft = 1, show_hard = 0;
+    int i;
+
+    (void)background;
+
+    task_get_fd_rlimit(&soft, &hard);
+
+    /* Parse flags */
+    for (i = 1; i < argc; i++) {
+        if (argv[i][0] == '-') {
+            const char* opt = argv[i] + 1;
+            if (opt[0] == 'H' && opt[1] == '\0') {
+                show_hard = 1; show_soft = 0;
+            } else if (opt[0] == 'S' && opt[1] == '\0') {
+                show_soft = 1; show_hard = 0;
+            } else if (opt[0] == 'n' && opt[1] == '\0') {
+                /* -n <value> : set soft nofile limit */
+                if (i + 1 >= argc) {
+                    terminal_print("ulimit: -n requiere un valor\n");
+                    return 0;
+                }
+                i++;
+                {
+                    unsigned int new_soft = (unsigned int)parser_parse_integer(argv[i], -1);
+                    rlimit_t rl;
+                    rl.rlim_cur = new_soft;
+                    rl.rlim_max = hard;   /* keep current hard */
+                    if (task_set_fd_rlimit(rl.rlim_cur, rl.rlim_max) != 0) {
+                        terminal_print("ulimit: valor invalido o supera el limite maximo (");
+                        terminal_print_uint(hard);
+                        terminal_print(")\n");
+                        return 0;
+                    }
+                    /* re-read to confirm */
+                    task_get_fd_rlimit(&soft, &hard);
+                }
+                return 1;
+            } else if (opt[0] == 'H' && opt[1] == 'n') {
+                /* -Hn : show hard nofile */
+                show_hard = 1; show_soft = 0;
+            } else {
+                terminal_print("ulimit: opcion desconocida: ");
+                terminal_print(argv[i]);
+                terminal_print("\nUso: ulimit [-S|-H] [-n <valor>]\n");
+                return 0;
+            }
+        } else {
+            terminal_print("ulimit: argumento inesperado: ");
+            terminal_print(argv[i]);
+            terminal_print("\n");
+            return 0;
+        }
+    }
+
+    /* Display */
+    if (argc == 1) {
+        /* No args: show both */
+        terminal_print("RLIMIT_NOFILE  soft=");
+        terminal_print_uint(soft);
+        terminal_print("  hard=");
+        terminal_print_uint(hard);
+        terminal_print("  open=");
+        terminal_print_uint((unsigned int)task_current_open_fd_count());
+        terminal_print("\n");
+    } else if (show_hard) {
+        terminal_print_uint(hard);
+        terminal_print("\n");
+    } else if (show_soft) {
+        terminal_print_uint(soft);
+        terminal_print("\n");
     }
     return 1;
 }

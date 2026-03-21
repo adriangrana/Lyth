@@ -6,6 +6,7 @@
 #include "paging.h"
 #include "physmem.h"
 #include "assert.h"
+#include "rlimit.h"
 #include <stdint.h>
 
 #define TASK_MAX_COUNT 16
@@ -68,6 +69,8 @@ typedef struct {
     uint32_t user_initial_esp;               /* custom initial user ESP (0 = top of stack) */
     uint32_t* page_directory;
     vfs_fd_entry_t fd_table[VFS_MAX_FD]; /* per-task open file descriptors */
+    unsigned int fd_limit_soft;          /* soft FD limit (RLIMIT_NOFILE cur) */
+    unsigned int fd_limit_hard;          /* hard FD limit (RLIMIT_NOFILE max) */
     int k_errno;                         /* per-task errno for syscalls */
     int parent_id;                       /* PID of the task that spawned this one */
     unsigned int pending_signals;        /* bitmask of pending signals */
@@ -964,6 +967,8 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
     tasks[slot].parent_id = (current_task_index >= 0) ? tasks[current_task_index].id : 0;
     tasks[slot].waitpid_status_uptr = 0;
     tasks[slot].sched_next = -1;
+    tasks[slot].fd_limit_soft = RLIM_NOFILE_DEFAULT;
+    tasks[slot].fd_limit_hard = RLIM_NOFILE_DEFAULT;
     task_signal_handlers_init(&tasks[slot]);
     vfs_task_fd_init(tasks[slot].fd_table);  /* (re-)install stdio if tty is ready */
 
@@ -1062,6 +1067,8 @@ int task_spawn_user(const char* name,
     tasks[slot].parent_id = (current_task_index >= 0) ? tasks[current_task_index].id : 0;
     tasks[slot].waitpid_status_uptr = 0;
     tasks[slot].sched_next = -1;
+    tasks[slot].fd_limit_soft = RLIM_NOFILE_DEFAULT;
+    tasks[slot].fd_limit_hard = RLIM_NOFILE_DEFAULT;
     task_signal_handlers_init(&tasks[slot]);
 
     vfs_task_fd_init(tasks[slot].fd_table);  /* (re-)install stdio if tty is ready */
@@ -1649,6 +1656,47 @@ unsigned int task_schedule_on_timer(unsigned int current_esp) {
     return next_esp;
 }
 
+/* ── Resource-limit helpers ─────────────────────────────────────────────── */
+
+int task_current_open_fd_count(void) {
+    int i, count = 0;
+    if (current_task_index < 0) return 0;
+    for (i = 0; i < VFS_MAX_FD; i++) {
+        if (tasks[current_task_index].fd_table[i].used)
+            count++;
+    }
+    return count;
+}
+
+int task_get_fd_rlimit(unsigned int* soft_out, unsigned int* hard_out) {
+    if (current_task_index < 0) return -1;
+    if (soft_out) *soft_out = tasks[current_task_index].fd_limit_soft;
+    if (hard_out) *hard_out = tasks[current_task_index].fd_limit_hard;
+    return 0;
+}
+
+/* Rules (mirrors POSIX setrlimit semantics):
+ *  - soft limit cannot exceed hard limit.
+ *  - hard limit cannot exceed RLIM_NOFILE_HARD_MAX.
+ *  - hard limit can only be lowered (not raised once set).
+ *  Returns 0 on success, -1 on violation. */
+int task_set_fd_rlimit(unsigned int new_soft, unsigned int new_hard) {
+    if (current_task_index < 0) return -1;
+
+    /* Hard limit is a one-way ratchet downwards */
+    if (new_hard > tasks[current_task_index].fd_limit_hard) return -1;
+    /* Hard limit ceiling */
+    if (new_hard > RLIM_NOFILE_HARD_MAX) return -1;
+    /* Soft must not exceed new hard */
+    if (new_soft > new_hard) return -1;
+    /* Soft must be at least 3 (keep stdio) */
+    if (new_soft < 3U) return -1;
+
+    tasks[current_task_index].fd_limit_soft = new_soft;
+    tasks[current_task_index].fd_limit_hard = new_hard;
+    return 0;
+}
+
 int task_fork_from_frame(unsigned int frame_esp) {
     task_user_stack_frame_t* parent_frame;
     task_entry_t* parent;
@@ -1733,6 +1781,8 @@ int task_fork_from_frame(unsigned int frame_esp) {
     tasks[slot].k_errno          = 0;
     tasks[slot].parent_id        = parent->id;   /* fork child's parent = the forking task */
     tasks[slot].sched_next       = -1;
+    tasks[slot].fd_limit_soft = parent->fd_limit_soft;
+    tasks[slot].fd_limit_hard = parent->fd_limit_hard;
     task_signal_handlers_copy(&tasks[slot], parent);
     vfs_task_fd_inherit(tasks[slot].fd_table, parent->fd_table);  /* inherit open FDs */
     task_install_signal_trampoline(&tasks[slot]);

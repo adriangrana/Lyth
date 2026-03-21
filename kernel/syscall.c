@@ -63,8 +63,14 @@ static int syscall_fd_alloc_pair(vfs_fd_entry_t* fdt, int* fd0_out, int* fd1_out
     int i;
     int a = -1;
     int b = -1;
+    unsigned int soft = 0U;
 
     if (!fdt || !fd0_out || !fd1_out) return -1;
+
+    /* Enforce per-process soft FD limit: pipe needs 2 slots */
+    task_get_fd_rlimit(&soft, 0);
+    if (soft > 0U && (unsigned int)task_current_open_fd_count() + 2U > soft)
+        return -1;
 
     for (i = 0; i < VFS_MAX_FD; i++) {
         if (!fdt[i].used) {
@@ -560,6 +566,14 @@ unsigned int syscall_callback(unsigned int number,
                 return (unsigned int)-1;
             }
             {
+                /* Enforce per-process soft FD limit */
+                unsigned int fd_soft = 0U;
+                task_get_fd_rlimit(&fd_soft, 0);
+                if (fd_soft > 0U && (unsigned int)task_current_open_fd_count() >= fd_soft) {
+                    task_set_errno(24); /* EMFILE */
+                    return (unsigned int)-1;
+                }
+
                 int fd = vfs_open_flags((const char*)arg0, arg1);
                 if (fd < 0) task_set_errno(13); /* EACCES/ENOENT generic */
                 return (unsigned int)fd;
@@ -964,6 +978,44 @@ unsigned int syscall_callback(unsigned int number,
             return 0;
         }
 
+        case SYSCALL_GETRLIMIT:
+        {
+            rlimit_t* rl_user = (rlimit_t*)(uintptr_t)arg1;
+            if ((int)arg0 != (int)RLIMIT_NOFILE) {
+                task_set_errno(22); /* EINVAL – only NOFILE supported */
+                return (unsigned int)-1;
+            }
+            if (!syscall_validate_user_buffer(rl_user, sizeof(rlimit_t))) {
+                task_set_errno(14); /* EFAULT */
+                return (unsigned int)-1;
+            }
+            {
+                unsigned int soft = 0U, hard = 0U;
+                task_get_fd_rlimit(&soft, &hard);
+                rl_user->rlim_cur = soft;
+                rl_user->rlim_max = hard;
+            }
+            return 0;
+        }
+
+        case SYSCALL_SETRLIMIT:
+        {
+            const rlimit_t* rl_user = (const rlimit_t*)(uintptr_t)arg1;
+            if ((int)arg0 != (int)RLIMIT_NOFILE) {
+                task_set_errno(22); /* EINVAL – only NOFILE supported */
+                return (unsigned int)-1;
+            }
+            if (!syscall_validate_user_buffer(rl_user, sizeof(rlimit_t))) {
+                task_set_errno(14); /* EFAULT */
+                return (unsigned int)-1;
+            }
+            if (task_set_fd_rlimit(rl_user->rlim_cur, rl_user->rlim_max) != 0) {
+                task_set_errno(22); /* EINVAL or EPERM */
+                return (unsigned int)-1;
+            }
+            return 0;
+        }
+
         default:
             return 0;
     }
@@ -1211,6 +1263,21 @@ int syscall_pipe(int fds_out[2], unsigned int flags) {
     return (int)syscall_invoke(SYSCALL_PIPE,
                                (unsigned int)(uintptr_t)fds_out,
                                flags,
+                               0,
+                               0);
+}
+int syscall_getrlimit(int resource, rlimit_t* rl) {
+    return (int)syscall_invoke(SYSCALL_GETRLIMIT,
+                               (unsigned int)resource,
+                               (unsigned int)(uintptr_t)rl,
+                               0,
+                               0);
+}
+
+int syscall_setrlimit(int resource, const rlimit_t* rl) {
+    return (int)syscall_invoke(SYSCALL_SETRLIMIT,
+                               (unsigned int)resource,
+                               (unsigned int)(uintptr_t)rl,
                                0,
                                0);
 }

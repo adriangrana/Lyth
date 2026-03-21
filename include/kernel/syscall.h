@@ -2,6 +2,7 @@
 #define SYSCALL_H
 
 #include "signal.h"
+#include "rlimit.h"
 
 enum {
     SYSCALL_WRITE = 1,
@@ -43,7 +44,9 @@ enum {
     SYSCALL_GET_MONOTONIC_MS = 35, /* get_monotonic_ms()      -> ms since boot */
     SYSCALL_POLL         = 36,  /* poll(pfds, nfds, timeout_ms) -> ready_count */
     SYSCALL_SELECT       = 37,  /* select(nfds, *rmask, *wmask, timeout_ms) */
-    SYSCALL_PIPE         = 38   /* pipe(int fds[2], flags) */
+    SYSCALL_PIPE         = 38,  /* pipe(int fds[2], flags) */
+    SYSCALL_GETRLIMIT    = 39,  /* getrlimit(resource, rlimit_t*) -> 0/-1 */
+    SYSCALL_SETRLIMIT    = 40   /* setrlimit(resource, const rlimit_t*) -> 0/-1 */
 };
 
 #define SYSCALL_POLLIN   0x0001U
@@ -141,5 +144,7 @@ int syscall_select(unsigned int nfds,
                    unsigned int* write_mask_io,
                    unsigned int timeout_ms);
 int syscall_pipe(int fds_out[2], unsigned int flags);
+int syscall_getrlimit(int resource, rlimit_t* rl);
+int syscall_setrlimit(int resource, const rlimit_t* rl);
 
 #endif

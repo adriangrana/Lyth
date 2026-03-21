@@ -186,4 +186,4 @@
 - [ ] Message passing
 - [x] poll / select
 - [x] Gestión de errores (errno)
-- [ ] Gestión de recursos (FD limits)
+- [x] Gestión de recursos (FD limits)
