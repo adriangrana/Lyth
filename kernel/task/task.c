@@ -84,6 +84,8 @@ typedef struct {
     unsigned int gid;                    /* real group id */
     unsigned int euid;                   /* effective user id */
     unsigned int egid;                   /* effective group id */
+    unsigned int supp_groups[TASK_MAX_SUPP_GROUPS]; /* supplementary groups */
+    int supp_group_count;
 } task_entry_t;
 
 /* ── Per-priority ready queues ────────────────────────────────────────────
@@ -420,6 +422,14 @@ static void clear_task(task_entry_t* task) {
     task->pending_signals = 0;
     task->signal_mask = 0;
     task->signal_trampoline_va = 0;
+    task->uid = 0U;
+    task->gid = 0U;
+    task->euid = 0U;
+    task->egid = 0U;
+    task->supp_group_count = 0;
+    for (int i = 0; i < TASK_MAX_SUPP_GROUPS; i++) {
+        task->supp_groups[i] = 0U;
+    }
     for (int i = 0; i <= LYTH_SIGNAL_MAX; i++) {
         task->signal_handlers[i] = LYTH_SIG_DFL;
     }
@@ -980,8 +990,14 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
         tasks[slot].gid  = tasks[current_task_index].gid;
         tasks[slot].euid = tasks[current_task_index].euid;
         tasks[slot].egid = tasks[current_task_index].egid;
+        tasks[slot].supp_group_count = tasks[current_task_index].supp_group_count;
+        for (int gi = 0; gi < TASK_MAX_SUPP_GROUPS; gi++) {
+            tasks[slot].supp_groups[gi] = tasks[current_task_index].supp_groups[gi];
+        }
     } else {
         tasks[slot].uid = tasks[slot].gid = tasks[slot].euid = tasks[slot].egid = 0U;
+        tasks[slot].supp_group_count = 0;
+        for (int gi = 0; gi < TASK_MAX_SUPP_GROUPS; gi++) tasks[slot].supp_groups[gi] = 0U;
     }
     task_signal_handlers_init(&tasks[slot]);
     vfs_task_fd_init(tasks[slot].fd_table);  /* (re-)install stdio if tty is ready */
@@ -1087,8 +1103,14 @@ int task_spawn_user(const char* name,
         tasks[slot].gid  = tasks[current_task_index].gid;
         tasks[slot].euid = tasks[current_task_index].euid;
         tasks[slot].egid = tasks[current_task_index].egid;
+        tasks[slot].supp_group_count = tasks[current_task_index].supp_group_count;
+        for (int gi = 0; gi < TASK_MAX_SUPP_GROUPS; gi++) {
+            tasks[slot].supp_groups[gi] = tasks[current_task_index].supp_groups[gi];
+        }
     } else {
         tasks[slot].uid = tasks[slot].gid = tasks[slot].euid = tasks[slot].egid = 0U;
+        tasks[slot].supp_group_count = 0;
+        for (int gi = 0; gi < TASK_MAX_SUPP_GROUPS; gi++) tasks[slot].supp_groups[gi] = 0U;
     }
     task_signal_handlers_init(&tasks[slot]);
 
@@ -1692,6 +1714,16 @@ unsigned int task_current_egid(void) {
     return (current_task_index >= 0) ? tasks[current_task_index].egid : 0U;
 }
 
+static int task_has_group_locked(const task_entry_t* t, unsigned int gid) {
+    int i;
+    if (!t) return 0;
+    if (t->egid == gid) return 1;
+    for (i = 0; i < t->supp_group_count; i++) {
+        if (t->supp_groups[i] == gid) return 1;
+    }
+    return 0;
+}
+
 /* setuid/setgid semantics (simplified POSIX):
  *  - Root (euid==0) can set uid to anything.
  *  - Non-root can only set euid back to real uid.
@@ -1719,7 +1751,8 @@ int task_set_current_gid(unsigned int new_gid) {
         tasks[current_task_index].egid = new_gid;
         return 0;
     }
-    if (new_gid == tasks[current_task_index].gid) {
+    if (new_gid == tasks[current_task_index].gid ||
+        task_has_group_locked(&tasks[current_task_index], new_gid)) {
         tasks[current_task_index].egid = new_gid;
         return 0;
     }
@@ -1733,6 +1766,38 @@ void task_force_identity(unsigned int uid, unsigned int gid) {
     tasks[current_task_index].gid  = gid;
     tasks[current_task_index].euid = uid;
     tasks[current_task_index].egid = gid;
+    tasks[current_task_index].supp_group_count = 0;
+    for (int i = 0; i < TASK_MAX_SUPP_GROUPS; i++) tasks[current_task_index].supp_groups[i] = 0U;
+}
+
+int task_in_group(unsigned int gid) {
+    if (current_task_index < 0) return 0;
+    return task_has_group_locked(&tasks[current_task_index], gid);
+}
+
+int task_get_groups(unsigned int* gids_out, int max_groups) {
+    int i;
+    int n;
+    if (current_task_index < 0) return -1;
+    n = tasks[current_task_index].supp_group_count;
+    if (!gids_out || max_groups <= 0) return n;
+    if (max_groups < n) n = max_groups;
+    for (i = 0; i < n; i++) gids_out[i] = tasks[current_task_index].supp_groups[i];
+    return tasks[current_task_index].supp_group_count;
+}
+
+int task_set_groups(const unsigned int* gids, int count) {
+    int i;
+    if (current_task_index < 0) return -1;
+    if (count < 0 || count > TASK_MAX_SUPP_GROUPS) return -1;
+    if (tasks[current_task_index].euid != 0U) return -1; /* EPERM */
+
+    tasks[current_task_index].supp_group_count = count;
+    for (i = 0; i < TASK_MAX_SUPP_GROUPS; i++) {
+        if (i < count) tasks[current_task_index].supp_groups[i] = gids ? gids[i] : 0U;
+        else tasks[current_task_index].supp_groups[i] = 0U;
+    }
+    return 0;
 }
 
 /* ── Resource-limit helpers ─────────────────────────────────────────────── */
@@ -1866,6 +1931,10 @@ int task_fork_from_frame(unsigned int frame_esp) {
     tasks[slot].gid  = parent->gid;
     tasks[slot].euid = parent->euid;
     tasks[slot].egid = parent->egid;
+    tasks[slot].supp_group_count = parent->supp_group_count;
+    for (int gi = 0; gi < TASK_MAX_SUPP_GROUPS; gi++) {
+        tasks[slot].supp_groups[gi] = parent->supp_groups[gi];
+    }
     task_signal_handlers_copy(&tasks[slot], parent);
     vfs_task_fd_inherit(tasks[slot].fd_table, parent->fd_table);  /* inherit open FDs */
     task_install_signal_trampoline(&tasks[slot]);

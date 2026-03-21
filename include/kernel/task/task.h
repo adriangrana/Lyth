@@ -25,6 +25,9 @@ typedef enum {
 
 typedef void (*task_step_fn)(void);
 
+/* Max supplementary groups per process (excluding primary gid/egid). */
+#define TASK_MAX_SUPP_GROUPS 8
+
 typedef struct {
 	int id;
 	char name[24];
@@ -141,5 +144,10 @@ int task_set_current_uid(unsigned int new_uid);
 int task_set_current_gid(unsigned int new_gid);
 /* Force-set identity unconditionally (kernel su / login path only). */
 void task_force_identity(unsigned int uid, unsigned int gid);
+/* True if gid matches current egid or any supplementary group. */
+int task_in_group(unsigned int gid);
+/* getgroups/setgroups style API (count or -1 on error). */
+int task_get_groups(unsigned int* gids_out, int max_groups);
+int task_set_groups(const unsigned int* gids, int count);
 
 #endif

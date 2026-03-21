@@ -607,28 +607,25 @@ static unsigned int vfs_default_mode_for_path(const char* path, unsigned int fla
 
 static int vfs_mode_check_read(unsigned int mode, unsigned int owner_uid, unsigned int owner_gid) {
     unsigned int euid = task_current_euid();
-    unsigned int egid = task_current_egid();
     if (euid == 0U) return 1; /* root bypass */
     if (euid == owner_uid) return (mode & VFS_MODE_IRUSR) ? 1 : 0;
-    if (egid == owner_gid) return (mode & VFS_MODE_IRGRP) ? 1 : 0;
+    if (task_in_group(owner_gid)) return (mode & VFS_MODE_IRGRP) ? 1 : 0;
     return (mode & VFS_MODE_IROTH) ? 1 : 0;
 }
 
 static int vfs_mode_check_write(unsigned int mode, unsigned int owner_uid, unsigned int owner_gid) {
     unsigned int euid = task_current_euid();
-    unsigned int egid = task_current_egid();
     if (euid == 0U) return 1;
     if (euid == owner_uid) return (mode & VFS_MODE_IWUSR) ? 1 : 0;
-    if (egid == owner_gid) return (mode & VFS_MODE_IWGRP) ? 1 : 0;
+    if (task_in_group(owner_gid)) return (mode & VFS_MODE_IWGRP) ? 1 : 0;
     return (mode & VFS_MODE_IWOTH) ? 1 : 0;
 }
 
 static int vfs_mode_check_exec(unsigned int mode, unsigned int owner_uid, unsigned int owner_gid) {
     unsigned int euid = task_current_euid();
-    unsigned int egid = task_current_egid();
     if (euid == 0U) return 1;
     if (euid == owner_uid) return (mode & VFS_MODE_IXUSR) ? 1 : 0;
-    if (egid == owner_gid) return (mode & VFS_MODE_IXGRP) ? 1 : 0;
+    if (task_in_group(owner_gid)) return (mode & VFS_MODE_IXGRP) ? 1 : 0;
     return (mode & VFS_MODE_IXOTH) ? 1 : 0;
 }
 

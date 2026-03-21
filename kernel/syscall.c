@@ -721,6 +721,56 @@ unsigned int syscall_callback(unsigned int number,
                 return (unsigned int)-1;
             }
             return 0;
+        case SYSCALL_GETGROUPS:
+        {
+            int max_groups = (int)arg0;
+            unsigned int* gids_out = (unsigned int*)(uintptr_t)arg1;
+            if (max_groups < 0) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+            if (max_groups > 0 &&
+                !syscall_validate_user_buffer(gids_out,
+                    (unsigned int)max_groups * (unsigned int)sizeof(unsigned int))) {
+                task_set_errno(14); /* EFAULT */
+                return (unsigned int)-1;
+            }
+            {
+                int n = task_get_groups(gids_out, max_groups);
+                if (n < 0) {
+                    task_set_errno(9); /* EBADF generic */
+                    return (unsigned int)-1;
+                }
+                return (unsigned int)n;
+            }
+        }
+        case SYSCALL_SETGROUPS:
+        {
+            int count = (int)arg0;
+            const unsigned int* gids = (const unsigned int*)(uintptr_t)arg1;
+            int i;
+            if (count < 0 || count > TASK_MAX_SUPP_GROUPS) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+            if (count > 0 &&
+                !syscall_validate_user_buffer(gids,
+                    (unsigned int)count * (unsigned int)sizeof(unsigned int))) {
+                task_set_errno(14); /* EFAULT */
+                return (unsigned int)-1;
+            }
+            for (i = 0; i < count; i++) {
+                if (!ugdb_find_group_by_gid(gids[i])) {
+                    task_set_errno(22); /* EINVAL unknown gid */
+                    return (unsigned int)-1;
+                }
+            }
+            if (task_set_groups(gids, count) != 0) {
+                task_set_errno(1); /* EPERM */
+                return (unsigned int)-1;
+            }
+            return 0;
+        }
 
         case SYSCALL_KILL: {
             int ok = task_send_signal((int)arg0, LYTH_SIGTERM);
@@ -1379,5 +1429,21 @@ int syscall_vfs_getowner(const char* path, unsigned int* uid_out, unsigned int* 
                                (unsigned int)(uintptr_t)path,
                                (unsigned int)(uintptr_t)uid_out,
                                (unsigned int)(uintptr_t)gid_out,
+                               0);
+}
+
+int syscall_getgroups(int max_groups, unsigned int* gids_out) {
+    return (int)syscall_invoke(SYSCALL_GETGROUPS,
+                               (unsigned int)max_groups,
+                               (unsigned int)(uintptr_t)gids_out,
+                               0,
+                               0);
+}
+
+int syscall_setgroups(int count, const unsigned int* gids) {
+    return (int)syscall_invoke(SYSCALL_SETGROUPS,
+                               (unsigned int)count,
+                               (unsigned int)(uintptr_t)gids,
+                               0,
                                0);
 }

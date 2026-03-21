@@ -122,6 +122,7 @@ static int cmd_getpid(int argc, const char* argv[], int background);
 static int cmd_whoami(int argc, const char* argv[], int background);
 static int cmd_id(int argc, const char* argv[], int background);
 static int cmd_su(int argc, const char* argv[], int background);
+static int cmd_groups(int argc, const char* argv[], int background);
 static void shell_resolve_path(const char* input, char* out, unsigned int out_size);
 
 /* Current working directory (always an absolute VFS path). */
@@ -167,6 +168,7 @@ static command_t commands[] = {
     {"getpid",  cmd_getpid,  "muestra el PID del proceso actual"},
     {"whoami",  cmd_whoami,  "muestra el usuario efectivo"},
     {"id",      cmd_id,      "muestra uid/gid/euid/egid"},
+    {"groups",  cmd_groups,  "muestra grupos efectivos y suplementarios"},
     {"su",      cmd_su,      "cambia identidad efectiva: su <usuario|uid>"},
     {"yield",   cmd_yield,   "cede CPU al scheduler"},
     {"ulimit",  cmd_ulimit,  "muestra/cambia limites de recursos: ulimit [-n <valor>] [-H] [-S]"},
@@ -2034,6 +2036,8 @@ static int cmd_id(int argc, const char* argv[], int background) {
     unsigned int gid  = task_current_gid();
     unsigned int euid = task_current_euid();
     unsigned int egid = task_current_egid();
+    unsigned int groups[TASK_MAX_SUPP_GROUPS];
+    int gcount;
     (void)argc;
     (void)argv;
     (void)background;
@@ -2045,7 +2049,52 @@ static int cmd_id(int argc, const char* argv[], int background) {
     terminal_print("euid="); terminal_print_uint(euid);
     terminal_print("("); terminal_print(ugdb_username(euid)); terminal_print(") ");
     terminal_print("egid="); terminal_print_uint(egid);
-    terminal_print("("); terminal_print(ugdb_groupname(egid)); terminal_print(")\n");
+    terminal_print("("); terminal_print(ugdb_groupname(egid)); terminal_print(")");
+
+    gcount = task_get_groups(groups, TASK_MAX_SUPP_GROUPS);
+    terminal_print(" groups=");
+    if (gcount <= 0) {
+        terminal_print("[]");
+    } else {
+        terminal_print("[");
+        for (int i = 0; i < gcount && i < TASK_MAX_SUPP_GROUPS; i++) {
+            if (i > 0) terminal_print(",");
+            terminal_print_uint(groups[i]);
+            terminal_print("(");
+            terminal_print(ugdb_groupname(groups[i]));
+            terminal_print(")");
+        }
+        terminal_print("]");
+    }
+    terminal_put_char('\n');
+    return 1;
+}
+
+static int cmd_groups(int argc, const char* argv[], int background) {
+    unsigned int groups[TASK_MAX_SUPP_GROUPS];
+    int gcount;
+    (void)argc;
+    (void)argv;
+    (void)background;
+
+    terminal_print("egid=");
+    terminal_print_uint(task_current_egid());
+    terminal_print("(");
+    terminal_print(ugdb_groupname(task_current_egid()));
+    terminal_print(")");
+
+    gcount = task_get_groups(groups, TASK_MAX_SUPP_GROUPS);
+    if (gcount > 0) {
+        terminal_print(" supp=");
+        for (int i = 0; i < gcount && i < TASK_MAX_SUPP_GROUPS; i++) {
+            if (i > 0) terminal_print(",");
+            terminal_print_uint(groups[i]);
+            terminal_print("(");
+            terminal_print(ugdb_groupname(groups[i]));
+            terminal_print(")");
+        }
+    }
+    terminal_put_char('\n');
     return 1;
 }
 

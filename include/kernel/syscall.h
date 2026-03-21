@@ -54,7 +54,9 @@ enum {
     SYSCALL_SETUID       = 45,
     SYSCALL_SETGID       = 46,
     SYSCALL_VFS_CHOWN    = 47,
-    SYSCALL_VFS_GETOWNER = 48
+    SYSCALL_VFS_GETOWNER = 48,
+    SYSCALL_GETGROUPS    = 49,
+    SYSCALL_SETGROUPS    = 50
 };
 
 #define SYSCALL_POLLIN   0x0001U
@@ -162,5 +164,7 @@ int syscall_setuid(unsigned int uid);
 int syscall_setgid(unsigned int gid);
 int syscall_vfs_chown(const char* path, unsigned int uid, unsigned int gid);
 int syscall_vfs_getowner(const char* path, unsigned int* uid_out, unsigned int* gid_out);
+int syscall_getgroups(int max_groups, unsigned int* gids_out);
+int syscall_setgroups(int count, const unsigned int* gids);
 
 #endif
