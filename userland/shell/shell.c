@@ -427,6 +427,7 @@ static void shell_apply_user_session(int load_global_rc) {
     char global_rc[VFS_PATH_MAX];
     char user_rc[VFS_PATH_MAX];
     const char* username = ugdb_username(task_current_euid());
+    int have_storage = 0;
 
     if (!username || username[0] == '\0') username = "user";
 
@@ -435,11 +436,28 @@ static void shell_apply_user_session(int load_global_rc) {
     shell_build_rooted_path("/etc", etc_path, sizeof(etc_path));
     shell_build_rooted_path("/home", home_root, sizeof(home_root));
 
-    shell_mkdir_p(etc_path);
-    shell_mkdir_p(home_root);
+    have_storage = shell_mkdir_p(etc_path) && shell_mkdir_p(home_root);
 
     shell_build_user_home_path(username, shell_home_path, sizeof(shell_home_path));
-    shell_mkdir_p(shell_home_path);
+    have_storage = have_storage && shell_mkdir_p(shell_home_path);
+
+    if (!have_storage || !shell_path_is_dir(shell_home_path)) {
+        /* Fallback seguro: usar la raiz ramfs si el backend persistente
+           no permite crear /home/<user> (p.ej. montaje RO o sin create). */
+        copy_bounded(shell_storage_root, "/", VFS_PATH_MAX);
+
+        shell_build_rooted_path("/etc", etc_path, sizeof(etc_path));
+        shell_build_rooted_path("/home", home_root, sizeof(home_root));
+        shell_build_user_home_path(username, shell_home_path, sizeof(shell_home_path));
+
+        shell_mkdir_p(etc_path);
+        shell_mkdir_p(home_root);
+        shell_mkdir_p(shell_home_path);
+
+        if (!shell_path_is_dir(shell_home_path)) {
+            copy_bounded(shell_home_path, "/", VFS_PATH_MAX);
+        }
+    }
 
     copy_bounded(shell_cwd, shell_home_path, VFS_PATH_MAX);
     shell_env_set("HOME", shell_home_path);
