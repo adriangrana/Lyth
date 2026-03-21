@@ -2721,11 +2721,24 @@ static int cmd_pwd(int argc, const char* argv[], int background) {
 static int cmd_cd(int argc, const char* argv[], int background) {
     char path[VFS_PATH_MAX];
     vfs_node_t* node;
+    const char* home;
 
     (void)background;
 
     if (argc < 2) {
-        /* cd with no args → go to root */
+        /* cd with no args → go to HOME, fallback to root */
+        home = shell_env_get("HOME");
+        if (home && home[0] != '\0') {
+            shell_resolve_path(home, path, sizeof(path));
+            node = vfs_resolve(path);
+            if (node && (node->flags & VFS_FLAG_DIR)) {
+                unsigned int k;
+                for (k = 0; path[k] && k < VFS_PATH_MAX - 1U; k++)
+                    shell_cwd[k] = path[k];
+                shell_cwd[k] = '\0';
+                return 1;
+            }
+        }
         shell_cwd[0] = '/';
         shell_cwd[1] = '\0';
         return 1;
