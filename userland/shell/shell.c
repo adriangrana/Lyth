@@ -196,6 +196,9 @@ static shell_redir_file_t shell_redir_files[SHELL_REDIR_MAX];
 static const char* current_theme_name = "default";
 static unsigned char current_theme_banner_color = 0x0B;
 static unsigned char current_theme_hint_color = 0x07;
+static char shell_storage_root[VFS_PATH_MAX] = "/";
+static char shell_home_path[VFS_PATH_MAX];
+static int shell_profile_loading = 0;
 
 static void shell_apply_theme(const char* name, int print_feedback);
 static int shell_find_unquoted_char(const char* text, char target);
@@ -206,9 +209,21 @@ static int shell_has_pipe_input(void);
 static int shell_redir_find(const char* name);
 static int shell_redir_store(const char* name, const char* content, unsigned int length, int append);
 static int shell_read_text_source(const char* name, char* buffer, unsigned int buffer_size);
+static int shell_env_set(const char* name, const char* value);
+static int shell_execute_script_text(const char* text);
 static int shell_execute_line_raw(const char* line);
 static unsigned int shell_parse_mode_octal(const char* s, int* ok);
 static void shell_print_mode_octal(unsigned int mode);
+static int shell_path_is_dir(const char* path);
+static int shell_ensure_dir(const char* path);
+static int shell_mkdir_p(const char* path);
+static void shell_select_storage_root(void);
+static void shell_build_rooted_path(const char* suffix, char* out, unsigned int out_size);
+static void shell_build_user_home_path(const char* username, char* out, unsigned int out_size);
+static void shell_append_text(char* dst, unsigned int max, unsigned int* pos, const char* src);
+static void shell_write_user_profile(void);
+static int shell_source_vfs_script(const char* path);
+static void shell_apply_user_session(int load_global_rc);
 
 static int is_env_name_char(char c) {
     return (c >= 'a' && c <= 'z') ||
@@ -230,6 +245,223 @@ static void copy_bounded(char* dst, const char* src, int dst_size) {
     }
 
     dst[index] = '\0';
+}
+
+static int shell_path_is_dir(const char* path) {
+    vfs_stat_t st;
+    if (!path) return 0;
+    if (vfs_stat(path, &st) != 0) return 0;
+    return (st.flags & VFS_FLAG_DIR) ? 1 : 0;
+}
+
+static int shell_ensure_dir(const char* path) {
+    if (!path || path[0] == '\0') return 0;
+    if (shell_path_is_dir(path)) return 1;
+    if (vfs_create(path, VFS_FLAG_DIR) == 0) return 1;
+    return shell_path_is_dir(path);
+}
+
+static int shell_mkdir_p(const char* path) {
+    char tmp[VFS_PATH_MAX];
+    unsigned int i;
+    unsigned int len = 0;
+
+    if (!path || path[0] != '/') return 0;
+
+    for (i = 0; path[i] != '\0' && i < VFS_PATH_MAX - 1U; i++) {
+        tmp[i] = path[i];
+        len = i + 1U;
+    }
+    tmp[len] = '\0';
+
+    if (len == 0U) return 0;
+    if (len == 1U && tmp[0] == '/') return 1;
+
+    for (i = 1; i < len; i++) {
+        if (tmp[i] != '/') continue;
+        tmp[i] = '\0';
+        if (!shell_ensure_dir(tmp)) return 0;
+        tmp[i] = '/';
+    }
+
+    return shell_ensure_dir(tmp);
+}
+
+static void shell_select_storage_root(void) {
+    const char* candidates[] = { "/hd0p1", "/hd0", "/" };
+
+    for (unsigned int i = 0; i < (sizeof(candidates) / sizeof(candidates[0])); i++) {
+        if (shell_path_is_dir(candidates[i])) {
+            copy_bounded(shell_storage_root, candidates[i], VFS_PATH_MAX);
+            return;
+        }
+    }
+
+    copy_bounded(shell_storage_root, "/", VFS_PATH_MAX);
+}
+
+static void shell_build_rooted_path(const char* suffix, char* out, unsigned int out_size) {
+    unsigned int w = 0;
+    unsigned int i;
+
+    if (!out || out_size == 0U) return;
+    out[0] = '\0';
+
+    if (!suffix) return;
+
+    if (str_equals(shell_storage_root, "/")) {
+        out[w++] = '/';
+    } else {
+        for (i = 0; shell_storage_root[i] != '\0' && w + 1U < out_size; i++)
+            out[w++] = shell_storage_root[i];
+        if (w + 1U < out_size && out[w - 1U] != '/') out[w++] = '/';
+    }
+
+    for (i = (suffix[0] == '/') ? 1U : 0U; suffix[i] != '\0' && w + 1U < out_size; i++)
+        out[w++] = suffix[i];
+
+    out[w] = '\0';
+}
+
+static void shell_build_user_home_path(const char* username, char* out, unsigned int out_size) {
+    char base[VFS_PATH_MAX];
+    unsigned int w = 0;
+    unsigned int i;
+
+    shell_build_rooted_path("/home", base, sizeof(base));
+
+    if (!out || out_size == 0U) return;
+    out[0] = '\0';
+
+    for (i = 0; base[i] != '\0' && w + 1U < out_size; i++) out[w++] = base[i];
+    if (w + 1U < out_size && (w == 0U || out[w - 1U] != '/')) out[w++] = '/';
+    for (i = 0; username && username[i] != '\0' && w + 1U < out_size; i++) out[w++] = username[i];
+    out[w] = '\0';
+}
+
+static void shell_append_text(char* dst, unsigned int max, unsigned int* pos, const char* src) {
+    unsigned int i;
+    if (!dst || !pos || !src || max == 0U) return;
+    for (i = 0; src[i] != '\0' && *pos + 1U < max; i++) {
+        dst[*pos] = src[i];
+        (*pos)++;
+    }
+    dst[*pos] = '\0';
+}
+
+static void shell_write_user_profile(void) {
+    char profile_path[VFS_PATH_MAX];
+    char body[256];
+    const char* layout_name;
+    unsigned int len = 0;
+    int fd;
+
+    if (shell_profile_loading) return;
+    if (shell_home_path[0] == '\0') return;
+
+    copy_bounded(profile_path, shell_home_path, VFS_PATH_MAX);
+    {
+        unsigned int p = str_length(profile_path);
+        const char* suffix = "/.lythrc";
+        unsigned int i;
+        for (i = 0; suffix[i] != '\0' && p + 1U < VFS_PATH_MAX; i++) {
+            profile_path[p++] = suffix[i];
+        }
+        profile_path[p] = '\0';
+    }
+
+    body[0] = '\0';
+    shell_append_text(body, sizeof(body), &len, "theme ");
+    shell_append_text(body, sizeof(body), &len, current_theme_name);
+    shell_append_text(body, sizeof(body), &len, "\n");
+    shell_append_text(body, sizeof(body), &len, "keymap ");
+    layout_name = keyboard_layout_name(keyboard_get_layout());
+    shell_append_text(body, sizeof(body), &len, layout_name ? layout_name : "us");
+    shell_append_text(body, sizeof(body), &len, "\n");
+
+    fd = vfs_open_flags(profile_path, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC);
+    if (fd < 0) return;
+    vfs_write(fd, (const unsigned char*)body, len);
+    vfs_close(fd);
+}
+
+static int shell_source_vfs_script(const char* path) {
+    vfs_stat_t st;
+    int fd;
+    char* buf;
+    unsigned int read_total = 0U;
+
+    if (!path) return 0;
+    if (vfs_stat(path, &st) != 0) return 0;
+    if (st.flags & VFS_FLAG_DIR) return 0;
+
+    fd = vfs_open(path);
+    if (fd < 0) return 0;
+
+    buf = (char*)kmalloc(st.size + 1U);
+    if (!buf) {
+        vfs_close(fd);
+        return 0;
+    }
+
+    while (read_total < st.size) {
+        int n = vfs_read(fd,
+                         (unsigned char*)(buf + read_total),
+                         st.size - read_total);
+        if (n <= 0) break;
+        read_total += (unsigned int)n;
+    }
+    vfs_close(fd);
+    buf[read_total] = '\0';
+
+    shell_profile_loading = 1;
+    shell_execute_script_text(buf);
+    shell_profile_loading = 0;
+    kfree(buf);
+    return 1;
+}
+
+static void shell_apply_user_session(int load_global_rc) {
+    char etc_path[VFS_PATH_MAX];
+    char home_root[VFS_PATH_MAX];
+    char global_rc[VFS_PATH_MAX];
+    char user_rc[VFS_PATH_MAX];
+    const char* username = ugdb_username(task_current_euid());
+
+    if (!username || username[0] == '\0') username = "user";
+
+    shell_select_storage_root();
+
+    shell_build_rooted_path("/etc", etc_path, sizeof(etc_path));
+    shell_build_rooted_path("/home", home_root, sizeof(home_root));
+
+    shell_mkdir_p(etc_path);
+    shell_mkdir_p(home_root);
+
+    shell_build_user_home_path(username, shell_home_path, sizeof(shell_home_path));
+    shell_mkdir_p(shell_home_path);
+
+    copy_bounded(shell_cwd, shell_home_path, VFS_PATH_MAX);
+    shell_env_set("HOME", shell_home_path);
+    shell_env_set("USER", username);
+
+    if (load_global_rc) {
+        shell_build_rooted_path("/etc/bootrc.sh", global_rc, sizeof(global_rc));
+        (void)shell_source_vfs_script(global_rc);
+    }
+
+    copy_bounded(user_rc, shell_home_path, sizeof(user_rc));
+    {
+        unsigned int p = str_length(user_rc);
+        const char* suffix = "/.lythrc";
+        unsigned int i;
+        for (i = 0; suffix[i] != '\0' && p + 1U < sizeof(user_rc); i++) user_rc[p++] = suffix[i];
+        user_rc[p] = '\0';
+    }
+
+    if (!shell_source_vfs_script(user_rc)) {
+        shell_write_user_profile();
+    }
 }
 
 static int shell_env_find(const char* name) {
@@ -1023,6 +1255,7 @@ static int cmd_set(int argc, const char* argv[], int background) {
     terminal_print(argv[1]);
     terminal_print("=");
     terminal_print_line(value);
+    shell_write_user_profile();
     return 1;
 }
 
@@ -1041,6 +1274,7 @@ static int cmd_unset(int argc, const char* argv[], int background) {
 
     terminal_print("Variable eliminada: ");
     terminal_print_line(argv[1]);
+    shell_write_user_profile();
     return 1;
 }
 
@@ -1067,6 +1301,7 @@ static int cmd_keymap(int argc, const char* argv[], int background) {
     keyboard_set_layout(layout);
     terminal_print("Layout activo: ");
     terminal_print_line(keyboard_layout_name(layout));
+    shell_write_user_profile();
     return 1;
 }
 
@@ -1117,6 +1352,12 @@ static int cmd_theme(int argc, const char* argv[], int background) {
     }
 
     shell_apply_theme(argv[1], 1);
+    if (str_equals(argv[1], "default") ||
+        str_equals(argv[1], "matrix") ||
+        str_equals(argv[1], "amber") ||
+        str_equals(argv[1], "ice")) {
+        shell_write_user_profile();
+    }
     return 1;
 }
 
@@ -2126,6 +2367,7 @@ static int cmd_su(int argc, const char* argv[], int background) {
     }
 
     task_force_identity(user->uid, user->gid);
+    shell_apply_user_session(0);
     terminal_print("sesion -> ");
     terminal_print(user->name);
     terminal_print(" (uid=");
@@ -2146,9 +2388,11 @@ static int cmd_yield(int argc, const char* argv[], int background) {
 void shell_init(void) {
     shell_cwd[0] = '/';
     shell_cwd[1] = '\0';
+    shell_home_path[0] = '\0';
     shell_env_set("OS", "Lyth");
     shell_env_set("ARCH", "i386");
     shell_apply_theme("default", 0);
+    shell_apply_user_session(1);
     shell_print_banner();
 }
 

@@ -165,8 +165,8 @@
 ## 16. UX
 - [x] Shell usable
 - [x] Tema visual
-- [ ] Config persistente
-- [ ] Persistencia por usuario
+- [x] Config persistente
+- [x] Persistencia por usuario
 - [ ] Utilidades básicas del sistema
 - [ ] Ayuda / man básico
 
