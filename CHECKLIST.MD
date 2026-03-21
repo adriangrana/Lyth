@@ -148,12 +148,12 @@
 - [x] Pipeline PSF
 - [x] CI
 - [x] Tests
-- [ ] Documentación técnica
+- [x] Documentación técnica
 
 ## 18. Roadmap siguiente
 
 ### Fase 1: estabilidad base
-- [ ] Cerrar pendientes de documentación técnica
+- [x] Cerrar pendientes de documentación técnica
 - [ ] Añadir pruebas automatizadas para módulos aislados
 - [x] Reforzar validación de punteros en syscalls y loader ELF
 - [ ] Reducir regresiones del teclado y la consola con casos de prueba manuales

@@ -52,6 +52,7 @@ El objetivo del proyecto es tener una base pequeña pero completa sobre la que s
 - `drivers/input`: teclado, ratón PS/2 y capa de input genérico.
 - `userland/shell`: shell, editor de línea y parser.
 - `fs`: filesystem en memoria.
+- `docs/TECHNICAL.md`: documentación técnica del kernel, subsistemas y flujo de arranque.
 - `lib`: utilidades base como cadenas.
 - `include`: headers organizados con la misma lógica por subsistemas.
 
