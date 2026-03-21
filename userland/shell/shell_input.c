@@ -76,18 +76,28 @@ static int max_int(int a, int b) {
 }
 
 static int shell_input_prompt_length(void) {
-    /* Format: [lyth:<cwd>]$ */
-    return 1 + (int)str_length(PROMPT_LABEL) + 1 + (int)str_length(shell_get_cwd())
+    /* Format: [user@lyth:<cwd>]$ */
+    return 1 + (int)str_length(shell_get_current_user()) + 1
+           + (int)str_length(PROMPT_LABEL) + 1 + (int)str_length(shell_get_cwd())
            + 1 + (int)str_length(PROMPT_SUFFIX);
 }
 
 static int shell_input_render_prompt(void) {
+    const char* user   = shell_get_current_user();
     const char* label  = PROMPT_LABEL;
     const char* cwd    = shell_get_cwd();
     const char* suffix = PROMPT_SUFFIX;
     int length = 0;
 
     terminal_put_char_with_color('[', prompt_bracket_color);
+    length++;
+
+    for (int i = 0; user[i] != '\0'; i++) {
+        terminal_put_char_with_color(user[i], prompt_label_color);
+        length++;
+    }
+
+    terminal_put_char_with_color('@', prompt_bracket_color);
     length++;
 
     for (int i = 0; label[i] != '\0'; i++) {

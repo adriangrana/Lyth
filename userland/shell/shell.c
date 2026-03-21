@@ -130,6 +130,11 @@ static char shell_cwd[VFS_PATH_MAX];
 
 const char* shell_get_cwd(void) { return shell_cwd; }
 
+const char* shell_get_current_user(void) {
+    const char* name = ugdb_username(task_current_euid());
+    return (name && name[0] != '\0') ? name : "user";
+}
+
 static command_t commands[] = {
     {"help",    cmd_help,    "muestra esta ayuda"},
     {"clear",   cmd_clear,   "limpia la pantalla"},
@@ -2493,6 +2498,22 @@ void shell_init(void) {
     shell_env_set("ARCH", "i386");
     shell_apply_theme("default", 0);
     shell_apply_user_session(1);
+
+    /* Pre-create home directories for all registered users so they exist
+       from boot even before anyone runs 'su'.  We iterate possible UIDs
+       while we still hold root privileges (euid=0). */
+    {
+        unsigned int uid;
+        for (uid = 0; uid < UGDB_MAX_USERS; uid++) {
+            const ugdb_user_t* u = ugdb_find_by_uid(uid);
+            if (u) {
+                char pre_home[VFS_PATH_MAX];
+                shell_build_user_home_path(u->name, pre_home, sizeof(pre_home));
+                shell_mkdir_p(pre_home);
+            }
+        }
+    }
+
     shell_print_banner();
 }
 
