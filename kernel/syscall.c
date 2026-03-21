@@ -7,6 +7,7 @@
 #include "heap.h"
 #include "fs.h"
 #include "vfs.h"
+#include "pipe.h"
 #include "paging.h"
 #include "string.h"
 #include <stdint.h>
@@ -55,7 +56,169 @@ static int syscall_deny_user_legacy_fs(void) {
 
 static unsigned int syscall_vfs_flag_mask(void) {
     return VFS_O_RDONLY | VFS_O_WRONLY | VFS_O_APPEND | VFS_O_CREAT |
-           VFS_O_TRUNC | VFS_O_EXCL | VFS_O_DIRECTORY;
+           VFS_O_TRUNC | VFS_O_EXCL | VFS_O_DIRECTORY | VFS_O_NONBLOCK;
+}
+
+static int syscall_fd_alloc_pair(vfs_fd_entry_t* fdt, int* fd0_out, int* fd1_out) {
+    int i;
+    int a = -1;
+    int b = -1;
+
+    if (!fdt || !fd0_out || !fd1_out) return -1;
+
+    for (i = 0; i < VFS_MAX_FD; i++) {
+        if (!fdt[i].used) {
+            if (a < 0) a = i;
+            else { b = i; break; }
+        }
+    }
+
+    if (a < 0 || b < 0) return -1;
+    *fd0_out = a;
+    *fd1_out = b;
+    return 0;
+}
+
+static unsigned int syscall_deadline_to_ticks(unsigned int timeout_ms) {
+    unsigned int hz = timer_get_frequency();
+    if (timeout_ms == 0U) return 0U;
+    if (hz == 0U) return 1U;
+    return (timeout_ms * hz + 999U) / 1000U;
+}
+
+static int syscall_fd_read_ready(vfs_fd_entry_t* table, int fd) {
+    vfs_node_t* node;
+
+    if (table == 0 || fd < 0 || fd >= VFS_MAX_FD || !table[fd].used) {
+        return 0;
+    }
+
+    node = table[fd].node;
+    if (node == 0) {
+        return 0;
+    }
+
+    if (pipe_node_is_pipe(node)) {
+        return pipe_read_ready(node);
+    }
+
+    if ((table[fd].open_flags & VFS_O_RDONLY) == 0U) {
+        return 0;
+    }
+
+    if ((node->flags & VFS_FLAG_DIR) != 0U) {
+        return 1;
+    }
+
+    return table[fd].offset < node->size;
+}
+
+static int syscall_fd_write_ready(vfs_fd_entry_t* table, int fd) {
+    vfs_node_t* node;
+
+    if (table == 0 || fd < 0 || fd >= VFS_MAX_FD || !table[fd].used) {
+        return 0;
+    }
+
+    node = table[fd].node;
+    if (node == 0) {
+        return 0;
+    }
+
+    if (pipe_node_is_pipe(node)) {
+        return pipe_write_ready(node);
+    }
+
+    if ((table[fd].open_flags & VFS_O_WRONLY) == 0U) {
+        return 0;
+    }
+
+    if ((node->flags & VFS_FLAG_DIR) != 0U) {
+        return 0;
+    }
+
+    return 1;
+}
+
+static int syscall_poll_scan(syscall_pollfd_t* pfds, unsigned int nfds,
+                             vfs_fd_entry_t* table) {
+    unsigned int i;
+    int ready_count = 0;
+
+    for (i = 0; i < nfds; i++) {
+        unsigned short revents = 0;
+        int fd = pfds[i].fd;
+
+        if (fd < 0 || fd >= VFS_MAX_FD || table == 0 || !table[fd].used) {
+            revents |= (unsigned short)SYSCALL_POLLERR;
+        } else {
+            if ((pfds[i].events & SYSCALL_POLLIN) && syscall_fd_read_ready(table, fd)) {
+                revents |= (unsigned short)SYSCALL_POLLIN;
+            }
+            if ((pfds[i].events & SYSCALL_POLLOUT) && syscall_fd_write_ready(table, fd)) {
+                revents |= (unsigned short)SYSCALL_POLLOUT;
+            }
+        }
+
+        pfds[i].revents = revents;
+        if (revents != 0U) {
+            ready_count++;
+        }
+    }
+
+    return ready_count;
+}
+
+static int syscall_select_scan(unsigned int nfds,
+                               unsigned int req_read_mask,
+                               unsigned int req_write_mask,
+                               unsigned int* out_read_mask,
+                               unsigned int* out_write_mask,
+                               vfs_fd_entry_t* table,
+                               int* bad_fd_out) {
+    unsigned int fd;
+    int ready = 0;
+    unsigned int rmask = 0U;
+    unsigned int wmask = 0U;
+
+    if (bad_fd_out != 0) {
+        *bad_fd_out = -1;
+    }
+
+    for (fd = 0; fd < nfds; fd++) {
+        unsigned int bit = (1U << fd);
+        int requested_r = (req_read_mask & bit) != 0U;
+        int requested_w = (req_write_mask & bit) != 0U;
+
+        if (!requested_r && !requested_w) {
+            continue;
+        }
+
+        if (fd >= VFS_MAX_FD || table == 0 || !table[fd].used) {
+            if (bad_fd_out != 0) {
+                *bad_fd_out = (int)fd;
+            }
+            return -1;
+        }
+
+        if (requested_r && syscall_fd_read_ready(table, (int)fd)) {
+            rmask |= bit;
+            ready++;
+        }
+        if (requested_w && syscall_fd_write_ready(table, (int)fd)) {
+            wmask |= bit;
+            ready++;
+        }
+    }
+
+    if (out_read_mask != 0) {
+        *out_read_mask = rmask;
+    }
+    if (out_write_mask != 0) {
+        *out_write_mask = wmask;
+    }
+
+    return ready;
 }
 
 static int syscall_copy_string_to_buffer(const char* source, char* destination, unsigned int buffer_size) {
@@ -413,7 +576,8 @@ unsigned int syscall_callback(unsigned int number,
             }
             {
                 int n = vfs_read((int)arg0, (unsigned char*)arg1, arg2);
-                if (n < 0) task_set_errno(9); /* EBADF/EACCES generic */
+                if (n == -2) task_set_errno(11);      /* EAGAIN */
+                else if (n < 0) task_set_errno(9);    /* EBADF/EACCES generic */
                 return (unsigned int)n;
             }
 
@@ -424,7 +588,9 @@ unsigned int syscall_callback(unsigned int number,
             }
             {
                 int n = vfs_write((int)arg0, (const unsigned char*)arg1, arg2);
-                if (n < 0) task_set_errno(9); /* EBADF/EACCES generic */
+                if (n == -2) task_set_errno(11);      /* EAGAIN */
+                else if (n == -3) task_set_errno(32); /* EPIPE */
+                else if (n < 0) task_set_errno(9);    /* EBADF/EACCES generic */
                 return (unsigned int)n;
             }
 
@@ -632,6 +798,171 @@ unsigned int syscall_callback(unsigned int number,
 
         case SYSCALL_GET_MONOTONIC_MS:
             return timer_get_uptime_ms();
+
+        case SYSCALL_POLL: {
+            syscall_pollfd_t* pfds = (syscall_pollfd_t*)arg0;
+            unsigned int nfds = arg1;
+            unsigned int timeout_ms = arg2;
+            unsigned int waited = 0U;
+            unsigned int budget_ticks = syscall_deadline_to_ticks(timeout_ms);
+            vfs_fd_entry_t* table = task_current_fd_table();
+
+            if (nfds > VFS_MAX_FD) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+            if (nfds > 0U && !syscall_validate_user_buffer(pfds, nfds * sizeof(syscall_pollfd_t))) {
+                task_set_errno(14); /* EFAULT */
+                return (unsigned int)-1;
+            }
+
+            for (;;) {
+                int ready = syscall_poll_scan(pfds, nfds, table);
+                if (ready > 0) {
+                    return (unsigned int)ready;
+                }
+
+                if (timeout_ms == 0U) {
+                    return 0;
+                }
+
+                if (timeout_ms != 0xFFFFFFFFU && waited >= budget_ticks) {
+                    return 0;
+                }
+
+                task_sleep(1);
+                waited++;
+            }
+        }
+
+        case SYSCALL_SELECT: {
+            unsigned int nfds = arg0;
+            unsigned int* read_mask_io = (unsigned int*)arg1;
+            unsigned int* write_mask_io = (unsigned int*)arg2;
+            unsigned int timeout_ms = arg3;
+            unsigned int in_r = 0U;
+            unsigned int in_w = 0U;
+            unsigned int out_r = 0U;
+            unsigned int out_w = 0U;
+            unsigned int waited = 0U;
+            unsigned int budget_ticks = syscall_deadline_to_ticks(timeout_ms);
+            int bad_fd = -1;
+            vfs_fd_entry_t* table = task_current_fd_table();
+
+            if (nfds > VFS_MAX_FD || nfds > 32U) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+
+            if (read_mask_io != 0) {
+                if (!syscall_validate_user_buffer(read_mask_io, sizeof(unsigned int))) {
+                    task_set_errno(14); /* EFAULT */
+                    return (unsigned int)-1;
+                }
+                in_r = *read_mask_io;
+            }
+
+            if (write_mask_io != 0) {
+                if (!syscall_validate_user_buffer(write_mask_io, sizeof(unsigned int))) {
+                    task_set_errno(14); /* EFAULT */
+                    return (unsigned int)-1;
+                }
+                in_w = *write_mask_io;
+            }
+
+            if (nfds < 32U) {
+                unsigned int valid = (nfds == 0U) ? 0U : ((1U << nfds) - 1U);
+                in_r &= valid;
+                in_w &= valid;
+            }
+
+            for (;;) {
+                int ready = syscall_select_scan(nfds, in_r, in_w, &out_r, &out_w, table, &bad_fd);
+                if (ready < 0) {
+                    task_set_errno(9); /* EBADF */
+                    return (unsigned int)-1;
+                }
+                if (ready > 0) {
+                    if (read_mask_io != 0) {
+                        *read_mask_io = out_r;
+                    }
+                    if (write_mask_io != 0) {
+                        *write_mask_io = out_w;
+                    }
+                    return (unsigned int)ready;
+                }
+
+                if (timeout_ms == 0U) {
+                    if (read_mask_io != 0) *read_mask_io = 0U;
+                    if (write_mask_io != 0) *write_mask_io = 0U;
+                    return 0;
+                }
+
+                if (timeout_ms != 0xFFFFFFFFU && waited >= budget_ticks) {
+                    if (read_mask_io != 0) *read_mask_io = 0U;
+                    if (write_mask_io != 0) *write_mask_io = 0U;
+                    return 0;
+                }
+
+                task_sleep(1);
+                waited++;
+            }
+        }
+
+        case SYSCALL_PIPE: {
+            int* fds_user = (int*)arg0;
+            unsigned int flags = arg1;
+            vfs_fd_entry_t* fdt;
+            vfs_node_t* rd = 0;
+            vfs_node_t* wr = 0;
+            int fd0, fd1;
+
+            if ((flags & ~SYSCALL_PIPE_NONBLOCK) != 0U) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+
+            if (!syscall_validate_user_buffer(fds_user, sizeof(int) * 2U)) {
+                task_set_errno(14); /* EFAULT */
+                return (unsigned int)-1;
+            }
+
+            fdt = task_current_fd_table();
+            if (fdt == 0) {
+                task_set_errno(9); /* EBADF */
+                return (unsigned int)-1;
+            }
+
+            if (syscall_fd_alloc_pair(fdt, &fd0, &fd1) != 0) {
+                task_set_errno(24); /* EMFILE */
+                return (unsigned int)-1;
+            }
+
+            if (pipe_create(&rd, &wr,
+                            (flags & SYSCALL_PIPE_NONBLOCK) ? PIPE_FLAG_NONBLOCK : 0U) != 0) {
+                task_set_errno(12); /* ENOMEM */
+                return (unsigned int)-1;
+            }
+
+            rd->ref_count = 1U;
+            wr->ref_count = 1U;
+
+            fdt[fd0].node = rd;
+            fdt[fd0].offset = 0U;
+            fdt[fd0].open_flags = VFS_O_RDONLY;
+            if (flags & SYSCALL_PIPE_NONBLOCK) fdt[fd0].open_flags |= VFS_O_NONBLOCK;
+            fdt[fd0].used = 1;
+
+            fdt[fd1].node = wr;
+            fdt[fd1].offset = 0U;
+            fdt[fd1].open_flags = VFS_O_WRONLY;
+            if (flags & SYSCALL_PIPE_NONBLOCK) fdt[fd1].open_flags |= VFS_O_NONBLOCK;
+            fdt[fd1].used = 1;
+
+            fds_user[0] = fd0;
+            fds_user[1] = fd1;
+            return 0;
+        }
 
         default:
             return 0;
@@ -855,4 +1186,31 @@ int syscall_get_time(void* rtc_time_buf) {
 
 unsigned int syscall_get_monotonic_ms(void) {
     return syscall_invoke(SYSCALL_GET_MONOTONIC_MS, 0, 0, 0, 0);
+}
+
+int syscall_poll(syscall_pollfd_t* pfds, unsigned int nfds, unsigned int timeout_ms) {
+    return (int)syscall_invoke(SYSCALL_POLL,
+                               (unsigned int)(uintptr_t)pfds,
+                               nfds,
+                               timeout_ms,
+                               0);
+}
+
+int syscall_select(unsigned int nfds,
+                   unsigned int* read_mask_io,
+                   unsigned int* write_mask_io,
+                   unsigned int timeout_ms) {
+    return (int)syscall_invoke(SYSCALL_SELECT,
+                               nfds,
+                               (unsigned int)(uintptr_t)read_mask_io,
+                               (unsigned int)(uintptr_t)write_mask_io,
+                               timeout_ms);
+}
+
+int syscall_pipe(int fds_out[2], unsigned int flags) {
+    return (int)syscall_invoke(SYSCALL_PIPE,
+                               (unsigned int)(uintptr_t)fds_out,
+                               flags,
+                               0,
+                               0);
 }

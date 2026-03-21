@@ -149,9 +149,9 @@
 - [x] Logs
 - [x] GDB remoto
 - [x] Tests automatizados
-- [ ] Panic screen / crash dump
-- [ ] Backtrace del kernel
-- [ ] Assertions del kernel
+- [x] Panic screen / crash dump
+- [x] Backtrace del kernel
+- [x] Assertions del kernel
 - [x] Logging por niveles
 
 ## 15. Interfaz gráfica
@@ -181,9 +181,9 @@
 - [ ] Toolchain cruzada documentada
 
 ## 18. Componentes avanzados
-- [ ] IPC (pipes avanzados)
+- [x] IPC (pipes avanzados)
 - [ ] Shared memory
 - [ ] Message passing
-- [ ] poll / select
+- [x] poll / select
 - [x] Gestión de errores (errno)
 - [ ] Gestión de recursos (FD limits)

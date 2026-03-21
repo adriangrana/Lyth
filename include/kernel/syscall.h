@@ -40,8 +40,23 @@ enum {
     SYSCALL_WAITPID      = 32,  /* waitpid(pid, *status)    -> child_pid / -1 */
     SYSCALL_EXECVE       = 33,  /* execve(path, argv, envp) -> 0 / -1  (in-place) */
     SYSCALL_GET_TIME     = 34,  /* get_time(rtc_time_t* buf) -> 0 / -1 */
-    SYSCALL_GET_MONOTONIC_MS = 35 /* get_monotonic_ms()      -> ms since boot */
+    SYSCALL_GET_MONOTONIC_MS = 35, /* get_monotonic_ms()      -> ms since boot */
+    SYSCALL_POLL         = 36,  /* poll(pfds, nfds, timeout_ms) -> ready_count */
+    SYSCALL_SELECT       = 37,  /* select(nfds, *rmask, *wmask, timeout_ms) */
+    SYSCALL_PIPE         = 38   /* pipe(int fds[2], flags) */
 };
+
+#define SYSCALL_POLLIN   0x0001U
+#define SYSCALL_POLLOUT  0x0004U
+#define SYSCALL_POLLERR  0x0008U
+
+#define SYSCALL_PIPE_NONBLOCK 0x0001U
+
+typedef struct {
+    int fd;
+    unsigned short events;
+    unsigned short revents;
+} syscall_pollfd_t;
 
 typedef void (*sys_signal_handler_t)(int);
 #define SYSCALL_SIG_DFL ((sys_signal_handler_t)0)
@@ -118,5 +133,13 @@ int  syscall_sigprocmask(unsigned int how, unsigned int mask, unsigned int* old_
 struct rtc_time_t_fwd;  /* forward-declared; include rtc.h for full type */
 int          syscall_get_time(void* rtc_time_buf); /* fills rtc_time_t*  */
 unsigned int syscall_get_monotonic_ms(void);       /* µs-precision mono  */
+
+/* I/O multiplexing */
+int syscall_poll(syscall_pollfd_t* pfds, unsigned int nfds, unsigned int timeout_ms);
+int syscall_select(unsigned int nfds,
+                   unsigned int* read_mask_io,
+                   unsigned int* write_mask_io,
+                   unsigned int timeout_ms);
+int syscall_pipe(int fds_out[2], unsigned int flags);
 
 #endif
