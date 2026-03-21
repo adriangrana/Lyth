@@ -397,7 +397,7 @@ static int shell_source_vfs_script(const char* path) {
     if (vfs_stat(path, &st) != 0) return 0;
     if (st.flags & VFS_FLAG_DIR) return 0;
 
-    fd = vfs_open(path);
+    fd = vfs_open_flags(path, VFS_O_RDONLY);
     if (fd < 0) return 0;
 
     buf = (char*)kmalloc(st.size + 1U);
@@ -1961,7 +1961,7 @@ static int cmd_ls(int argc, const char* argv[], int background) {
         path[_k] = '\0';
     }
 
-    fd = vfs_open(path);
+    fd = vfs_open_flags(path, VFS_O_RDONLY | VFS_O_DIRECTORY);
     if (fd < 0) {
         terminal_print("[error] no se pudo abrir: ");
         terminal_print_line(path);
@@ -2026,7 +2026,7 @@ static int cmd_cat(int argc, const char* argv[], int background) {
 
     shell_resolve_path(argv[1], path, sizeof(path));
 
-    fd = vfs_open(path);
+    fd = vfs_open_flags(path, VFS_O_RDONLY);
     if (fd < 0) {
         terminal_print("[error] Archivo no encontrado: ");
         terminal_print_line(path);
@@ -2071,7 +2071,7 @@ static int cmd_grep(int argc, const char* argv[], int background) {
         int total = 0;
 
         shell_resolve_path(argv[2], path, sizeof(path));
-        fd = vfs_open(path);
+        fd = vfs_open_flags(path, VFS_O_RDONLY);
         if (fd < 0) {
             terminal_print("[error] Archivo no encontrado: ");
             terminal_print_line(path);
@@ -2514,7 +2514,7 @@ static int shell_execute_line_raw(const char* line) {
         char in_path[VFS_PATH_MAX];
         int  in_fd, in_n, in_total = 0;
         shell_resolve_path(input_redirection, in_path, sizeof(in_path));
-        in_fd = vfs_open(in_path);
+        in_fd = vfs_open_flags(in_path, VFS_O_RDONLY);
         if (in_fd < 0) {
             terminal_print("No existe la entrada para redireccion: ");
             terminal_print_line(in_path);
@@ -2802,7 +2802,7 @@ static int cmd_vfs(int argc, const char* argv[], int background) {
         terminal_put_char('\n');
 
         /* Show a summary: how many files accessible through VFS */
-        int fd = vfs_open("/");
+        int fd = vfs_open_flags("/", VFS_O_RDONLY | VFS_O_DIRECTORY);
         if (fd >= 0) {
             char entry[VFS_NAME_MAX];
             int count = 0;
@@ -2848,7 +2848,7 @@ static int cmd_vfs(int argc, const char* argv[], int background) {
             path[_k] = '\0';
         }
 
-        fd = vfs_open(path);
+        fd = vfs_open_flags(path, VFS_O_RDONLY | VFS_O_DIRECTORY);
         if (fd < 0) {
             terminal_print("[error] No se pudo abrir: ");
             terminal_print_line(path);
@@ -2886,7 +2886,7 @@ static int cmd_vfs(int argc, const char* argv[], int background) {
         char path[VFS_PATH_MAX];
         shell_resolve_path(argv[2], path, sizeof(path));
 
-        int fd = vfs_open(path);
+        int fd = vfs_open_flags(path, VFS_O_RDONLY);
         if (fd < 0) {
             terminal_print("[error] Archivo no encontrado: ");
             terminal_print_line(path);
@@ -4064,7 +4064,7 @@ int shell_complete_path(const char* prefix, const char* matches[], int max_match
     }
 
     /* Open the directory via VFS */
-    fd = vfs_open(search_path);
+    fd = vfs_open_flags(search_path, VFS_O_RDONLY | VFS_O_DIRECTORY);
     if (fd < 0) return 0;
 
     idx = 0;
