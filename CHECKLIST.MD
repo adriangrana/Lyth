@@ -29,7 +29,7 @@
 - [x] Cursor lógico básico
 - [x] Cursor parpadeante robusto sin borrar texto subyacente
 - [x] Márgenes/padding de consola
-- [ ] Prompt visual mejorado
+- [x] Prompt visual mejorado
 - [x] Buffer de pantalla independiente del renderer
 - [x] Backend de consola desacoplado
 - [ ] Soporte UTF-8 básico
@@ -43,8 +43,8 @@
 - [x] int 0x80 para syscalls
 - [x] PIT configurado a 100 Hz
 - [x] Contador global de ticks
-- [ ] Manejadores de excepciones CPU completos
-- [ ] Page fault handler útil
+- [x] Manejadores de excepciones CPU completos
+- [x] Page fault handler útil
 - [ ] APIC / IOAPIC
 - [ ] HPET
 
@@ -53,9 +53,14 @@
 - [x] Lectura de scancodes
 - [x] Cola de eventos
 - [x] Editor de línea avanzado
-- [ ] Layouts de teclado
-- [ ] Ratón PS/2
-- [ ] Input genérico
+- [x] Layouts de teclado
+- [x] Soporte para `AltGr`
+- [x] Soporte para `Caps Lock`
+- [x] Teclas extendidas (`Insert`, `Delete`, `Home`, `End`, `Page Up`, `Page Down`)
+- [x] Teclado numérico con `Num Lock`
+- [x] Modo overwrite con `Insert`
+- [x] Ratón PS/2
+- [x] Input genérico
 
 ## 5. Shell
 - [x] Shell interactiva
@@ -63,40 +68,40 @@
 - [x] Historial
 - [x] Autocompletado
 - [x] Comandos básicos
-- [ ] Variables de entorno
-- [ ] Pipes
-- [ ] Redirección
-- [ ] Scripts
+- [x] Variables de entorno
+- [x] Pipes
+- [x] Redirección
+- [x] Scripts
 
 ## 6. Scheduler
 - [x] Scheduler cooperativo
 - [x] Sleep / yield
 - [x] Cancelación de tareas
 - [x] Multitarea preemptiva
-- [ ] Prioridades
-- [ ] Bloqueo por eventos
+- [x] Prioridades
+- [x] Bloqueo por eventos
 
 ## 7. Memoria
 - [x] Heap básico
 - [x] Gestor de memoria física
 - [x] Paginación
-- [ ] Espacio virtual por proceso
+- [x] Espacio virtual por proceso
 
 ## 8. Syscalls
 - [x] Dispatcher
 - [x] Syscalls básicas
-- [ ] ABI estable
-- [ ] Validación de punteros
+- [x] ABI estable
+- [x] Validación de punteros
 
 ## 9. Filesystem
 - [x] FS en memoria (RO)
-- [ ] FS escribible
+- [x] FS escribible
 - [ ] VFS
 - [ ] Soporte disco real
 
 ## 10. Procesos
-- [ ] Modo usuario
-- [ ] ELF loader
+- [x] Modo usuario
+- [x] ELF loader
 - [ ] fork/exec
 - [ ] Señales
 
@@ -115,26 +120,27 @@
 - [ ] DHCP / DNS
 
 ## 13. Seguridad
-- [ ] Separación kernel/user
+- [x] Separación kernel/user
 - [ ] Permisos
-- [ ] Protección memoria
+- [x] Protección memoria
 
 ## 14. Debug
 - [x] QEMU debug
 - [x] Diagnóstico framebuffer
-- [ ] Logs avanzados
-- [ ] GDB remoto
+- [x] Logs avanzados
+- [x] GDB remoto
 
 ## 15. Interfaz gráfica
 - [x] Framebuffer
-- [ ] Primitivas gráficas
+- [x] Primitivas gráficas
 - [ ] Ventanas
 - [ ] GUI completa
 
 ## 16. UX
 - [x] Shell usable
-- [ ] Cursor mejorado
-- [ ] Tema visual
+- [x] Cursor mejorado
+- [x] Tema visual
+- [x] Cursor distinto en modo overwrite
 - [ ] Config persistente
 
 ## 17. Build & mantenimiento
