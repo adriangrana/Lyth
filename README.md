@@ -4,6 +4,12 @@ Kernel hobby para x86 de 32 bits escrito en C + ASM, arrancado con GRUB mediante
 
 El proyecto ya no está limitado a texto VGA puro: actualmente intenta arrancar en modo gráfico framebuffer y dibuja una consola propia sobre píxeles, con fallback implícito a la ruta clásica si el framebuffer no está disponible.
 
+## Descripción del proyecto
+
+Lyth OS es un sistema operativo educativo y experimental para x86 de 32 bits, pensado para explorar desde el arranque con GRUB hasta la multitarea, la gestión de memoria, la entrada por teclado y ratón, y una shell interactiva propia.
+
+El objetivo del proyecto es tener una base pequeña pero completa sobre la que seguir iterando, con foco en entender cómo se conectan los subsistemas clásicos de un kernel: vídeo, interrupciones, scheduler, syscalls, filesystem y user mode.
+
 ## Estado actual
 
 - Arranque Multiboot válido con GRUB.
