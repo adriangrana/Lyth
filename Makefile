@@ -132,4 +132,8 @@ clean: ## borra build/, dist/ y la cabecera generada de la fuente PSF
 	rm -rf $(BUILD_DIR) $(DIST_DIR)
 	rm -f $(FONT_HEADER)
 
+test: compile create-iso ## ejecuta comprobaciones basicas de compilacion e ISO
+	grub-file --is-x86-multiboot $(KERNEL_BIN)
+	test -s $(ISO_IMAGE)
+
 run: clean compile create-iso execute ## flujo completo: limpia, compila, crea ISO y ejecuta

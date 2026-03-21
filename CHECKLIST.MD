@@ -146,6 +146,26 @@
 ## 17. Build & mantenimiento
 - [x] Makefile
 - [x] Pipeline PSF
-- [ ] CI
-- [ ] Tests
+- [x] CI
+- [x] Tests
 - [ ] Documentación técnica
+
+## 18. Roadmap siguiente
+
+### Fase 1: estabilidad base
+- [ ] Cerrar pendientes de documentación técnica
+- [ ] Añadir pruebas automatizadas para módulos aislados
+- [x] Reforzar validación de punteros en syscalls y loader ELF
+- [ ] Reducir regresiones del teclado y la consola con casos de prueba manuales
+
+### Fase 2: experiencia de usuario
+- [ ] Config persistente para temas y layout de teclado
+- [x] Mejorar autocompletado con rutas y scripts
+- [x] Revisar edición de línea para selección, overwrite y pegado
+- [ ] Pulir cursor y comportamiento visual en framebuffer/VGA
+
+### Fase 3: sistema operativo más completo
+- [ ] VFS sobre el FS en memoria
+- [ ] Soporte de disco real
+- [ ] Ventanas y GUI básica
+- [ ] Red inicial: TCP/IP, sockets y DHCP/DNS
