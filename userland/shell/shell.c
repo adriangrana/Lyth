@@ -210,6 +210,7 @@ static int shell_redir_find(const char* name);
 static int shell_redir_store(const char* name, const char* content, unsigned int length, int append);
 static int shell_read_text_source(const char* name, char* buffer, unsigned int buffer_size);
 static int shell_env_set(const char* name, const char* value);
+static const char* shell_env_get(const char* name);
 static int shell_execute_script_text(const char* text);
 static int shell_execute_line_raw(const char* line);
 static unsigned int shell_parse_mode_octal(const char* s, int* ok);
@@ -224,6 +225,7 @@ static void shell_append_text(char* dst, unsigned int max, unsigned int* pos, co
 static void shell_write_user_profile(void);
 static int shell_source_vfs_script(const char* path);
 static void shell_apply_user_session(int load_global_rc);
+static void shell_sanitize_cwd(void);
 
 static int is_env_name_char(char c) {
     return (c >= 'a' && c <= 'z') ||
@@ -480,6 +482,22 @@ static void shell_apply_user_session(int load_global_rc) {
     if (!shell_source_vfs_script(user_rc)) {
         shell_write_user_profile();
     }
+
+    shell_sanitize_cwd();
+}
+
+static void shell_sanitize_cwd(void) {
+    const char* home;
+    if (shell_path_is_dir(shell_cwd)) return;
+
+    home = shell_env_get("HOME");
+    if (home && home[0] != '\0' && shell_path_is_dir(home)) {
+        copy_bounded(shell_cwd, home, VFS_PATH_MAX);
+        return;
+    }
+
+    shell_cwd[0] = '/';
+    shell_cwd[1] = '\0';
 }
 
 static int shell_env_find(const char* name) {
