@@ -15,6 +15,10 @@
 #include "physmem.h"
 #include "paging.h"
 #include "klog.h"
+#include "ata.h"
+#include "blkdev.h"
+#include "fat16.h"
+#include "init.h"
 
 static void terminal_write_uint(uint32_t value) {
     char buffer[16];
@@ -126,25 +130,72 @@ void kernel_main(unsigned long mbi_ptr) {
     } else {
         klog_write(KLOG_LEVEL_WARN, "mouse", "Ratón PS/2 no disponible");
     }
-    shell_input_init();
-    klog_write(KLOG_LEVEL_INFO, "shell", "Shell interactiva lista");
-
     interrupts_init();
     klog_write(KLOG_LEVEL_INFO, "irq", "IDT/PIC/PIT inicializados");
 
-    while (1) {
-        input_event_t event;
+    ata_init();
+    if (ata_is_present(ATA_DRIVE_MASTER))
+        klog_write(KLOG_LEVEL_INFO, "ata", "Disco 0 (master) detectado");
+    else
+        klog_write(KLOG_LEVEL_WARN, "ata", "Disco 0 (master) no detectado");
+    if (ata_is_present(ATA_DRIVE_SLAVE))
+        klog_write(KLOG_LEVEL_INFO, "ata", "Disco 1 (slave) detectado");
 
-        while (input_poll_event(&event)) {
-            if (event.device_type == INPUT_DEVICE_MOUSE && fb_active()) {
-                mouse_get_state(&mouse_state);
-                fb_move_mouse_cursor(mouse_state.x, mouse_state.y);
+    blkdev_init();
+    {
+        int idx;
+        idx = blkdev_register_ata(ATA_DRIVE_MASTER);
+        if (idx >= 0) {
+            klog_write(KLOG_LEVEL_INFO, "blkdev", "hd0 registrado");
+            if (blkdev_probe_partitions(idx) > 0)
+                klog_write(KLOG_LEVEL_INFO, "blkdev", "Particiones hd0 detectadas");
+        }
+        idx = blkdev_register_ata(ATA_DRIVE_SLAVE);
+        if (idx >= 0) {
+            klog_write(KLOG_LEVEL_INFO, "blkdev", "hd1 registrado");
+            if (blkdev_probe_partitions(idx) > 0)
+                klog_write(KLOG_LEVEL_INFO, "blkdev", "Particiones hd1 detectadas");
+        }
+        klog_write(KLOG_LEVEL_INFO, "blkdev", "Capa de bloques lista");
+    }
+
+    /* Auto-mount FAT16 partitions --------------------------------- */
+    {
+        int di;
+        int fat_count = 0;
+
+        for (di = 0; di < BLKDEV_MAX; di++) {
+            blkdev_t     dev;
+            vfs_node_t*  fat_root;
+            char         mnt[VFS_PATH_MAX];
+            unsigned int k;
+
+            if (blkdev_get(di, &dev) < 0) continue;
+
+            fat_root = fat16_mount(di);
+            if (!fat_root) continue;
+
+            /* Mount at /<devname> (e.g. /hd0p1) */
+            mnt[0] = '/';
+            for (k = 0; dev.name[k] && k < VFS_PATH_MAX - 2U; k++)
+                mnt[k + 1] = dev.name[k];
+            mnt[k + 1] = '\0';
+
+            if (vfs_mount(mnt, fat_root) == 0) {
+                klog_write(KLOG_LEVEL_INFO, "fat16", "FAT16 montado");
+                fat_count++;
             }
-
-            shell_input_handle_event(&event);
         }
 
-        terminal_update_cursor();
+        if (fat_count == 0)
+            klog_write(KLOG_LEVEL_INFO, "fat16", "Sin particiones FAT16 detectadas");
+    }
+
+    /* Spawn the init task (PID 1) — owns the shell and event loop. */
+    init_start();
+    klog_write(KLOG_LEVEL_INFO, "init", "Proceso init (PID 1) creado");
+
+    while (1) {
         __asm__ volatile ("hlt");
     }
 }

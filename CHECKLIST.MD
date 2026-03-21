@@ -1,171 +1,186 @@
-# Lyth OS Checklist
+# Lyth OS - Checklist Refinado
 
-## 1. Arranque y base mínima
-- [x] Arrancar con GRUB + Multiboot
-- [x] Tener boot.s y salto correcto a kernel_main
-- [x] Enlazar kernel ELF32 con linker.ld
-- [x] Arrancar en x86 de 32 bits
-- [x] Crear stack inicial del kernel
-- [x] Bucle principal del kernel
-- [x] Build automático con Makefile
-- [x] Generar ISO arrancable
-- [x] Ejecutar en QEMU
-- [ ] Soporte para arranque en hardware real
-- [ ] Soporte UEFI
-- [ ] Soporte SMP / múltiples CPUs
+## 1. Arranque y arquitectura base
+- [x] GRUB + Multiboot
+- [x] Kernel ELF32
+- [x] Stack inicial
+- [ ] Soporte hardware real
+- [ ] UEFI
+- [ ] SMP (multicore)
 
-## 2. Consola y salida básica
-- [x] Consola VGA texto básica
-- [x] Fallback VGA cuando no hay framebuffer
-- [x] Consola framebuffer propia
-- [x] Limpiar pantalla
-- [x] Scroll de consola
-- [x] Escribir caracteres individuales
-- [x] Imprimir cadenas
-- [x] Cambiar color de texto
-- [x] Fuente bitmap funcional
-- [x] Fuente 8x16 real vía PSF
-- [x] Mostrar diagnóstico de framebuffer al arranque
-- [x] Cursor lógico básico
-- [x] Cursor parpadeante robusto sin borrar texto subyacente
-- [x] Márgenes/padding de consola
-- [x] Prompt visual mejorado
-- [x] Buffer de pantalla independiente del renderer
-- [x] Backend de consola desacoplado
-- [ ] Soporte UTF-8 básico
-- [ ] Consolas virtuales múltiples
+## 2. Consola y salida
+- [x] VGA + framebuffer
+- [x] Consola desacoplada
+- [x] UTF-8 básico
+- [ ] Consolas virtuales
 
-## 3. Interrupciones y temporización
-- [x] IDT
-- [x] PIC remapeado
-- [x] IRQ0 timer
-- [x] IRQ1 teclado
-- [x] int 0x80 para syscalls
-- [x] PIT configurado a 100 Hz
-- [x] Contador global de ticks
-- [x] Manejadores de excepciones CPU completos
-- [x] Page fault handler útil
+## 3. Interrupciones y tiempo
+- [x] IDT / PIC
 - [ ] APIC / IOAPIC
 - [ ] HPET
+- [ ] Timers por proceso
+- [ ] RTC / reloj del sistema
+- [x] sleep por syscall
+- [ ] Fuente de tiempo monotónica
 
-## 4. Teclado e input
-- [x] Driver de teclado básico
-- [x] Lectura de scancodes
-- [x] Cola de eventos
-- [x] Editor de línea avanzado
-- [x] Layouts de teclado
-- [x] Soporte para `AltGr`
-- [x] Soporte para `Caps Lock`
-- [x] Teclas extendidas (`Insert`, `Delete`, `Home`, `End`, `Page Up`, `Page Down`)
-- [x] Teclado numérico con `Num Lock`
-- [x] Modo overwrite con `Insert`
-- [x] Ratón PS/2
-- [x] Input genérico
+## 4. Input
+- [x] Teclado completo
+- [x] Ratón
+- [x] Sistema de input unificado
 
 ## 5. Shell
-- [x] Shell interactiva
-- [x] Parser tipo argv
-- [x] Historial
-- [x] Autocompletado
-- [x] Comandos básicos
-- [x] Variables de entorno
-- [x] Pipes
-- [x] Redirección
+- [x] Parser
+- [x] Pipes / redirección
 - [x] Scripts
+- [x] Variables de entorno
 
 ## 6. Scheduler
-- [x] Scheduler cooperativo
-- [x] Sleep / yield
-- [x] Cancelación de tareas
-- [x] Multitarea preemptiva
+- [x] Preemptivo
 - [x] Prioridades
 - [x] Bloqueo por eventos
+- [ ] Idle task
+- [ ] Cola ready / blocked robusta
 
 ## 7. Memoria
-- [x] Heap básico
-- [x] Gestor de memoria física
-- [x] Paginación
-- [x] Espacio virtual por proceso
+- [x] Paging
+- [x] Heap
+- [x] Espacio por proceso
+- [ ] Protección avanzada
+- [ ] Kernel heap robusto
+- [ ] Copy-on-write
+- [ ] mmap / regiones mapeadas
+- [ ] Guard pages para stacks
 
 ## 8. Syscalls
 - [x] Dispatcher
 - [x] Syscalls básicas
 - [x] ABI estable
 - [x] Validación de punteros
+- [x] open / read / write / close
+- [x] Gestión de file descriptors (FD)
+- [x] fork
+- [x] exec
+- [x] exit
+- [x] wait (espera a task por id)
+- [x] getpid / sleep / kill
+- [x] errno por proceso (get_errno syscall)
 
-## 9. Filesystem
-- [x] FS en memoria (RO)
+## 9. Sistema de archivos
+- [x] FS en memoria
 - [x] FS escribible
-- [ ] VFS
-- [ ] Soporte disco real
+- [x] VFS (CRÍTICO)
+- [x] Resolución de rutas en VFS
+- [x] Soporte de rutas relativas
+- [x] Normalización de rutas
+- [x] Directorio actual por proceso (cwd)
+- [x] mount / unmount
+- [x] Puntos de montaje
+- [x] Integración de FD con VFS
+- [x] Tabla global de archivos abiertos
+- [ ] Flags de apertura y modos de acceso
+- [x] Operaciones de directorio (open/read dir)
+- [ ] rename / unlink / stat
+- [ ] Caché de bloques
+- [ ] Caché de vnodes / dentries
+- [ ] Integración de dispositivos en VFS (/dev)
+- [x] FAT16 read-only
+- [x] FAT16 write
+- [ ] FAT32 read-only
+- [ ] FAT32 write
+- [ ] Soporte LFN (Long File Names)
+- [x] Soporte disco real
+- [x] Soporte de particiones MBR
+- [ ] Soporte de particiones GPT
+- [ ] Verificación básica de integridad del filesystem
 
 ## 10. Procesos
 - [x] Modo usuario
 - [x] ELF loader
-- [ ] fork/exec
-- [ ] Señales
+- [x] Estructura de proceso (task_struct)
+- [x] PID / gestión de identificadores
+- [x] Estados de proceso (ready, running, blocked, zombie)
+- [x] Context switch completo
+- [x] Creación básica de procesos
+- [x] Proceso init / primer proceso userland
+- [x] Espacio de direcciones independiente por proceso
+- [x] Tabla de file descriptors por proceso
+- [x] Herencia de FDs en fork
+- [x] fork básico
+- [x] exec
+- [x] argv / envp completos en exec
+- [x] exit
+- [x] wait / waitpid (task_wait_id)
+- [x] Recolección de procesos zombie
+- [ ] Señales básicas
+- [ ] Entrega de señales
+- [ ] Manejo de señales en userland
 
 ## 11. Drivers
-- [x] VGA
-- [x] Framebuffer
-- [x] PIT
-- [x] Teclado
-- [ ] Disco
+- [x] VGA / framebuffer
+- [x] Teclado / ratón
+- [x] ATA PIO
+- [x] Capa de dispositivo de bloques
+- [x] Disco
 - [ ] USB
 - [ ] Red
+- [ ] RTC
+- [ ] Serie (COM1) para debug
 
 ## 12. Red
-- [ ] TCP/IP stack
+- [ ] ARP
+- [ ] ICMP
+- [ ] UDP
+- [ ] TCP/IP
 - [ ] Sockets
 - [ ] DHCP / DNS
 
 ## 13. Seguridad
 - [x] Separación kernel/user
-- [ ] Permisos
-- [x] Protección memoria
+- [x] Aislamiento procesos
+- [ ] Permisos tipo UNIX
+- [ ] Usuarios y grupos
+- [ ] UID / GID por proceso
+- [ ] Validación de acceso en syscalls
 
 ## 14. Debug
-- [x] QEMU debug
-- [x] Diagnóstico framebuffer
-- [x] Logs avanzados
+- [x] Logs
 - [x] GDB remoto
+- [x] Tests automatizados
+- [ ] Panic screen / crash dump
+- [ ] Backtrace del kernel
+- [ ] Assertions del kernel
+- [x] Logging por niveles
 
 ## 15. Interfaz gráfica
 - [x] Framebuffer
-- [x] Primitivas gráficas
 - [ ] Ventanas
-- [ ] GUI completa
+- [ ] GUI básica
+- [ ] Compositor básico
+- [ ] Eventos de ventana / input gráfico
+- [ ] Widgets básicos
 
 ## 16. UX
 - [x] Shell usable
-- [x] Cursor mejorado
 - [x] Tema visual
-- [x] Cursor distinto en modo overwrite
 - [ ] Config persistente
+- [ ] Persistencia por usuario
+- [ ] Utilidades básicas del sistema
+- [ ] Ayuda / man básico
 
 ## 17. Build & mantenimiento
 - [x] Makefile
-- [x] Pipeline PSF
 - [x] CI
 - [x] Tests
-- [x] Documentación técnica
+- [x] Documentación
+- [ ] Builds reproducibles
+- [ ] Versionado del kernel
+- [ ] Imagen de prueba automatizada
+- [ ] Toolchain cruzada documentada
 
-## 18. Roadmap siguiente
-
-### Fase 1: estabilidad base
-- [x] Cerrar pendientes de documentación técnica
-- [ ] Añadir pruebas automatizadas para módulos aislados
-- [x] Reforzar validación de punteros en syscalls y loader ELF
-- [ ] Reducir regresiones del teclado y la consola con casos de prueba manuales
-
-### Fase 2: experiencia de usuario
-- [ ] Config persistente para temas y layout de teclado
-- [x] Mejorar autocompletado con rutas y scripts
-- [x] Revisar edición de línea para selección, overwrite y pegado
-- [ ] Pulir cursor y comportamiento visual en framebuffer/VGA
-
-### Fase 3: sistema operativo más completo
-- [ ] VFS sobre el FS en memoria
-- [ ] Soporte de disco real
-- [ ] Ventanas y GUI básica
-- [ ] Red inicial: TCP/IP, sockets y DHCP/DNS
+## 18. Componentes avanzados
+- [ ] IPC (pipes avanzados)
+- [ ] Shared memory
+- [ ] Message passing
+- [ ] poll / select
+- [x] Gestión de errores (errno)
+- [ ] Gestión de recursos (FD limits)

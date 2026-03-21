@@ -13,8 +13,9 @@ QEMU = qemu-system-i386
 QEMU_DISPLAY ?= sdl,show-cursor=off
 FB_MOUSE_CURSOR ?= 0
 QEMU_FLAGS = -boot d -cdrom $(ISO_IMAGE) -m 128 -no-reboot -no-shutdown -vga std -display $(QEMU_DISPLAY)
+DISK_IMG  ?= disk.img
 
-.PHONY: help compile create-iso execute debug gdb-wait gdb-connect clean run
+.PHONY: help compile create-iso execute debug gdb-wait gdb-connect clean run disk-create disk-fat16
 
 BOOT_OBJ = $(BUILD_DIR)/boot.o
 GDT_ASM_OBJ = $(BUILD_DIR)/gdt_asm.o
@@ -46,6 +47,10 @@ SYSCALL_OBJ = $(BUILD_DIR)/syscall.o
 FBCONSOLE_OBJ = $(BUILD_DIR)/fbconsole.o
 ELF_OBJ = $(BUILD_DIR)/elf.o
 USERMODE_OBJ = $(BUILD_DIR)/usermode.o
+INIT_OBJ     = $(BUILD_DIR)/init.o
+ATA_OBJ = $(BUILD_DIR)/ata.o
+BLKDEV_OBJ = $(BUILD_DIR)/blkdev.o
+FAT16_OBJ = $(BUILD_DIR)/fat16.o
 
 CFLAGS = -m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-frame-pointer -fno-optimize-sibling-calls \
 	-DFB_MOUSE_CURSOR_ENABLED=$(FB_MOUSE_CURSOR) \
@@ -57,7 +62,8 @@ CFLAGS = -m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-fr
 	-Iinclude/drivers/input \
 	-Iinclude/userland/shell \
 	-Iinclude/fs \
-	-Iinclude/lib
+	-Iinclude/lib \
+	-Iinclude/drivers/disk
 LDFLAGS = -m elf_i386 -T arch/x86/linker.ld
 
 FONT_PSF = assets/font.psf
@@ -65,7 +71,7 @@ FONT_TOOL = tools/psf2h.py
 FONT_HEADER = include/font_psf.h
 GRUB_CFG = arch/x86/boot/grub.cfg
 
-OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ)
+OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ)
 
 $(FONT_HEADER): $(FONT_PSF) $(FONT_TOOL)
 	$(PYTHON) $(FONT_TOOL) $(FONT_PSF) $(FONT_HEADER)
@@ -110,6 +116,10 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(CC) $(CFLAGS) -c drivers/console/fbconsole.c -o $(FBCONSOLE_OBJ)
 	$(CC) $(CFLAGS) -c kernel/elf.c -o $(ELF_OBJ)
 	$(CC) $(CFLAGS) -c kernel/usermode.c -o $(USERMODE_OBJ)
+	$(CC) $(CFLAGS) -c kernel/init.c -o $(INIT_OBJ)
+	$(CC) $(CFLAGS) -c drivers/disk/ata.c -o $(ATA_OBJ)
+	$(CC) $(CFLAGS) -c drivers/disk/blkdev.c -o $(BLKDEV_OBJ)
+	$(CC) $(CFLAGS) -c fs/fat16.c -o $(FAT16_OBJ)
 	$(AS) --32 arch/x86/gdt.s -o $(GDT_ASM_OBJ)
 	$(AS) --32 arch/x86/interrupts.s -o $(INTERRUPTS_ASM_OBJ)
 	$(AS) --32 arch/x86/boot/boot.s -o $(BOOT_OBJ)
@@ -123,13 +133,13 @@ create-iso: compile $(DIST_DIR) ## genera dist/lyth.iso lista para arrancar con 
 	grub-mkrescue -o $(ISO_IMAGE) $(ISO_DIR)
 
 execute: create-iso ## arranca la ISO actual en QEMU con cursor del host oculto
-	$(QEMU) $(QEMU_FLAGS)
+	$(QEMU) $(QEMU_FLAGS) $(shell [ -f "$(DISK_IMG)" ] && echo "-hda $(DISK_IMG)")
 
 debug: create-iso ## arranca QEMU con trazas de interrupciones (-d int)
-	$(QEMU) $(QEMU_FLAGS) -d int
+	$(QEMU) $(QEMU_FLAGS) $(shell [ -f "$(DISK_IMG)" ] && echo "-hda $(DISK_IMG)") -d int
 
 gdb-wait: create-iso ## arranca QEMU congelado y expone GDB remoto en localhost:1234
-	$(QEMU) $(QEMU_FLAGS) -s -S
+	$(QEMU) $(QEMU_FLAGS) $(shell [ -f "$(DISK_IMG)" ] && echo "-hda $(DISK_IMG)") -s -S
 
 gdb-connect: ## imprime el comando GDB recomendado para conectarse al kernel
 	@echo gdb -ex "target remote localhost:$(GDB_PORT)" -ex "symbol-file $(KERNEL_BIN)"
@@ -143,3 +153,24 @@ test: compile create-iso ## ejecuta comprobaciones basicas de compilacion e ISO
 	test -s $(ISO_IMAGE)
 
 run: clean compile create-iso execute ## flujo completo: limpia, compila, crea ISO y ejecuta
+
+disk-create: ## crea disk.img (32 MB) para probar el driver ATA; luego usa make execute
+	@if [ ! -f "$(DISK_IMG)" ]; then \
+		dd if=/dev/zero of="$(DISK_IMG)" bs=1M count=32 2>/dev/null; \
+		echo "Imagen creada: $(DISK_IMG) (32 MB)"; \
+	else \
+		echo "Ya existe: $(DISK_IMG) -- borra manualmente para regenerar"; \
+	fi
+
+disk-fat16: ## crea disk.img (32 MB) FAT16 plano con archivos de prueba (requiere dosfstools + mtools)
+	@echo "Creando imagen FAT16 (32 MB)..."
+	rm -f "$(DISK_IMG)"
+	dd if=/dev/zero of="$(DISK_IMG)" bs=1M count=32 2>/dev/null
+	mkfs.fat -F 16 -n "LYTH" "$(DISK_IMG)"
+	@echo "Copiando archivos de prueba..."
+	echo "Hola desde FAT16" | MTOOLS_SKIP_CHECK=1 mcopy -i "$(DISK_IMG)" - ::hola.txt
+	MTOOLS_SKIP_CHECK=1 mmd -i "$(DISK_IMG)" ::docs
+	echo "Lyth OS FAT16 test" | MTOOLS_SKIP_CHECK=1 mcopy -i "$(DISK_IMG)" - ::docs/info.txt
+	@echo "Imagen lista: $(DISK_IMG)"
+	@echo "  -> arranca con: make execute"
+	@echo "  -> en la shell:  vfs ls /hd0    vfs cat /hd0/hola.txt"

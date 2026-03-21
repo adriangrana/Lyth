@@ -2,6 +2,7 @@
 #include "terminal.h"
 #include "timer.h"
 #include "task.h"
+#include "usermode.h"
 #include "heap.h"
 #include "fs.h"
 #include "vfs.h"
@@ -263,6 +264,81 @@ unsigned int syscall_callback(unsigned int number,
             return (unsigned int)vfs_readdir((int)arg0, arg1,
                                              (char*)arg2, arg3);
 
+        case SYSCALL_VFS_CREATE:
+            if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH))
+                return (unsigned int)-1;
+            return (unsigned int)vfs_create((const char*)arg0, arg1);
+
+        case SYSCALL_VFS_DELETE:
+            if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH))
+                return (unsigned int)-1;
+            return (unsigned int)vfs_delete((const char*)arg0);
+
+        /* ---- process management ---- */
+        case SYSCALL_GETPID:
+            return (unsigned int)task_current_id();
+
+        case SYSCALL_KILL: {
+            int ok = task_kill((int)arg0);
+            if (!ok) task_set_errno(3); /* ESRCH */
+            return ok ? 0U : (unsigned int)-1;
+        }
+
+        case SYSCALL_WAIT:
+            task_wait_id((int)arg0);
+            return 0;
+
+        case SYSCALL_EXEC: {
+            int spawn_id;
+            if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH)) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+            spawn_id = usermode_spawn_elf_vfs((const char*)arg0, (int)arg1);
+            if (spawn_id < 0) task_set_errno(2); /* ENOENT / generic */
+            return (unsigned int)spawn_id;
+        }
+
+        case SYSCALL_GET_ERRNO:
+            return (unsigned int)task_get_errno();
+
+        case SYSCALL_EXECV: {
+            /* arg0=path, arg1=foreground, arg2=argv (user char**), arg3=argc */
+            const char* path = (const char*)arg0;
+            int         fg   = (int)arg1;
+            const char** uargv = (const char**)arg2;
+            int          uargc = (int)arg3;
+            int spawn_id;
+            const char* kargv[16];
+            int valid_argc = 0;
+
+            if (!syscall_validate_user_string(path, SYSCALL_MAX_PATH_LENGTH)) {
+                task_set_errno(22);
+                return (unsigned int)-1;
+            }
+            if (uargv != 0 && uargc > 0) {
+                int lim = uargc < 16 ? uargc : 16;
+                if (!syscall_validate_user_buffer(uargv,
+                        (unsigned int)((unsigned int)lim * sizeof(char*)))) {
+                    task_set_errno(22);
+                    return (unsigned int)-1;
+                }
+                for (int i = 0; i < lim; i++) {
+                    if (!syscall_validate_user_string(uargv[i],
+                                                      SYSCALL_MAX_PATH_LENGTH)) {
+                        task_set_errno(22);
+                        return (unsigned int)-1;
+                    }
+                    kargv[valid_argc++] = uargv[i];
+                }
+            }
+            spawn_id = usermode_spawn_elf_vfs_argv(path,
+                            valid_argc, (const char* const*)kargv,
+                            0, 0, fg);
+            if (spawn_id < 0) task_set_errno(2);
+            return (unsigned int)spawn_id;
+        }
+
         default:
             return 0;
     }
@@ -373,4 +449,52 @@ int syscall_vfs_readdir(int fd, unsigned int index,
                                index,
                                (unsigned int)name_out,
                                name_max);
+}
+
+int syscall_vfs_create(const char* path, unsigned int flags) {
+    return (int)syscall_invoke(SYSCALL_VFS_CREATE,
+                               (unsigned int)path,
+                               flags, 0, 0);
+}
+
+int syscall_vfs_delete(const char* path) {
+    return (int)syscall_invoke(SYSCALL_VFS_DELETE,
+                               (unsigned int)path,
+                               0, 0, 0);
+}
+
+int syscall_getpid(void) {
+    return (int)syscall_invoke(SYSCALL_GETPID, 0, 0, 0, 0);
+}
+
+int syscall_kill(int id) {
+    return (int)syscall_invoke(SYSCALL_KILL, (unsigned int)id, 0, 0, 0);
+}
+
+void syscall_wait(int id) {
+    syscall_invoke(SYSCALL_WAIT, (unsigned int)id, 0, 0, 0);
+}
+
+int syscall_exec(const char* path, int foreground) {
+    return (int)syscall_invoke(SYSCALL_EXEC,
+                               (unsigned int)path,
+                               (unsigned int)foreground,
+                               0, 0);
+}
+
+int syscall_get_errno(void) {
+    return (int)syscall_invoke(SYSCALL_GET_ERRNO, 0, 0, 0, 0);
+}
+
+int syscall_fork(void) {
+    return (int)syscall_invoke(SYSCALL_FORK, 0, 0, 0, 0);
+}
+
+int syscall_execv(const char* path, int foreground,
+                  const char* const* argv, int argc) {
+    return (int)syscall_invoke(SYSCALL_EXECV,
+                               (unsigned int)path,
+                               (unsigned int)foreground,
+                               (unsigned int)argv,
+                               (unsigned int)argc);
 }

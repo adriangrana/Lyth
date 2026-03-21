@@ -20,7 +20,17 @@ enum {
     SYSCALL_VFS_READ     = 15,  /* read(fd, buf, size)     -> n    */
     SYSCALL_VFS_WRITE    = 16,  /* write(fd, buf, size)    -> n    */
     SYSCALL_VFS_SEEK     = 17,  /* seek(fd, off, whence)   -> off  */
-    SYSCALL_VFS_READDIR  = 18   /* readdir(fd,idx,buf,max) -> 0/-1 */
+    SYSCALL_VFS_READDIR  = 18,  /* readdir(fd,idx,buf,max) -> 0/-1 */
+    SYSCALL_VFS_CREATE   = 19,  /* create(path, flags)     -> 0/-1 */
+    SYSCALL_VFS_DELETE   = 20,  /* delete(path)            -> 0/-1 */
+    /* Process management */
+    SYSCALL_GETPID       = 21,  /* getpid()                -> pid  */
+    SYSCALL_KILL         = 22,  /* kill(id)                -> 0/-1 */
+    SYSCALL_WAIT         = 23,  /* wait(id)                -> 0    */
+    SYSCALL_EXEC         = 24,  /* exec(path, fg)          -> id   */
+    SYSCALL_GET_ERRNO    = 25,  /* get_errno()             -> errno */
+    SYSCALL_FORK         = 26,  /* fork()                  -> child_pid / 0 / -1 */
+    SYSCALL_EXECV        = 27   /* execv(path,fg,argv,argc) -> id / -1 */
 };
 
 unsigned int syscall_callback(unsigned int number,
@@ -54,5 +64,18 @@ int  syscall_vfs_write  (int fd, const unsigned char* buf, unsigned int size);
 int  syscall_vfs_seek   (int fd, int offset, int whence);
 int  syscall_vfs_readdir(int fd, unsigned int index,
                          char* name_out, unsigned int name_max);
+int  syscall_vfs_create (const char* path, unsigned int flags);
+int  syscall_vfs_delete (const char* path);
+
+/* Process management helpers */
+int  syscall_getpid(void);
+int  syscall_kill(int id);
+void syscall_wait(int id);
+int  syscall_exec(const char* path, int foreground);
+int  syscall_get_errno(void);
+int  syscall_fork(void);
+/* exec with explicit argv array */
+int  syscall_execv(const char* path, int foreground,
+                   const char* const* argv, int argc);
 
 #endif

@@ -148,7 +148,17 @@ unsigned int fs_size(const char* name) {
 }
 
 int fs_exists(const char* name) {
-    return fs_size(name) > 0;
+    int i;
+    if (!name) return 0;
+    for (i = 0; i < FS_WRITE_MAX; i++) {
+        if (writable[i].used && str_equals(writable[i].name, name))
+            return 1;
+    }
+    for (i = 0; i < file_count; i++) {
+        if (str_equals(files[i].name, name))
+            return 1;
+    }
+    return 0;
 }
 
 int fs_read(const char* name, char* buffer, unsigned int buffer_size) {
@@ -306,4 +316,22 @@ int fs_write(const char* name, const unsigned char* data, unsigned int size, int
     writable[slot].data = copy;
     writable[slot].size = size;
     return (int)size;
+}
+
+int fs_delete(const char* name) {
+    int i;
+    if (!name || name[0] == '\0') return -1;
+    for (i = 0; i < FS_WRITE_MAX; i++) {
+        if (writable[i].used && str_equals(writable[i].name, name)) {
+            if (writable[i].data) kfree(writable[i].data);
+            if (writable[i].name) kfree(writable[i].name);
+            writable[i].used = 0;
+            writable[i].name = 0;
+            writable[i].data = 0;
+            writable[i].size = 0;
+            return 0;
+        }
+    }
+    /* Static (read-only) files cannot be deleted */
+    return -1;
 }

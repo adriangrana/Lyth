@@ -9,5 +9,8 @@ int fs_exists(const char* name);
 int fs_read(const char* name, char* buffer, unsigned int buffer_size);
 int fs_read_bytes(const char* name, unsigned char* buffer, unsigned int buffer_size);
 int fs_write(const char* name, const unsigned char* data, unsigned int size, int append);
+/* Remove a file. Only writable (dynamically created) files can be deleted.
+   Returns 0 on success, -1 if not found or is a read-only static file. */
+int fs_delete(const char* name);
 
 #endif

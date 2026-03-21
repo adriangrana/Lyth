@@ -16,6 +16,9 @@
 #include "usermode.h"
 #include "klog.h"
 #include "mouse.h"
+#include "ata.h"
+#include "blkdev.h"
+#include "fat16.h"
 
 #define SHELL_MAX_ARGS 8
 #define SHELL_TOKEN_MAX 64
@@ -93,6 +96,19 @@ static int cmd_elfinfo(int argc, const char* argv[], int background);
 static int cmd_exec(int argc, const char* argv[], int background);
 static int cmd_yield(int argc, const char* argv[], int background);
 static int cmd_vfs(int argc, const char* argv[], int background);
+static int cmd_disk(int argc, const char* argv[], int background);
+static int cmd_cd(int argc, const char* argv[], int background);
+static int cmd_pwd(int argc, const char* argv[], int background);
+static int cmd_touch(int argc, const char* argv[], int background);
+static int cmd_rm(int argc, const char* argv[], int background);
+static int cmd_mkdir(int argc, const char* argv[], int background);
+static int cmd_getpid(int argc, const char* argv[], int background);
+static void shell_resolve_path(const char* input, char* out, unsigned int out_size);
+
+/* Current working directory (always an absolute VFS path). */
+static char shell_cwd[VFS_PATH_MAX];
+
+const char* shell_get_cwd(void) { return shell_cwd; }
 
 static command_t commands[] = {
     {"help",    cmd_help,    "muestra esta ayuda"},
@@ -121,13 +137,20 @@ static command_t commands[] = {
     {"mouse",   cmd_mouse,   "muestra estado del raton PS/2"},
     {"dmesg",   cmd_dmesg,   "muestra o limpia logs del kernel: dmesg [clear]"},
     {"gfxdemo", cmd_gfxdemo, "dibuja primitivas graficas en framebuffer"},
-    {"ls",      cmd_ls,      "lista archivos del FS en memoria"},
-    {"cat",     cmd_cat,     "muestra un archivo: cat <NOMBRE>"},
+    {"ls",      cmd_ls,      "lista directorio VFS: ls [ruta]"},
+    {"cat",     cmd_cat,     "muestra un archivo VFS: cat <ruta>"},
     {"source",  cmd_source,  "ejecuta script del FS: source <NOMBRE>"},
     {"elfinfo", cmd_elfinfo, "inspecciona un ELF del FS: elfinfo <NOMBRE>"},
-    {"exec",    cmd_exec,    "carga y ejecuta un ELF: exec <NOMBRE> [&]"},
+    {"exec",    cmd_exec,    "carga y ejecuta un ELF: exec <NOMBRE> [args...] [&]"},
+    {"getpid",  cmd_getpid,  "muestra el PID del proceso actual"},
     {"yield",   cmd_yield,   "cede CPU al scheduler"},
-    {"vfs",     cmd_vfs,     "VFS: mounts, open/read/ls por ruta: vfs [cat|ls] [ruta]"},
+    {"vfs",     cmd_vfs,     "VFS: mounts, ls/cat/touch/rm: vfs [ls|cat|touch|rm] [ruta]"},
+    {"disk",    cmd_disk,    "Bloques: disk [read <lba> [dev]] [mount <dev> <ruta>]"},
+    {"cd",      cmd_cd,      "cambia directorio: cd [ruta]"},
+    {"pwd",     cmd_pwd,     "muestra el directorio actual"},
+    {"touch",   cmd_touch,   "crea archivo vacio (sin contenido): touch <ruta>"},
+    {"rm",      cmd_rm,      "elimina archivo: rm <ruta>"},
+    {"mkdir",   cmd_mkdir,   "crea directorio: mkdir <ruta>"},
 };
 
 static const int command_count = sizeof(commands) / sizeof(commands[0]);
@@ -561,54 +584,35 @@ static int shell_redir_find(const char* name) {
 }
 
 static int shell_redir_store(const char* name, const char* content, unsigned int length, int append) {
-    int index = shell_redir_find(name);
+    char vfs_path[VFS_PATH_MAX];
+    int  fd;
 
     if (name == 0 || name[0] == '\0' || content == 0) {
         return 0;
     }
 
-    if (index < 0) {
-        for (int i = 0; i < SHELL_REDIR_MAX; i++) {
-            if (!shell_redir_files[i].used) {
-                index = i;
-                shell_redir_files[i].used = 1;
-                shell_redir_files[i].length = 0;
-                shell_redir_files[i].content[0] = '\0';
-                copy_bounded(shell_redir_files[i].name, name, SHELL_TOKEN_MAX);
-                break;
-            }
-        }
+    /* Resolve the output filename against cwd so "test.txt" becomes "/cwd/test.txt" */
+    shell_resolve_path(name, vfs_path, sizeof(vfs_path));
+
+    /* Create the file if it doesn't exist yet */
+    vfs_node_t* existing = vfs_resolve(vfs_path);
+    if (!existing) {
+        if (vfs_create(vfs_path, VFS_FLAG_FILE) != 0)
+            return 0;
+    } else {
+        if (existing->flags & VFS_FLAG_DYNAMIC) kfree(existing);
     }
 
-    if (index < 0) {
-        return 0;
-    }
+    /* Open and write */
+    fd = vfs_open(vfs_path);
+    if (fd < 0) return 0;
 
-    if (!append) {
-        shell_redir_files[index].length = 0;
-        shell_redir_files[index].content[0] = '\0';
+    if (append) {
+        /* seek to end for >> */
+        vfs_seek(fd, 0, VFS_SEEK_END);
     }
-
-    unsigned int offset = shell_redir_files[index].length;
-    if (offset >= SHELL_PIPE_MAX - 1) {
-        return 1;
-    }
-
-    if (length > SHELL_PIPE_MAX - 1 - offset) {
-        length = SHELL_PIPE_MAX - 1 - offset;
-    }
-
-    for (unsigned int i = 0; i < length; i++) {
-        shell_redir_files[index].content[offset + i] = content[i];
-    }
-
-    shell_redir_files[index].length = offset + length;
-    shell_redir_files[index].content[shell_redir_files[index].length] = '\0';
-    /* persist to FS writable overlay if possible */
-    if (fs_write(name, (const unsigned char*)content, length, append) < 0) {
-        /* if writing fails, still keep in spool */
-    }
-
+    vfs_write(fd, (const unsigned char*)content, length);
+    vfs_close(fd);
     return 1;
 }
 
@@ -1129,9 +1133,11 @@ static int cmd_ps(int argc, const char* argv[], int background) {
     }
 
     for (int i = 0; i < count; i++) {
-        terminal_print("[");
+        terminal_print("PID=");
         terminal_print_uint((unsigned int)snapshots[i].id);
-        terminal_print("] ");
+        terminal_print(" PPID=");
+        terminal_print_uint((unsigned int)snapshots[i].parent_id);
+        terminal_print(" ");
         terminal_print(snapshots[i].name);
         terminal_print(" ");
         terminal_print(task_state_name(snapshots[i].state));
@@ -1142,6 +1148,10 @@ static int cmd_ps(int argc, const char* argv[], int background) {
             terminal_print_uint((unsigned int)snapshots[i].blocked_event_id);
         }
         terminal_print(snapshots[i].foreground ? " FG" : " BG");
+        if (snapshots[i].state == TASK_STATE_ZOMBIE) {
+            terminal_print(" EC=");
+            terminal_print_uint((unsigned int)snapshots[i].exit_code);
+        }
         if (snapshots[i].cancel_requested) {
             terminal_print(" cancel");
         }
@@ -1422,141 +1432,106 @@ static int cmd_gfxdemo(int argc, const char* argv[], int background) {
 }
 
 static int cmd_ls(int argc, const char* argv[], int background) {
-    int count;
-    int name_width = 4;
-    int size_width = 4;
-    int type_width = 6;
-    unsigned int total_size = 0;
-    char name[64];
+    char path[VFS_PATH_MAX];
+    char entry[VFS_NAME_MAX];
+    int  fd, idx = 0;
 
-    (void)argc;
-    (void)argv;
     (void)background;
 
-    count = syscall_fs_count();
-    if (count <= 0) {
-        terminal_print_line("FS vacio");
+    if (argc >= 2)
+        shell_resolve_path(argv[1], path, sizeof(path));
+    else {
+        unsigned int _k;
+        for (_k = 0; shell_cwd[_k] && _k < VFS_PATH_MAX - 1U; _k++)
+            path[_k] = shell_cwd[_k];
+        path[_k] = '\0';
+    }
+
+    fd = vfs_open(path);
+    if (fd < 0) {
+        terminal_print("[error] no se pudo abrir: ");
+        terminal_print_line(path);
         return 1;
     }
 
-    for (int i = 0; i < count; i++) {
-        unsigned int size;
-        const char* type;
-        int current_name_length;
-        int current_type_length;
+    while (vfs_readdir(fd, (unsigned int)idx, entry, sizeof(entry)) == 0) {
+        /* Try to open the entry to detect if it's a directory */
+        char full[VFS_PATH_MAX];
+        vfs_node_t* n;
+        unsigned int fl = 0;
+        unsigned int pi;
 
-        if (syscall_fs_name(i, name, sizeof(name)) < 0) {
-            continue;
+        /* Build full path for the entry */
+        for (pi = 0; path[pi] && pi < VFS_PATH_MAX - 2U; pi++) full[pi] = path[pi];
+        if (pi > 0 && full[pi - 1] != '/') full[pi++] = '/';
+        {
+            unsigned int ei;
+            for (ei = 0; entry[ei] && pi < VFS_PATH_MAX - 1U; ei++, pi++)
+                full[pi] = entry[ei];
         }
+        full[pi] = '\0';
 
-        size = syscall_fs_size(name);
-        type = shell_fs_entry_type(name);
-        current_name_length = (int)str_length(name);
-        current_type_length = (int)str_length(type);
+        n = vfs_resolve(full);
+        if (n) fl = n->flags;
 
-        name_width = shell_max_int(name_width, current_name_length);
-        size_width = shell_max_int(size_width, (int)shell_uint_length(size));
-        type_width = shell_max_int(type_width, current_type_length);
-        total_size += size;
-    }
-
-    name_width = shell_min_int(name_width, 28);
-
-    shell_print_text_with_color("FS entries", 0x0B);
-    terminal_put_char('\n');
-    shell_print_table_border(name_width, size_width, type_width);
-    terminal_put_char('|');
-    shell_print_table_cell("NAME", name_width, 0x0E);
-    shell_print_table_cell("SIZE", size_width, 0x0E);
-    shell_print_table_cell("TYPE", type_width, 0x0E);
-    terminal_put_char('\n');
-    shell_print_table_border(name_width, size_width, type_width);
-
-    for (int i = 0; i < count; i++) {
-        unsigned int size;
-        const char* type;
-        int current_name_length;
-
-        if (syscall_fs_name(i, name, sizeof(name)) < 0) {
-            terminal_print_line("<error leyendo nombre>");
-            continue;
+        if (fl & VFS_FLAG_DIR) {
+            shell_print_text_with_color(entry, 0x0E);
+            terminal_put_char('/');
+        } else {
+            shell_print_text_with_color(entry, 0x0F);
         }
-
-        size = syscall_fs_size(name);
-        type = shell_fs_entry_type(name);
-        current_name_length = (int)str_length(name);
-        if (current_name_length > name_width) {
-            current_name_length = name_width;
-        }
-
-        terminal_put_char('|');
-        terminal_put_char(' ');
-        for (int j = 0; name[j] != '\0' && j < name_width; j++) {
-            terminal_put_char_with_color(name[j], 0x0F);
-        }
-        shell_print_spaces(name_width - current_name_length + 1);
-        terminal_put_char('|');
-        terminal_put_char(' ');
-        shell_print_spaces(size_width - (int)shell_uint_length(size));
-        terminal_print_uint(size);
-        terminal_put_char(' ');
-        terminal_put_char('|');
-        shell_print_table_cell(type, type_width, shell_string_ends_with_ignore_case(name, ".ELF") ? 0x0C : 0x0A);
         terminal_put_char('\n');
+        idx++;
     }
 
-    shell_print_table_border(name_width, size_width, type_width);
-    terminal_print("Total: ");
-    terminal_print_uint((unsigned int)count);
-    terminal_print(" archivos, ");
-    terminal_print_uint(total_size);
-    terminal_print_line(" bytes");
+    vfs_close(fd);
+
+    if (idx == 0)
+        terminal_print_line("(directorio vacio)");
 
     return 1;
 }
 
 static int cmd_cat(int argc, const char* argv[], int background) {
-    char* buffer;
-    char text[SHELL_PIPE_MAX];
-    int read_result;
+    unsigned char buf[512];
+    char path[VFS_PATH_MAX];
+    int fd, n, total = 0;
 
     (void)background;
 
     if (argc < 2) {
         if (shell_has_pipe_input()) {
             terminal_print(shell_pipe_buffer);
-            if (shell_pipe_buffer[shell_pipe_length - 1] != '\n') {
+            if (shell_pipe_buffer[shell_pipe_length - 1] != '\n')
                 terminal_put_char('\n');
-            }
             return 1;
         }
-
-        terminal_print_line("Uso: cat <NOMBRE>");
+        terminal_print_line("Uso: cat <ruta>");
         return 1;
     }
 
-    read_result = shell_read_text_source(argv[1], text, sizeof(text));
-    if (read_result < 0) {
-        terminal_print_line("Archivo no encontrado");
+    shell_resolve_path(argv[1], path, sizeof(path));
+
+    fd = vfs_open(path);
+    if (fd < 0) {
+        terminal_print("[error] Archivo no encontrado: ");
+        terminal_print_line(path);
         return 1;
     }
 
-    buffer = (char*)syscall_alloc((unsigned int)read_result + 1);
-    if (buffer == 0) {
-        terminal_print_line("Sin memoria para leer archivo");
-        return 1;
+    {
+        char last_char = '\n';
+        while ((n = vfs_read(fd, buf, sizeof(buf) - 1)) > 0) {
+            buf[n] = '\0';
+            terminal_print((const char*)buf);
+            last_char = buf[n - 1];
+            total += n;
+        }
+        if (total > 0 && last_char != '\n')
+            terminal_put_char('\n');
     }
 
-    for (int i = 0; i < read_result; i++) {
-        buffer[i] = text[i];
-    }
-    buffer[read_result] = '\0';
-
-    terminal_print(buffer);
-    if (read_result > 0 && buffer[read_result - 1] != '\n') {
-        terminal_put_char('\n');
-    }
-    syscall_free(buffer);
+    vfs_close(fd);
     return 1;
 }
 
@@ -1660,11 +1635,15 @@ static int cmd_exec(int argc, const char* argv[], int background) {
     int id;
 
     if (argc < 2) {
-        terminal_print_line("Uso: exec <NOMBRE> [&]");
+        terminal_print_line("Uso: exec <NOMBRE> [args...] [&]");
         return 1;
     }
 
-    id = usermode_spawn_elf_task(argv[1], background ? 0 : 1);
+    /* argv[1] = path; forward argv[1..] as the ELF's argv */
+    id = usermode_spawn_elf_vfs_argv(argv[1],
+                                     argc - 1, (const char* const*)(argv + 1),
+                                     0, 0,
+                                     background ? 0 : 1);
     if (id < 0) {
         terminal_print_line("No se pudo cargar o ejecutar el ELF");
         return 1;
@@ -1680,6 +1659,16 @@ static int cmd_exec(int argc, const char* argv[], int background) {
     return 0;
 }
 
+static int cmd_getpid(int argc, const char* argv[], int background) {
+    (void)argc;
+    (void)argv;
+    (void)background;
+    terminal_print("PID: ");
+    terminal_print_uint((unsigned int)task_current_id());
+    terminal_put_char('\n');
+    return 1;
+}
+
 static int cmd_yield(int argc, const char* argv[], int background) {
     (void)argc;
     (void)argv;
@@ -1690,6 +1679,8 @@ static int cmd_yield(int argc, const char* argv[], int background) {
 }
 
 void shell_init(void) {
+    shell_cwd[0] = '/';
+    shell_cwd[1] = '\0';
     shell_env_set("OS", "Lyth");
     shell_env_set("ARCH", "i386");
     shell_apply_theme("default", 0);
@@ -1775,12 +1766,20 @@ static int shell_execute_line_raw(const char* line) {
     }
 
     if (input_redirect) {
-        if (shell_read_text_source(input_redirection, input_text, sizeof(input_text)) < 0) {
+        char in_path[VFS_PATH_MAX];
+        int  in_fd, in_n, in_total = 0;
+        shell_resolve_path(input_redirection, in_path, sizeof(in_path));
+        in_fd = vfs_open(in_path);
+        if (in_fd < 0) {
             terminal_print("No existe la entrada para redireccion: ");
-            terminal_print_line(input_redirection);
+            terminal_print_line(in_path);
             return 1;
         }
-
+        while ((in_n = vfs_read(in_fd, (unsigned char*)input_text + in_total,
+                                (unsigned int)(sizeof(input_text) - 1 - (unsigned int)in_total))) > 0)
+            in_total += in_n;
+        input_text[in_total] = '\0';
+        vfs_close(in_fd);
         shell_set_pipe_input(input_text);
     }
 
@@ -1905,6 +1904,131 @@ int shell_complete_command(const char* prefix, const char* matches[], int max_ma
     return found;
 }
 
+/* ============================================================
+ *  Path resolution helper
+ *
+ *  Resolves 'input' against shell_cwd:
+ *    absolute path  → used as-is
+ *    ".."           → go up one component
+ *    "."            → same as cwd
+ *    anything else  → appended to cwd
+ *
+ *  Result is written to out[out_size] as an absolute VFS path.
+ * ============================================================ */
+static void shell_resolve_path(const char* input, char* out, unsigned int out_size) {
+    char tmp[VFS_PATH_MAX];
+    unsigned int ti = 0;
+    unsigned int i;
+
+    if (!input || !out || out_size == 0) return;
+
+    if (input[0] == '/') {
+        /* absolute — copy verbatim */
+        for (i = 0; input[i] && i < out_size - 1U; i++) out[i] = input[i];
+        out[i] = '\0';
+        return;
+    }
+
+    /* Start from cwd */
+    for (i = 0; shell_cwd[i] && ti < VFS_PATH_MAX - 1U; i++)
+        tmp[ti++] = shell_cwd[i];
+    /* Ensure trailing slash for component appending */
+    if (ti > 0 && tmp[ti - 1] != '/') {
+        if (ti < VFS_PATH_MAX - 1U) tmp[ti++] = '/';
+    }
+    tmp[ti] = '\0';
+
+    /* Walk input component by component */
+    i = 0;
+    while (input[i] != '\0') {
+        char comp[VFS_NAME_MAX];
+        unsigned int ci = 0;
+
+        /* Extract one component */
+        while (input[i] != '\0' && input[i] != '/' && ci < VFS_NAME_MAX - 1U)
+            comp[ci++] = input[i++];
+        comp[ci] = '\0';
+        if (input[i] == '/') i++;  /* skip separator */
+        if (ci == 0) continue;     /* skip double slashes */
+
+        if (comp[0] == '.' && comp[1] == '\0') {
+            /* "." – stay */
+        } else if (comp[0] == '.' && comp[1] == '.' && comp[2] == '\0') {
+            /* ".." – strip last component */
+            if (ti > 1) {
+                ti--;                            /* remove trailing '/' */
+                while (ti > 1 && tmp[ti - 1] != '/') ti--;
+                /* leave the '/' that follows the parent */
+            }
+            tmp[ti] = '\0';
+        } else {
+            /* Append component */
+            unsigned int k;
+            for (k = 0; comp[k] && ti < VFS_PATH_MAX - 2U; k++)
+                tmp[ti++] = comp[k];
+            if (input[i] != '\0') {   /* more components follow */
+                if (ti < VFS_PATH_MAX - 1U) tmp[ti++] = '/';
+            }
+            tmp[ti] = '\0';
+        }
+    }
+
+    /* Normalise: strip trailing slash unless root */
+    while (ti > 1 && tmp[ti - 1] == '/') ti--;
+    tmp[ti] = '\0';
+
+    if (ti == 0) { out[0] = '/'; out[1] = '\0'; return; }
+
+    for (i = 0; i < ti && i < out_size - 1U; i++) out[i] = tmp[i];
+    out[i] = '\0';
+}
+
+/* ---- cmd_pwd ---- */
+static int cmd_pwd(int argc, const char* argv[], int background) {
+    (void)argc; (void)argv; (void)background;
+    terminal_print_line(shell_cwd);
+    return 1;
+}
+
+/* ---- cmd_cd ---- */
+static int cmd_cd(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    vfs_node_t* node;
+
+    (void)background;
+
+    if (argc < 2) {
+        /* cd with no args → go to root */
+        shell_cwd[0] = '/';
+        shell_cwd[1] = '\0';
+        return 1;
+    }
+
+    shell_resolve_path(argv[1], path, sizeof(path));
+
+    node = vfs_resolve(path);
+    if (!node) {
+        terminal_print("[error] no existe: ");
+        terminal_print_line(path);
+        return 1;
+    }
+    if (!(node->flags & VFS_FLAG_DIR)) {
+        terminal_print("[error] no es un directorio: ");
+        terminal_print_line(path);
+        return 1;
+    }
+
+    /* Update cwd */
+    {
+        unsigned int k;
+        for (k = 0; path[k] && k < VFS_PATH_MAX - 1U; k++)
+            shell_cwd[k] = path[k];
+        shell_cwd[k] = '\0';
+    }
+
+    return 1;
+}
+
 /* ---- cmd_vfs ---- */
 static int cmd_vfs(int argc, const char* argv[], int background) {
     (void)background;
@@ -1952,11 +2076,21 @@ static int cmd_vfs(int argc, const char* argv[], int background) {
 
     /* vfs ls [path] */
     if (str_equals_ignore_case(argv[1], "ls")) {
-        const char* path = (argc >= 3) ? argv[2] : "/";
-        int fd = vfs_open(path);
+        char path[VFS_PATH_MAX];
+        int fd;
         int idx = 0;
         char entry[VFS_NAME_MAX];
 
+        if (argc >= 3)
+            shell_resolve_path(argv[2], path, sizeof(path));
+        else {
+            unsigned int _k;
+            for (_k = 0; shell_cwd[_k] && _k < VFS_PATH_MAX - 1U; _k++)
+                path[_k] = shell_cwd[_k];
+            path[_k] = '\0';
+        }
+
+        fd = vfs_open(path);
         if (fd < 0) {
             terminal_print("[error] No se pudo abrir: ");
             terminal_print_line(path);
@@ -1990,13 +2124,9 @@ static int cmd_vfs(int argc, const char* argv[], int background) {
             return 1;
         }
 
-        /* Build an absolute path: if argv[2] doesn't start with '/', prepend '/' */
+        /* Resolve path relative to cwd */
         char path[VFS_PATH_MAX];
-        unsigned int pi = 0;
-        if (argv[2][0] != '/') path[pi++] = '/';
-        for (unsigned int j = 0; argv[2][j] != '\0' && pi < VFS_PATH_MAX - 1U; j++)
-            path[pi++] = argv[2][j];
-        path[pi] = '\0';
+        shell_resolve_path(argv[2], path, sizeof(path));
 
         int fd = vfs_open(path);
         if (fd < 0) {
@@ -2028,42 +2158,414 @@ static int cmd_vfs(int argc, const char* argv[], int background) {
         return 1;
     }
 
-    terminal_print_line("Uso: vfs [ls [ruta] | cat <ruta>]");
+    /* vfs touch <path> */
+    if (str_equals_ignore_case(argv[1], "touch")) {
+        char path[VFS_PATH_MAX];
+
+        if (argc < 3) {
+            terminal_print_line("Uso: vfs touch <ruta>");
+            return 1;
+        }
+
+        shell_resolve_path(argv[2], path, sizeof(path));
+
+        if (vfs_create(path, VFS_FLAG_FILE) == 0) {
+            shell_print_text_with_color("Creado: ", 0x0A);
+            terminal_print_line(path);
+        } else {
+            terminal_print("[error] No se pudo crear: ");
+            terminal_print_line(path);
+        }
+        return 1;
+    }
+
+    /* vfs rm <path> */
+    if (str_equals_ignore_case(argv[1], "rm")) {
+        char path[VFS_PATH_MAX];
+
+        if (argc < 3) {
+            terminal_print_line("Uso: vfs rm <ruta>");
+            return 1;
+        }
+
+        shell_resolve_path(argv[2], path, sizeof(path));
+
+        if (vfs_delete(path) == 0) {
+            shell_print_text_with_color("Eliminado: ", 0x0C);
+            terminal_print_line(path);
+        } else {
+            terminal_print("[error] No se pudo eliminar: ");
+            terminal_print_line(path);
+        }
+        return 1;
+    }
+
+    terminal_print_line("Uso: vfs [ls [ruta] | cat <ruta> | touch <ruta> | rm <ruta>]");
     return 1;
 }
 
+/* ---- cmd_touch ---- */
+static int cmd_touch(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    (void)background;
+    if (argc < 2) {
+        terminal_print_line("Uso: touch <ruta>");
+        return 1;
+    }
+    shell_resolve_path(argv[1], path, sizeof(path));
+    if (vfs_create(path, VFS_FLAG_FILE) != 0) {
+        terminal_print("[error] No se pudo crear: ");
+        terminal_print_line(path);
+    }
+    return 1;
+}
+
+/* ---- cmd_rm ---- */
+static int cmd_rm(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    (void)background;
+    if (argc < 2) {
+        terminal_print_line("Uso: rm <ruta>");
+        return 1;
+    }
+    shell_resolve_path(argv[1], path, sizeof(path));
+    if (vfs_delete(path) == 0) {
+        shell_print_text_with_color("Eliminado: ", 0x0C);
+        terminal_print_line(path);
+    } else {
+        terminal_print("[error] No se pudo eliminar: ");
+        terminal_print_line(path);
+    }
+    return 1;
+}
+
+/* ---- cmd_mkdir ---- */
+static int cmd_mkdir(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    (void)background;
+    if (argc < 2) {
+        terminal_print_line("Uso: mkdir <ruta>");
+        return 1;
+    }
+    shell_resolve_path(argv[1], path, sizeof(path));
+    if (vfs_create(path, VFS_FLAG_DIR) == 0) {
+        shell_print_text_with_color("Directorio creado: ", 0x0A);
+        terminal_print_line(path);
+    } else {
+        terminal_print("[error] No se pudo crear directorio: ");
+        terminal_print_line(path);
+    }
+    return 1;
+}
+
+/* ---- cmd_disk ---- */
+
+/* Print a byte as exactly 2 hex digits. */
+static void disk_print_byte(unsigned char b) {
+    static const char hex[] = "0123456789ABCDEF";
+    char s[3];
+    s[0] = hex[(b >> 4) & 0xF];
+    s[1] = hex[b & 0xF];
+    s[2] = '\0';
+    terminal_print(s);
+}
+
+/* Print a uint32 as exactly 4 hex digits (for LBA offsets). */
+static void disk_print_hex4(unsigned int v) {
+    disk_print_byte((unsigned char)(v >> 8));
+    disk_print_byte((unsigned char)(v));
+}
+
+/* Parse a decimal or 0x-prefixed hex number from a string.
+   Returns the value; leaves *ok = 0 on invalid input. */
+static unsigned int disk_parse_uint(const char* s, int* ok) {
+    unsigned int result = 0;
+    *ok = 0;
+    if (!s || s[0] == '\0') return 0;
+
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        /* hexadecimal */
+        s += 2;
+        if (s[0] == '\0') return 0;
+        while (*s) {
+            unsigned char c = (unsigned char)*s++;
+            unsigned int digit;
+            if (c >= '0' && c <= '9')      digit = c - '0';
+            else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+            else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+            else return 0;
+            result = (result << 4) | digit;
+        }
+    } else {
+        /* decimal */
+        while (*s) {
+            unsigned char c = (unsigned char)*s++;
+            if (c < '0' || c > '9') return 0;
+            result = result * 10 + (c - '0');
+        }
+    }
+    *ok = 1;
+    return result;
+}
+
+/* Hex dump of one 512-byte sector: 16 bytes per line, hex + ASCII. */
+static void disk_hexdump(const unsigned char* buf, unsigned int size) {
+    unsigned int i;
+    for (i = 0; i < size; i += 16) {
+        unsigned int j;
+        unsigned int end = i + 16;
+        if (end > size) end = size;
+
+        /* Offset */
+        disk_print_hex4(i);
+        terminal_print(": ");
+
+        /* Hex bytes */
+        for (j = i; j < end; j++) {
+            disk_print_byte(buf[j]);
+            terminal_put_char(' ');
+        }
+        /* Padding if last line is short */
+        for (j = end; j < i + 16; j++)
+            terminal_print("   ");
+
+        terminal_print(" |");
+
+        /* ASCII */
+        for (j = i; j < end; j++) {
+            unsigned char c = buf[j];
+            char s[2];
+            s[0] = (c >= 0x20 && c < 0x7F) ? (char)c : '.';
+            s[1] = '\0';
+            terminal_print(s);
+        }
+        terminal_print_line("|");
+    }
+}
+
+/* Return a short human-readable label for a common MBR partition type. */
+static const char* disk_part_type_name(unsigned char type) {
+    switch (type) {
+        case 0x01: return "FAT12";
+        case 0x04: return "FAT16<32M";
+        case 0x05: return "Extended";
+        case 0x06: return "FAT16";
+        case 0x07: return "NTFS/exFAT";
+        case 0x0B: return "FAT32";
+        case 0x0C: return "FAT32 LBA";
+        case 0x0E: return "FAT16 LBA";
+        case 0x0F: return "Ext LBA";
+        case 0x82: return "Linux swap";
+        case 0x83: return "Linux";
+        case 0xEE: return "GPT prot.";
+        default:   return "unknown";
+    }
+}
+
+static int cmd_disk(int argc, const char* argv[], int background) {
+    (void)background;
+
+    /* disk   → list all registered block devices */
+    if (argc == 1) {
+        int total = blkdev_count();
+        int i;
+
+        shell_print_text_with_color("Dispositivos de bloque\n", 0x0B);
+
+        if (total == 0) {
+            terminal_print_line("  (sin dispositivos detectados)");
+            return 1;
+        }
+
+        for (i = 0; i < BLKDEV_MAX; i++) {
+            blkdev_t dev;
+            unsigned int mb;
+
+            if (blkdev_get(i, &dev) < 0) continue;
+
+            /* index + name */
+            shell_print_text_with_color("  [", 0x07);
+            terminal_print_uint((unsigned int)i);
+            shell_print_text_with_color("] ", 0x07);
+            shell_print_text_with_color(dev.name, 0x0F);
+            terminal_print("  ");
+
+            /* size */
+            mb = dev.block_count / 2048;   /* 512-byte sectors → MiB */
+            terminal_print_uint(mb);
+            terminal_print(" MB  (");
+            terminal_print_uint(dev.block_count);
+            terminal_print(" sectores)");
+
+            /* partition type for child devices */
+            if (dev.part_type != 0) {
+                terminal_print("  tipo 0x");
+                disk_print_byte(dev.part_type);
+                terminal_print(" (");
+                terminal_print(disk_part_type_name(dev.part_type));
+                terminal_put_char(')');
+            }
+
+            terminal_print_line("");
+        }
+        return 1;
+    }
+
+    /* disk read <lba> [name]   → hex dump one 512-byte sector */
+    if (str_equals_ignore_case(argv[1], "read")) {
+        unsigned char sector[512];
+        unsigned int  lba;
+        int           ok;
+        int           dev_idx;
+        int           result;
+        const char*   devname = "hd0";
+
+        if (argc < 3) {
+            terminal_print_line("Uso: disk read <lba> [nombre]");
+            return 1;
+        }
+
+        lba = disk_parse_uint(argv[2], &ok);
+        if (!ok) {
+            terminal_print("[error] LBA invalido: ");
+            terminal_print_line(argv[2]);
+            return 1;
+        }
+
+        if (argc >= 4) devname = argv[3];
+
+        dev_idx = blkdev_find(devname);
+        if (dev_idx < 0) {
+            terminal_print("[error] dispositivo no encontrado: ");
+            terminal_print_line(devname);
+            return 1;
+        }
+
+        result = blkdev_read(dev_idx, (uint32_t)lba, 1, sector);
+        if (result != 1) {
+            terminal_print_line("[error] fallo de lectura");
+            return 1;
+        }
+
+        shell_print_text_with_color("Sector LBA ", 0x0B);
+        terminal_print_uint(lba);
+        shell_print_text_with_color(" (", 0x0B);
+        terminal_print(devname);
+        shell_print_text_with_color(")\n", 0x0B);
+        disk_hexdump(sector, 512);
+        return 1;
+    }
+
+    /* disk mount <devname> <path>   → mount FAT16 device at VFS path */
+    if (str_equals_ignore_case(argv[1], "mount")) {
+        vfs_node_t* fat_root;
+        int         dev_idx;
+        const char* devname;
+        const char* mntpath;
+
+        if (argc < 4) {
+            terminal_print_line("Uso: disk mount <dispositivo> <ruta>");
+            terminal_print_line("  Ej: disk mount hd0p1 /fat");
+            return 1;
+        }
+
+        devname = argv[2];
+        mntpath = argv[3];
+
+        dev_idx = blkdev_find(devname);
+        if (dev_idx < 0) {
+            terminal_print("[error] dispositivo no encontrado: ");
+            terminal_print_line(devname);
+            return 1;
+        }
+
+        fat_root = fat16_mount(dev_idx);
+        if (!fat_root) {
+            terminal_print_line("[error] no es FAT16 o BPB invalido");
+            return 1;
+        }
+
+        if (vfs_mount(mntpath, fat_root) < 0) {
+            terminal_print_line("[error] tabla de montajes llena");
+            return 1;
+        }
+
+        shell_print_text_with_color(devname, 0x0B);
+        terminal_print(" montado en ");
+        shell_print_text_with_color(mntpath, 0x0F);
+        terminal_put_char('\n');
+        return 1;
+    }
+
+    terminal_print_line("Uso: disk [read <lba> [nombre]] [mount <dev> <ruta>]");
+    return 1;
+}
+
+/* Static storage for up to 8 path completions */
+static char completion_store[8][VFS_PATH_MAX];
+
 int shell_complete_path(const char* prefix, const char* matches[], int max_matches) {
-    int found = 0;
-    int count;
+    char dir_part[VFS_PATH_MAX];
+    char name_part[VFS_NAME_MAX];
+    char search_path[VFS_PATH_MAX];
+    char entry[VFS_NAME_MAX];
+    int  found = 0;
+    int  fd, idx;
+    int  last_slash = -1;
+    unsigned int i;
 
-    if (prefix == 0) {
-        return 0;
+    if (!prefix) return 0;
+    if (max_matches <= 0) return 0;
+    if (max_matches > 8) max_matches = 8;
+
+    /* Split prefix into directory part and name part at last '/' */
+    for (i = 0; prefix[i]; i++) {
+        if (prefix[i] == '/') last_slash = (int)i;
     }
 
-    for (int i = 0; i < SHELL_REDIR_MAX; i++) {
-        if (!shell_redir_files[i].used) {
-            continue;
-        }
+    if (last_slash < 0) {
+        /* No slash: no dir_part, search in cwd */
+        dir_part[0] = '\0';
+        for (i = 0; prefix[i] && i < VFS_NAME_MAX - 1U; i++) name_part[i] = prefix[i];
+        name_part[i] = '\0';
+    } else {
+        /* dir_part = everything up to and including the last '/' */
+        for (i = 0; i <= (unsigned int)last_slash && i < VFS_PATH_MAX - 1U; i++)
+            dir_part[i] = prefix[i];
+        dir_part[i] = '\0';
+        /* name_part = rest */
+        const char* tail = prefix + last_slash + 1;
+        for (i = 0; tail[i] && i < VFS_NAME_MAX - 1U; i++) name_part[i] = tail[i];
+        name_part[i] = '\0';
+    }
 
-        if (str_starts_with_ignore_case(shell_redir_files[i].name, prefix)) {
-            if (found < max_matches) {
-                matches[found] = shell_redir_files[i].name;
-            }
+    /* Resolve dir_part against cwd to get search_path */
+    if (dir_part[0] == '\0') {
+        /* search in cwd */
+        for (i = 0; shell_cwd[i] && i < VFS_PATH_MAX - 1U; i++) search_path[i] = shell_cwd[i];
+        search_path[i] = '\0';
+    } else {
+        shell_resolve_path(dir_part, search_path, sizeof(search_path));
+    }
+
+    /* Open the directory via VFS */
+    fd = vfs_open(search_path);
+    if (fd < 0) return 0;
+
+    idx = 0;
+    while (vfs_readdir(fd, (unsigned int)idx, entry, sizeof(entry)) == 0 && found < max_matches) {
+        if (str_starts_with_ignore_case(entry, name_part)) {
+            /* Build full token: dir_part + entry */
+            unsigned int j = 0, k;
+            for (k = 0; dir_part[k] && j < VFS_PATH_MAX - 1U; k++) completion_store[found][j++] = dir_part[k];
+            for (k = 0; entry[k]   && j < VFS_PATH_MAX - 1U; k++) completion_store[found][j++] = entry[k];
+            completion_store[found][j] = '\0';
+            matches[found] = completion_store[found];
             found++;
         }
+        idx++;
     }
 
-    count = fs_count();
-    for (int i = 0; i < count; i++) {
-        const char* name = fs_name_at(i);
-
-        if (name != 0 && shell_redir_find(name) < 0 && str_starts_with_ignore_case(name, prefix)) {
-            if (found < max_matches) {
-                matches[found] = name;
-            }
-            found++;
-        }
-    }
-
+    vfs_close(fd);
     return found;
 }

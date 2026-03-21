@@ -2,6 +2,7 @@
 #define TASK_H
 
 #include <stdint.h>
+#include "vfs.h"
 
 typedef enum {
 	TASK_STATE_FREE = 0,
@@ -10,6 +11,7 @@ typedef enum {
 	TASK_STATE_SLEEPING,
 	TASK_STATE_BLOCKED,
 	TASK_STATE_FINISHED,
+	TASK_STATE_ZOMBIE,		/* exited, waiting for parent to collect */
 	TASK_STATE_CANCELLED
 } task_state_t;
 
@@ -30,6 +32,8 @@ typedef struct {
 	unsigned int wake_tick;
 	int blocked_event_id;
 	task_priority_t priority;
+	int parent_id;
+	int exit_code;			/* exit status; meaningful when state == TASK_STATE_ZOMBIE */
 } task_snapshot_t;
 
 void task_system_init(void);
@@ -40,6 +44,7 @@ int task_spawn_user(const char* name,
 					uint32_t user_heap_base,
 					uint32_t user_heap_size,
 					uint32_t* page_directory,
+					uint32_t initial_user_esp,
 					int foreground);
 void task_run_ready(void);
 int task_has_runnable(void);
@@ -70,5 +75,20 @@ void task_set_foreground_complete_handler(void (*handler)(int id, const char* na
 int task_list(task_snapshot_t* out, int max_tasks);
 int task_kill(int id);
 const char* task_state_name(task_state_t state);
+void task_set_errno(int e);
+int task_get_errno(void);
+void task_wait_id(int target_id);
+/* Returns the parent PID of the given task, or -1 if not found. */
+int task_parent_id(int id);
+/* Fork the current user-mode task from a syscall interrupt frame.
+   Returns the child task ID in the parent, or -1 on error.
+   Must only be called from syscall_interrupt_handler. */
+int task_fork_from_frame(unsigned int frame_esp);
+/* Inform the task subsystem of the init PID; called once from init_start(). */
+void task_set_init_pid(int pid);
+/* Non-blocking: reap all zombie children of parent_id. Returns count reaped. */
+int  task_reap_zombies_for(int parent_id);
+/* Returns a pointer to the current task's fd table, or NULL if no task runs. */
+vfs_fd_entry_t* task_current_fd_table(void);
 
 #endif

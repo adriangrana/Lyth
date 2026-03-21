@@ -13,7 +13,7 @@
 #define VFS_NAME_MAX   64
 #define VFS_PATH_MAX  256
 #define VFS_MAX_FD     32
-#define VFS_MAX_MOUNTS  8
+#define VFS_MAX_MOUNTS 16
 
 /* ---- Seek whence constants ---- */
 #define VFS_SEEK_SET 0
@@ -41,6 +41,13 @@ typedef struct {
     int         (*open)   (vfs_node_t* node);
     /* Called when a file descriptor is closed. */
     void        (*close)  (vfs_node_t* node);
+    /* Create a new entry named 'name' inside this directory.
+       'flags' is VFS_FLAG_FILE or VFS_FLAG_DIR.
+       Returns a (possibly heap-allocated) node on success, NULL on error. */
+    vfs_node_t* (*create) (vfs_node_t* dir, const char* name, unsigned int flags);
+    /* Remove the entry 'name' from this directory.
+       Returns 0 on success, -1 on error. */
+    int         (*unlink) (vfs_node_t* dir, const char* name);
 } vfs_ops_t;
 
 /* ---- VFS node ---- */
@@ -48,6 +55,7 @@ struct vfs_node {
     char         name[VFS_NAME_MAX]; /* entry name (no leading path) */
     unsigned int flags;              /* VFS_FLAG_* */
     unsigned int size;               /* file size in bytes (0 for dirs) */
+    unsigned int ref_count;          /* number of fd table entries pointing here */
     void*        impl;               /* backend private data */
     vfs_ops_t*   ops;                /* operation table */
     vfs_node_t*  mountpoint;        /* if non-NULL, redirect all ops here */
@@ -70,10 +78,19 @@ int          vfs_node_write  (vfs_node_t* node, unsigned int offset,
 int          vfs_node_readdir(vfs_node_t* node, unsigned int index,
                               char* name_out, unsigned int name_max);
 vfs_node_t*  vfs_node_finddir(vfs_node_t* node, const char* name);
+/* Create a new entry inside 'dir'. Returns a node on success, NULL on error. */
+vfs_node_t*  vfs_node_create (vfs_node_t* dir, const char* name, unsigned int flags);
+/* Remove entry 'name' from 'dir'. Returns 0 on success, -1 on error. */
+int          vfs_node_unlink (vfs_node_t* dir, const char* name);
 
 /* ---- Path resolution ---- */
 /* Walk 'path' through the mount table and return the target node, or NULL. */
 vfs_node_t*  vfs_resolve(const char* path);
+/* Create a new file (VFS_FLAG_FILE) or directory (VFS_FLAG_DIR) at 'path'.
+   Returns 0 on success, -1 on error (parent not found, backend unsupported, etc.). */
+int          vfs_create  (const char* path, unsigned int flags);
+/* Remove the file or directory at 'path'. Returns 0 on success, -1 on error. */
+int          vfs_delete  (const char* path);
 
 /* ---- File-descriptor API ---- */
 /* Open a file/directory by absolute path. Returns fd >= 0 or -1 on error. */
@@ -97,5 +114,20 @@ int          vfs_readdir (int fd, unsigned int index,
 int          vfs_fd_valid (int fd);
 vfs_node_t*  vfs_fd_node  (int fd);
 unsigned int vfs_fd_offset(int fd);
+
+/* ---- Per-task file-descriptor table ---- */
+typedef struct {
+    vfs_node_t*  node;
+    unsigned int offset;
+    int          used;
+} vfs_fd_entry_t;
+
+/* Initialise a fresh fd table (zero all slots). */
+void vfs_task_fd_init    (vfs_fd_entry_t* table);
+/* Close all open FDs in a table (call on task teardown). */
+void vfs_task_fd_close_all(vfs_fd_entry_t* table);
+/* Copy src fd table into dst, incrementing ref_count on every shared node.
+   Used by fork to give the child the same open files as the parent. */
+void vfs_task_fd_inherit (vfs_fd_entry_t* dst, const vfs_fd_entry_t* src);
 
 #endif

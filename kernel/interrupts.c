@@ -66,6 +66,7 @@ static inline void outb(unsigned short port, unsigned char value) {
 extern void irq0_stub(void);
 extern void irq1_stub(void);
 extern void irq12_stub(void);
+extern void irq14_stub(void);
 extern void syscall_stub(void);
 extern void isr0_stub(void);
 extern void isr1_stub(void);
@@ -178,11 +179,17 @@ unsigned int mouse_interrupt_handler(unsigned int current_esp) {
 unsigned int syscall_interrupt_handler(unsigned int current_esp) {
     interrupt_frame_t* frame = (interrupt_frame_t*)current_esp;
 
-    frame->eax = syscall_callback(frame->eax,
-                                  frame->ebx,
-                                  frame->ecx,
-                                  frame->edx,
-                                  frame->esi);
+    if (frame->eax == SYSCALL_FORK) {
+        /* fork needs access to the raw frame to clone the register state,
+           so it bypasses the normal syscall_callback path. */
+        frame->eax = (unsigned int)task_fork_from_frame(current_esp);
+    } else {
+        frame->eax = syscall_callback(frame->eax,
+                                      frame->ebx,
+                                      frame->ecx,
+                                      frame->edx,
+                                      frame->esi);
+    }
 
     return task_schedule_on_syscall(current_esp);
 }
@@ -253,9 +260,10 @@ void interrupts_init(void) {
     pic_remap();
     timer_init(100);
 
-    idt_set_gate(32, (unsigned int)irq0_stub, code_selector, 0x8E);
-    idt_set_gate(33, (unsigned int)irq1_stub, code_selector, 0x8E);
+    idt_set_gate(32, (unsigned int)irq0_stub,  code_selector, 0x8E);
+    idt_set_gate(33, (unsigned int)irq1_stub,  code_selector, 0x8E);
     idt_set_gate(44, (unsigned int)irq12_stub, code_selector, 0x8E);
+    idt_set_gate(46, (unsigned int)irq14_stub, code_selector, 0x8E);
     idt_set_gate(0x80, (unsigned int)syscall_stub, code_selector, 0xEE);
 
     idt_load_table();
