@@ -47,3 +47,13 @@ unsigned int timer_ticks_to_ms(unsigned int ticks) {
 unsigned int timer_get_uptime_ms(void) {
     return timer_ticks_to_ms(timer_ticks);
 }
+
+unsigned int timer_get_monotonic_us(void) {
+    /* Each PIT tick at 100 Hz = 10 ms = 10 000 µs.
+       At 100 Hz this wraps after ~11.9 hours; sufficient for an
+       educational kernel.  No 64-bit needed given current uptime. */
+    if (timer_frequency == 0U) {
+        return 0U;
+    }
+    return timer_ticks * (1000000U / timer_frequency);
+}

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "vfs.h"
+#include "signal.h"
 
 typedef enum {
 	TASK_STATE_FREE = 0,
@@ -78,8 +79,32 @@ const char* task_state_name(task_state_t state);
 void task_set_errno(int e);
 int task_get_errno(void);
 void task_wait_id(int target_id);
+/* Wait for a child to exit and collect its POSIX exit status.
+   target_id: child PID to wait for, or -1 for any child.
+   status_uptr: virtual address where the int status will be written (0 = discard).
+   Returns child PID on success, -1 if no matching child or error. */
+int task_waitpid(int target_id, uint32_t status_uptr);
 /* Returns the parent PID of the given task, or -1 if not found. */
 int task_parent_id(int id);
+/* Send a signal to a task by PID. Returns 1 on success, 0 on error. */
+int task_send_signal(int id, int signum);
+/* Set current task signal disposition for signum.
+	handler uses LYTH_SIG_DFL / LYTH_SIG_IGN or a user function address.
+	old_handler_out may be NULL. Returns 1 on success. */
+int task_set_signal_handler(int signum, unsigned int handler, unsigned int* old_handler_out);
+/* Pending signals bitmask for current task. */
+unsigned int task_pending_signals(void);
+/* Update current task signal mask. how=LYTH_SIG_BLOCK/UNBLOCK/SETMASK. */
+int task_sigprocmask(unsigned int how, unsigned int mask, unsigned int* old_mask_out);
+/* Replace current user task image in-place (exec semantics). */
+int task_exec_current_user_from_frame(unsigned int frame_esp,
+									  const char* new_name,
+									  unsigned int entry_point,
+									  uint32_t user_physical_base,
+									  uint32_t user_heap_base,
+									  uint32_t user_heap_size,
+									  uint32_t* page_directory,
+									  uint32_t initial_user_esp);
 /* Fork the current user-mode task from a syscall interrupt frame.
    Returns the child task ID in the parent, or -1 on error.
    Must only be called from syscall_interrupt_handler. */
@@ -90,5 +115,7 @@ void task_set_init_pid(int pid);
 int  task_reap_zombies_for(int parent_id);
 /* Returns a pointer to the current task's fd table, or NULL if no task runs. */
 vfs_fd_entry_t* task_current_fd_table(void);
+/* Returns a pointer to the fd table of the task with the given ID, or NULL. */
+vfs_fd_entry_t* task_get_fd_table(int task_id);
 
 #endif

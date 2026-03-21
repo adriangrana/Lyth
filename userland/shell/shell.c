@@ -19,12 +19,15 @@
 #include "ata.h"
 #include "blkdev.h"
 #include "fat16.h"
+#include "fat32.h"
+#include "rtc.h"
 
 #define SHELL_MAX_ARGS 8
 #define SHELL_TOKEN_MAX 64
 #define SHELL_ENV_MAX 16
 #define SHELL_ENV_NAME_MAX 16
 #define SHELL_ENV_VALUE_MAX 64
+#define SHELL_ENV_ENTRY_MAX (SHELL_ENV_NAME_MAX + SHELL_ENV_VALUE_MAX + 2)
 #define SHELL_PIPE_MAX 1024
 #define SHELL_REDIR_MAX 8
 
@@ -79,6 +82,7 @@ static int cmd_history(int argc, const char* argv[], int background);
 static int cmd_count(int argc, const char* argv[], int background);
 static int cmd_sleep(int argc, const char* argv[], int background);
 static int cmd_uptime(int argc, const char* argv[], int background);
+static int cmd_date(int argc, const char* argv[], int background);
 static int cmd_ps(int argc, const char* argv[], int background);
 static int cmd_kill(int argc, const char* argv[], int background);
 static int cmd_nice(int argc, const char* argv[], int background);
@@ -91,9 +95,11 @@ static int cmd_dmesg(int argc, const char* argv[], int background);
 static int cmd_gfxdemo(int argc, const char* argv[], int background);
 static int cmd_ls(int argc, const char* argv[], int background);
 static int cmd_cat(int argc, const char* argv[], int background);
+static int cmd_grep(int argc, const char* argv[], int background);
 static int cmd_source(int argc, const char* argv[], int background);
 static int cmd_elfinfo(int argc, const char* argv[], int background);
 static int cmd_exec(int argc, const char* argv[], int background);
+static int cmd_repeat(int argc, const char* argv[], int background);
 static int cmd_yield(int argc, const char* argv[], int background);
 static int cmd_vfs(int argc, const char* argv[], int background);
 static int cmd_disk(int argc, const char* argv[], int background);
@@ -101,7 +107,13 @@ static int cmd_cd(int argc, const char* argv[], int background);
 static int cmd_pwd(int argc, const char* argv[], int background);
 static int cmd_touch(int argc, const char* argv[], int background);
 static int cmd_rm(int argc, const char* argv[], int background);
+static int cmd_unlink(int argc, const char* argv[], int background);
+static int cmd_stat(int argc, const char* argv[], int background);
 static int cmd_mkdir(int argc, const char* argv[], int background);
+static int cmd_chmod(int argc, const char* argv[], int background);
+static int cmd_cp(int argc, const char* argv[], int background);
+static int cmd_mv(int argc, const char* argv[], int background);
+static int cmd_rename(int argc, const char* argv[], int background);
 static int cmd_getpid(int argc, const char* argv[], int background);
 static void shell_resolve_path(const char* input, char* out, unsigned int out_size);
 
@@ -126,9 +138,10 @@ static command_t commands[] = {
     {"count",   cmd_count,   "demo programada; soporta '&' y Ctrl+C"},
     {"sleep",   cmd_sleep,   "duerme en ms; soporta '&'"},
     {"uptime",  cmd_uptime,  "muestra ticks y tiempo desde arranque"},
+    {"date",    cmd_date,    "muestra la fecha y hora actual (RTC)"},
     {"ps",      cmd_ps,      "lista tareas activas"},
     {"jobs",    cmd_ps,      "alias de ps"},
-    {"kill",    cmd_kill,    "cancela una tarea: kill <id>"},
+    {"kill",    cmd_kill,    "envia señal: kill <id> [signum] (default SIGTERM=15)"},
     {"nice",    cmd_nice,    "cambia prioridad: nice <id> <high|normal|low>"},
     {"task",    cmd_task,    "muestra la tarea actual y foreground"},
     {"mem",     cmd_mem,     "estadisticas de heap, memoria fisica y paging"},
@@ -139,18 +152,26 @@ static command_t commands[] = {
     {"gfxdemo", cmd_gfxdemo, "dibuja primitivas graficas en framebuffer"},
     {"ls",      cmd_ls,      "lista directorio VFS: ls [ruta]"},
     {"cat",     cmd_cat,     "muestra un archivo VFS: cat <ruta>"},
+    {"grep",    cmd_grep,    "filtra lineas: grep <patron> [ruta]"},
     {"source",  cmd_source,  "ejecuta script del FS: source <NOMBRE>"},
     {"elfinfo", cmd_elfinfo, "inspecciona un ELF del FS: elfinfo <NOMBRE>"},
     {"exec",    cmd_exec,    "carga y ejecuta un ELF: exec <NOMBRE> [args...] [&]"},
+    {"repeat",  cmd_repeat,  "repite un comando N veces: repeat <N> <comando...>"},
     {"getpid",  cmd_getpid,  "muestra el PID del proceso actual"},
     {"yield",   cmd_yield,   "cede CPU al scheduler"},
-    {"vfs",     cmd_vfs,     "VFS: mounts, ls/cat/touch/rm: vfs [ls|cat|touch|rm] [ruta]"},
-    {"disk",    cmd_disk,    "Bloques: disk [read <lba> [dev]] [mount <dev> <ruta>]"},
+    {"vfs",     cmd_vfs,     "VFS: mounts, ls/cat/touch/rm/stat/cp/mv/rename: vfs <subcmd> ..."},
+    {"disk",    cmd_disk,    "Bloques: disk [read <lba> [dev]] [mount <dev> <ruta>] [fsck <dev>] [gpt <dev>]"},
     {"cd",      cmd_cd,      "cambia directorio: cd [ruta]"},
     {"pwd",     cmd_pwd,     "muestra el directorio actual"},
     {"touch",   cmd_touch,   "crea archivo vacio (sin contenido): touch <ruta>"},
     {"rm",      cmd_rm,      "elimina archivo: rm <ruta>"},
+    {"unlink",  cmd_unlink,  "alias de rm: unlink <ruta>"},
+    {"stat",    cmd_stat,    "metadata basica: stat <ruta>"},
     {"mkdir",   cmd_mkdir,   "crea directorio: mkdir <ruta>"},
+    {"chmod",   cmd_chmod,   "cambia permisos UNIX: chmod <modo_octal> <ruta>"},
+    {"cp",      cmd_cp,      "copia archivo: cp <origen> <destino>"},
+    {"mv",      cmd_mv,      "mueve/renombra archivo: mv <origen> <destino>"},
+    {"rename",  cmd_rename,  "renombra archivo: rename <origen> <destino>"},
 };
 
 static const int command_count = sizeof(commands) / sizeof(commands[0]);
@@ -172,6 +193,8 @@ static int shell_redir_find(const char* name);
 static int shell_redir_store(const char* name, const char* content, unsigned int length, int append);
 static int shell_read_text_source(const char* name, char* buffer, unsigned int buffer_size);
 static int shell_execute_line_raw(const char* line);
+static unsigned int shell_parse_mode_octal(const char* s, int* ok);
+static void shell_print_mode_octal(unsigned int mode);
 
 static int is_env_name_char(char c) {
     return (c >= 'a' && c <= 'z') ||
@@ -259,6 +282,45 @@ static int shell_env_unset(const char* name) {
     shell_env[index].name[0] = '\0';
     shell_env[index].value[0] = '\0';
     return 1;
+}
+
+/* Build envp[] as "NAME=VALUE" strings in caller-provided storage.
+   Returns envc and NULL-terminates envp_out. */
+static int shell_build_envp(const char* envp_out[],
+                            char env_storage[][SHELL_ENV_ENTRY_MAX],
+                            int max_env) {
+    int envc = 0;
+
+    if (!envp_out || !env_storage || max_env <= 0) {
+        return 0;
+    }
+
+    for (int i = 0; i < SHELL_ENV_MAX && envc < max_env - 1; i++) {
+        int w = 0;
+
+        if (!shell_env[i].used) {
+            continue;
+        }
+
+        for (int j = 0; shell_env[i].name[j] != '\0' && w < SHELL_ENV_ENTRY_MAX - 1; j++) {
+            env_storage[envc][w++] = shell_env[i].name[j];
+        }
+
+        if (w < SHELL_ENV_ENTRY_MAX - 1) {
+            env_storage[envc][w++] = '=';
+        }
+
+        for (int j = 0; shell_env[i].value[j] != '\0' && w < SHELL_ENV_ENTRY_MAX - 1; j++) {
+            env_storage[envc][w++] = shell_env[i].value[j];
+        }
+
+        env_storage[envc][w] = '\0';
+        envp_out[envc] = env_storage[envc];
+        envc++;
+    }
+
+    envp_out[envc] = 0;
+    return envc;
 }
 
 static void shell_expand_token(const char* input, char* output, int output_size) {
@@ -573,6 +635,22 @@ static int shell_has_pipe_input(void) {
     return shell_pipe_length > 0 && shell_pipe_buffer[0] != '\0';
 }
 
+static int shell_text_contains(const char* text, const char* needle) {
+    unsigned int i;
+    unsigned int j;
+
+    if (!text || !needle) return 0;
+    if (needle[0] == '\0') return 1;
+
+    for (i = 0; text[i] != '\0'; i++) {
+        for (j = 0; needle[j] != '\0' && text[i + j] == needle[j]; j++)
+            ;
+        if (needle[j] == '\0') return 1;
+    }
+
+    return 0;
+}
+
 static int shell_redir_find(const char* name) {
     for (int i = 0; i < SHELL_REDIR_MAX; i++) {
         if (shell_redir_files[i].used && str_equals(shell_redir_files[i].name, name)) {
@@ -586,6 +664,7 @@ static int shell_redir_find(const char* name) {
 static int shell_redir_store(const char* name, const char* content, unsigned int length, int append) {
     char vfs_path[VFS_PATH_MAX];
     int  fd;
+    unsigned int open_flags;
 
     if (name == 0 || name[0] == '\0' || content == 0) {
         return 0;
@@ -594,23 +673,13 @@ static int shell_redir_store(const char* name, const char* content, unsigned int
     /* Resolve the output filename against cwd so "test.txt" becomes "/cwd/test.txt" */
     shell_resolve_path(name, vfs_path, sizeof(vfs_path));
 
-    /* Create the file if it doesn't exist yet */
-    vfs_node_t* existing = vfs_resolve(vfs_path);
-    if (!existing) {
-        if (vfs_create(vfs_path, VFS_FLAG_FILE) != 0)
-            return 0;
-    } else {
-        if (existing->flags & VFS_FLAG_DYNAMIC) kfree(existing);
-    }
+    open_flags = VFS_O_WRONLY | VFS_O_CREAT;
+    open_flags |= append ? VFS_O_APPEND : VFS_O_TRUNC;
 
     /* Open and write */
-    fd = vfs_open(vfs_path);
+    fd = vfs_open_flags(vfs_path, open_flags);
     if (fd < 0) return 0;
 
-    if (append) {
-        /* seek to end for >> */
-        vfs_seek(fd, 0, VFS_SEEK_END);
-    }
     vfs_write(fd, (const unsigned char*)content, length);
     vfs_close(fd);
     return 1;
@@ -1102,19 +1171,70 @@ static int cmd_sleep(int argc, const char* argv[], int background) {
 static int cmd_uptime(int argc, const char* argv[], int background) {
     unsigned int ticks;
     unsigned int ms;
+    unsigned int h, m, s;
 
     (void)argc;
     (void)argv;
     (void)background;
 
-    ticks = syscall_get_ticks();
-    ms = timer_ticks_to_ms(ticks);
-    terminal_print("Ticks: ");
-    terminal_print_uint(ticks);
-    terminal_put_char('\n');
-    terminal_print("Uptime ms: ");
+    ticks = timer_get_ticks();
+    ms    = timer_ticks_to_ms(ticks);
+    h     = ms / 3600000U;
+    m     = (ms % 3600000U) / 60000U;
+    s     = (ms % 60000U) / 1000U;
+
+    terminal_print("Uptime: ");
+    terminal_print_uint(h);
+    terminal_print("h ");
+    terminal_print_uint(m);
+    terminal_print("m ");
+    terminal_print_uint(s);
+    terminal_print("s  (");
     terminal_print_uint(ms);
-    terminal_put_char('\n');
+    terminal_print(" ms, ");
+    terminal_print_uint(ticks);
+    terminal_print(" ticks)\n");
+    return 1;
+}
+
+static void date_print_padded2(unsigned int v) {
+    if (v < 10U) { terminal_print("0"); }
+    terminal_print_uint(v);
+}
+
+static int cmd_date(int argc, const char* argv[], int background) {
+    rtc_time_t t;
+    unsigned int epoch;
+
+    (void)argc;
+    (void)argv;
+    (void)background;
+
+    rtc_read(&t);
+    epoch = rtc_get_wall_epoch();
+
+    terminal_print("Fecha: ");
+    terminal_print_uint(t.year);
+    terminal_print("-");
+    date_print_padded2(t.month);
+    terminal_print("-");
+    date_print_padded2(t.day);
+    terminal_print("  ");
+    date_print_padded2(t.hour);
+    terminal_print(":");
+    date_print_padded2(t.min);
+    terminal_print(":");
+    date_print_padded2(t.sec);
+    terminal_print("\n");
+
+    terminal_print("Epoch:  ");
+    terminal_print_uint(epoch);
+    terminal_print("\n");
+
+    terminal_print("Monot:  ");
+    terminal_print_uint(timer_get_monotonic_us());
+    terminal_print(" us\n");
+
     return 1;
 }
 
@@ -1163,22 +1283,33 @@ static int cmd_ps(int argc, const char* argv[], int background) {
 
 static int cmd_kill(int argc, const char* argv[], int background) {
     unsigned int id;
+    int signum = LYTH_SIGTERM;
 
     (void)background;
 
     if (argc < 2) {
-        terminal_print_line("Uso: kill <id>");
+        terminal_print_line("Uso: kill <id> [signum]");
         return 1;
     }
 
+    if (argc >= 3) {
+        signum = parser_parse_integer(argv[2], LYTH_SIGTERM);
+        if (signum <= 0 || signum > LYTH_SIGNAL_MAX) {
+            terminal_print_line("Signum invalido");
+            return 1;
+        }
+    }
+
     id = parse_positive_or_default(argv[1], 0);
-    if (id == 0 || !task_kill((int)id)) {
+    if (id == 0 || !task_send_signal((int)id, signum)) {
         terminal_print_line("No existe esa tarea");
         return 1;
     }
 
-    terminal_print("Tarea cancelada: ");
+    terminal_print("Señal enviada a PID ");
     terminal_print_uint(id);
+    terminal_print(" SIG=");
+    terminal_print_uint((unsigned int)signum);
     terminal_put_char('\n');
     return 1;
 }
@@ -1535,6 +1666,76 @@ static int cmd_cat(int argc, const char* argv[], int background) {
     return 1;
 }
 
+static int cmd_grep(int argc, const char* argv[], int background) {
+    const char* pattern;
+    char text[SHELL_PIPE_MAX];
+    unsigned int len;
+    unsigned int i;
+
+    (void)background;
+
+    if (argc < 2) {
+        terminal_print_line("Uso: grep <patron> [ruta]");
+        return 1;
+    }
+
+    pattern = argv[1];
+
+    if (argc >= 3) {
+        char path[VFS_PATH_MAX];
+        int fd;
+        int n;
+        int total = 0;
+
+        shell_resolve_path(argv[2], path, sizeof(path));
+        fd = vfs_open(path);
+        if (fd < 0) {
+            terminal_print("[error] Archivo no encontrado: ");
+            terminal_print_line(path);
+            return 1;
+        }
+
+        while ((n = vfs_read(fd,
+                             (unsigned char*)text + total,
+                             (unsigned int)(sizeof(text) - 1 - (unsigned int)total))) > 0) {
+            total += n;
+            if (total >= (int)sizeof(text) - 1) break;
+        }
+        text[total] = '\0';
+        vfs_close(fd);
+    } else if (shell_has_pipe_input()) {
+        for (i = 0; shell_pipe_buffer[i] != '\0' && i < sizeof(text) - 1U; i++)
+            text[i] = shell_pipe_buffer[i];
+        text[i] = '\0';
+    } else {
+        terminal_print_line("Uso: grep <patron> [ruta]  o  comando | grep <patron>");
+        return 1;
+    }
+
+    len = str_length(text);
+    i = 0;
+    while (i <= len) {
+        unsigned int start = i;
+        unsigned int end = i;
+        char saved;
+
+        while (text[end] != '\0' && text[end] != '\n') end++;
+        saved = text[end];
+        text[end] = '\0';
+
+        if (shell_text_contains(&text[start], pattern)) {
+            terminal_print(&text[start]);
+            terminal_put_char('\n');
+        }
+
+        if (saved == '\0') break;
+        text[end] = saved;
+        i = end + 1;
+    }
+
+    return 1;
+}
+
 static int cmd_source(int argc, const char* argv[], int background) {
     unsigned int size;
     char text[SHELL_PIPE_MAX];
@@ -1633,6 +1834,9 @@ static int cmd_elfinfo(int argc, const char* argv[], int background) {
 
 static int cmd_exec(int argc, const char* argv[], int background) {
     int id;
+    const char* envp[16];
+    char env_storage[16][SHELL_ENV_ENTRY_MAX];
+    int envc;
 
     if (argc < 2) {
         terminal_print_line("Uso: exec <NOMBRE> [args...] [&]");
@@ -1640,9 +1844,11 @@ static int cmd_exec(int argc, const char* argv[], int background) {
     }
 
     /* argv[1] = path; forward argv[1..] as the ELF's argv */
+    envc = shell_build_envp(envp, env_storage, 16);
+
     id = usermode_spawn_elf_vfs_argv(argv[1],
                                      argc - 1, (const char* const*)(argv + 1),
-                                     0, 0,
+                                     envc, (const char* const*)envp,
                                      background ? 0 : 1);
     if (id < 0) {
         terminal_print_line("No se pudo cargar o ejecutar el ELF");
@@ -1657,6 +1863,48 @@ static int cmd_exec(int argc, const char* argv[], int background) {
     terminal_print("Ejecutando ELF user mode: ");
     terminal_print_line(argv[1]);
     return 0;
+}
+
+static int cmd_repeat(int argc, const char* argv[], int background) {
+    int count;
+    int failures = 0;
+    char command_line[SHELL_PIPE_MAX];
+
+    (void)background;
+
+    if (argc < 3) {
+        terminal_print_line("Uso: repeat <N> <comando...>");
+        return 1;
+    }
+
+    count = parser_parse_integer(argv[1], 0);
+    if (count <= 0) {
+        terminal_print_line("N debe ser > 0");
+        return 1;
+    }
+
+    shell_join_args_to_buffer(argc, argv, 2, command_line, (int)sizeof(command_line));
+
+    terminal_print("Repitiendo ");
+    terminal_print_uint((unsigned int)count);
+    terminal_print(" veces: ");
+    terminal_print_line(command_line);
+
+    for (int i = 0; i < count; i++) {
+        int result = shell_execute_line(command_line);
+        if (result == 0) {
+            /* foreground command launched; let scheduler run */
+            syscall_yield();
+        }
+        if (result < 0) {
+            failures++;
+        }
+    }
+
+    terminal_print("repeat: completado, fallos=");
+    terminal_print_uint((unsigned int)failures);
+    terminal_put_char('\n');
+    return 1;
 }
 
 static int cmd_getpid(int argc, const char* argv[], int background) {
@@ -2200,7 +2448,226 @@ static int cmd_vfs(int argc, const char* argv[], int background) {
         return 1;
     }
 
-    terminal_print_line("Uso: vfs [ls [ruta] | cat <ruta> | touch <ruta> | rm <ruta>]");
+    /* vfs unlink <path> */
+    if (str_equals_ignore_case(argv[1], "unlink")) {
+        char path[VFS_PATH_MAX];
+
+        if (argc < 3) {
+            terminal_print_line("Uso: vfs unlink <ruta>");
+            return 1;
+        }
+
+        shell_resolve_path(argv[2], path, sizeof(path));
+
+        if (vfs_unlink(path) == 0) {
+            shell_print_text_with_color("Eliminado: ", 0x0C);
+            terminal_print_line(path);
+        } else {
+            terminal_print("[error] No se pudo eliminar: ");
+            terminal_print_line(path);
+        }
+        return 1;
+    }
+
+    /* vfs stat <path> */
+    if (str_equals_ignore_case(argv[1], "stat")) {
+        char       path[VFS_PATH_MAX];
+        vfs_stat_t st;
+
+        if (argc < 3) {
+            terminal_print_line("Uso: vfs stat <ruta>");
+            return 1;
+        }
+
+        shell_resolve_path(argv[2], path, sizeof(path));
+        if (vfs_stat(path, &st) != 0) {
+            terminal_print("[error] No se pudo obtener stat de: ");
+            terminal_print_line(path);
+            return 1;
+        }
+
+        shell_print_text_with_color("Ruta: ", 0x0B);
+        terminal_print_line(path);
+        shell_print_text_with_color("Tipo: ", 0x0B);
+        if (st.flags & VFS_FLAG_DIR) terminal_print_line("directorio");
+        else if (st.flags & VFS_FLAG_FILE) terminal_print_line("archivo");
+        else terminal_print_line("desconocido");
+        shell_print_text_with_color("Tamano: ", 0x0B);
+        terminal_print_uint(st.size);
+        terminal_print_line(" bytes");
+        shell_print_text_with_color("Flags: 0x", 0x0B);
+        terminal_print_hex(st.flags);
+        terminal_put_char('\n');
+        shell_print_text_with_color("Modo: ", 0x0B);
+        shell_print_mode_octal(st.mode);
+        terminal_print_line(" (octal)");
+        return 1;
+    }
+
+    /* vfs chmod <mode> <path> */
+    if (str_equals_ignore_case(argv[1], "chmod")) {
+        char path[VFS_PATH_MAX];
+        unsigned int mode;
+        int ok;
+
+        if (argc < 4) {
+            terminal_print_line("Uso: vfs chmod <modo_octal> <ruta>");
+            return 1;
+        }
+
+        mode = shell_parse_mode_octal(argv[2], &ok);
+        if (!ok) {
+            terminal_print("[error] modo invalido: ");
+            terminal_print_line(argv[2]);
+            return 1;
+        }
+
+        shell_resolve_path(argv[3], path, sizeof(path));
+        if (vfs_chmod(path, mode) != 0) {
+            terminal_print("[error] No se pudo cambiar modo: ");
+            terminal_print_line(path);
+            return 1;
+        }
+
+        shell_print_text_with_color("Modo actualizado: ", 0x0A);
+        terminal_print(path);
+        terminal_print(" -> ");
+        shell_print_mode_octal(mode);
+        terminal_put_char('\n');
+        return 1;
+    }
+
+    /* vfs cp <src> <dst> */
+    if (str_equals_ignore_case(argv[1], "cp")) {
+        char src[VFS_PATH_MAX];
+        char dst[VFS_PATH_MAX];
+        unsigned char buf[512];
+        int sfd;
+        int dfd;
+
+        if (argc < 4) {
+            terminal_print_line("Uso: vfs cp <origen> <destino>");
+            return 1;
+        }
+
+        shell_resolve_path(argv[2], src, sizeof(src));
+        shell_resolve_path(argv[3], dst, sizeof(dst));
+
+        sfd = vfs_open(src);
+        if (sfd < 0) {
+            terminal_print("[error] No se pudo abrir origen: ");
+            terminal_print_line(src);
+            return 1;
+        }
+
+        if (vfs_fd_node(sfd) && (vfs_fd_node(sfd)->flags & VFS_FLAG_DIR)) {
+            vfs_close(sfd);
+            terminal_print_line("[error] cp de directorios no soportado");
+            return 1;
+        }
+
+        if (vfs_create(dst, VFS_FLAG_FILE) != 0) {
+            if (vfs_delete(dst) != 0 || vfs_create(dst, VFS_FLAG_FILE) != 0) {
+                vfs_close(sfd);
+                terminal_print("[error] No se pudo crear destino: ");
+                terminal_print_line(dst);
+                return 1;
+            }
+        }
+
+        dfd = vfs_open(dst);
+        if (dfd < 0) {
+            vfs_close(sfd);
+            terminal_print("[error] No se pudo abrir destino: ");
+            terminal_print_line(dst);
+            return 1;
+        }
+
+        while (1) {
+            int n = vfs_read(sfd, buf, sizeof(buf));
+            if (n < 0) {
+                terminal_print_line("[error] fallo leyendo origen");
+                vfs_close(dfd);
+                vfs_close(sfd);
+                return 1;
+            }
+            if (n == 0) break;
+            if (vfs_write(dfd, buf, (unsigned int)n) != n) {
+                terminal_print_line("[error] fallo escribiendo destino");
+                vfs_close(dfd);
+                vfs_close(sfd);
+                return 1;
+            }
+        }
+
+        vfs_close(dfd);
+        vfs_close(sfd);
+        shell_print_text_with_color("Copiado: ", 0x0A);
+        terminal_print(src);
+        terminal_print(" -> ");
+        terminal_print_line(dst);
+        return 1;
+    }
+
+    /* vfs mv <src> <dst> */
+    if (str_equals_ignore_case(argv[1], "mv")) {
+        char src[VFS_PATH_MAX];
+        char dst[VFS_PATH_MAX];
+
+        if (argc < 4) {
+            terminal_print_line("Uso: vfs mv <origen> <destino>");
+            return 1;
+        }
+
+        shell_resolve_path(argv[2], src, sizeof(src));
+        shell_resolve_path(argv[3], dst, sizeof(dst));
+
+        if (str_equals(src, dst)) return 1;
+
+        if (vfs_rename(src, dst) != 0) {
+            terminal_print("[error] No se pudo mover/renombrar: ");
+            terminal_print(src);
+            terminal_print(" -> ");
+            terminal_print_line(dst);
+            return 1;
+        }
+
+        shell_print_text_with_color("Movido: ", 0x0A);
+        terminal_print(src);
+        terminal_print(" -> ");
+        terminal_print_line(dst);
+        return 1;
+    }
+
+    /* vfs rename <src> <dst> */
+    if (str_equals_ignore_case(argv[1], "rename")) {
+        char src[VFS_PATH_MAX];
+        char dst[VFS_PATH_MAX];
+
+        if (argc < 4) {
+            terminal_print_line("Uso: vfs rename <origen> <destino>");
+            return 1;
+        }
+
+        shell_resolve_path(argv[2], src, sizeof(src));
+        shell_resolve_path(argv[3], dst, sizeof(dst));
+
+        if (vfs_rename(src, dst) != 0) {
+            terminal_print("[error] No se pudo renombrar: ");
+            terminal_print(src);
+            terminal_print(" -> ");
+            terminal_print_line(dst);
+            return 1;
+        }
+
+        shell_print_text_with_color("Renombrado: ", 0x0A);
+        terminal_print(src);
+        terminal_print(" -> ");
+        terminal_print_line(dst);
+        return 1;
+    }
+
+    terminal_print_line("Uso: vfs [ls [ruta] | cat <ruta> | touch <ruta> | rm|unlink <ruta> | stat <ruta> | chmod <modo> <ruta> | cp <src> <dst> | mv|rename <src> <dst>]");
     return 1;
 }
 
@@ -2229,13 +2696,79 @@ static int cmd_rm(int argc, const char* argv[], int background) {
         return 1;
     }
     shell_resolve_path(argv[1], path, sizeof(path));
-    if (vfs_delete(path) == 0) {
+    if (vfs_unlink(path) == 0) {
         shell_print_text_with_color("Eliminado: ", 0x0C);
         terminal_print_line(path);
     } else {
         terminal_print("[error] No se pudo eliminar: ");
         terminal_print_line(path);
     }
+    return 1;
+}
+
+/* ---- cmd_unlink ---- */
+static int cmd_unlink(int argc, const char* argv[], int background) {
+    return cmd_rm(argc, argv, background);
+}
+
+static unsigned int shell_parse_mode_octal(const char* s, int* ok) {
+    unsigned int mode = 0;
+    *ok = 0;
+    if (!s || !s[0]) return 0;
+
+    while (*s) {
+        unsigned char c = (unsigned char)*s++;
+        if (c < '0' || c > '7') return 0;
+        mode = (mode << 3) | (unsigned int)(c - '0');
+    }
+
+    mode &= 0x01FFU;
+    *ok = 1;
+    return mode;
+}
+
+static void shell_print_mode_octal(unsigned int mode) {
+    char out[4];
+    out[0] = (char)('0' + ((mode >> 6) & 0x7U));
+    out[1] = (char)('0' + ((mode >> 3) & 0x7U));
+    out[2] = (char)('0' + ((mode >> 0) & 0x7U));
+    out[3] = '\0';
+    terminal_print(out);
+}
+
+/* ---- cmd_stat ---- */
+static int cmd_stat(int argc, const char* argv[], int background) {
+    char       path[VFS_PATH_MAX];
+    vfs_stat_t st;
+
+    (void)background;
+    if (argc < 2) {
+        terminal_print_line("Uso: stat <ruta>");
+        return 1;
+    }
+
+    shell_resolve_path(argv[1], path, sizeof(path));
+    if (vfs_stat(path, &st) != 0) {
+        terminal_print("[error] No se pudo obtener stat de: ");
+        terminal_print_line(path);
+        return 1;
+    }
+
+    shell_print_text_with_color("Ruta: ", 0x0B);
+    terminal_print_line(path);
+    shell_print_text_with_color("Tipo: ", 0x0B);
+    if (st.flags & VFS_FLAG_DIR) terminal_print_line("directorio");
+    else if (st.flags & VFS_FLAG_FILE) terminal_print_line("archivo");
+    else terminal_print_line("desconocido");
+    shell_print_text_with_color("Tamano: ", 0x0B);
+    terminal_print_uint(st.size);
+    terminal_print_line(" bytes");
+    shell_print_text_with_color("Flags: 0x", 0x0B);
+    terminal_print_hex(st.flags);
+    terminal_put_char('\n');
+    shell_print_text_with_color("Modo: ", 0x0B);
+    shell_print_mode_octal(st.mode);
+    terminal_print_line(" (octal)");
     return 1;
 }
 
@@ -2258,6 +2791,151 @@ static int cmd_mkdir(int argc, const char* argv[], int background) {
     return 1;
 }
 
+/* ---- cmd_chmod ---- */
+static int cmd_chmod(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    unsigned int mode;
+    int ok;
+
+    (void)background;
+    if (argc < 3) {
+        terminal_print_line("Uso: chmod <modo_octal> <ruta>");
+        terminal_print_line("  Ej: chmod 644 /hd0p1/archivo.txt");
+        return 1;
+    }
+
+    mode = shell_parse_mode_octal(argv[1], &ok);
+    if (!ok) {
+        terminal_print("[error] modo invalido: ");
+        terminal_print_line(argv[1]);
+        return 1;
+    }
+
+    shell_resolve_path(argv[2], path, sizeof(path));
+    if (vfs_chmod(path, mode) != 0) {
+        terminal_print("[error] No se pudo cambiar modo: ");
+        terminal_print_line(path);
+        return 1;
+    }
+
+    shell_print_text_with_color("Modo actualizado: ", 0x0A);
+    terminal_print(path);
+    terminal_print(" -> ");
+    shell_print_mode_octal(mode);
+    terminal_put_char('\n');
+    return 1;
+}
+
+/* ---- cmd_cp ---- */
+static int cmd_cp(int argc, const char* argv[], int background) {
+    char src[VFS_PATH_MAX];
+    char dst[VFS_PATH_MAX];
+    unsigned char buf[512];
+    int sfd;
+    int dfd;
+
+    (void)background;
+    if (argc < 3) {
+        terminal_print_line("Uso: cp <origen> <destino>");
+        return 1;
+    }
+
+    shell_resolve_path(argv[1], src, sizeof(src));
+    shell_resolve_path(argv[2], dst, sizeof(dst));
+
+    sfd = vfs_open(src);
+    if (sfd < 0) {
+        terminal_print("[error] No se pudo abrir origen: ");
+        terminal_print_line(src);
+        return 1;
+    }
+
+    if (vfs_fd_node(sfd) && (vfs_fd_node(sfd)->flags & VFS_FLAG_DIR)) {
+        vfs_close(sfd);
+        terminal_print_line("[error] cp de directorios no soportado");
+        return 1;
+    }
+
+    if (vfs_create(dst, VFS_FLAG_FILE) != 0) {
+        if (vfs_delete(dst) != 0 || vfs_create(dst, VFS_FLAG_FILE) != 0) {
+            vfs_close(sfd);
+            terminal_print("[error] No se pudo crear destino: ");
+            terminal_print_line(dst);
+            return 1;
+        }
+    }
+
+    dfd = vfs_open(dst);
+    if (dfd < 0) {
+        vfs_close(sfd);
+        terminal_print("[error] No se pudo abrir destino: ");
+        terminal_print_line(dst);
+        return 1;
+    }
+
+    while (1) {
+        int n = vfs_read(sfd, buf, sizeof(buf));
+        if (n < 0) {
+            terminal_print_line("[error] fallo leyendo origen");
+            vfs_close(dfd);
+            vfs_close(sfd);
+            return 1;
+        }
+        if (n == 0) break;
+        if (vfs_write(dfd, buf, (unsigned int)n) != n) {
+            terminal_print_line("[error] fallo escribiendo destino");
+            vfs_close(dfd);
+            vfs_close(sfd);
+            return 1;
+        }
+    }
+
+    vfs_close(dfd);
+    vfs_close(sfd);
+
+    shell_print_text_with_color("Copiado: ", 0x0A);
+    terminal_print(src);
+    terminal_print(" -> ");
+    terminal_print_line(dst);
+    return 1;
+}
+
+/* ---- cmd_mv ---- */
+static int cmd_mv(int argc, const char* argv[], int background) {
+    char src[VFS_PATH_MAX];
+    char dst[VFS_PATH_MAX];
+
+    (void)background;
+    if (argc < 3) {
+        terminal_print_line("Uso: mv <origen> <destino>");
+        return 1;
+    }
+
+    shell_resolve_path(argv[1], src, sizeof(src));
+    shell_resolve_path(argv[2], dst, sizeof(dst));
+
+    if (str_equals(src, dst)) return 1;
+
+    if (vfs_rename(src, dst) != 0) {
+        terminal_print("[error] No se pudo mover/renombrar: ");
+        terminal_print(src);
+        terminal_print(" -> ");
+        terminal_print_line(dst);
+        return 1;
+    }
+
+    shell_print_text_with_color("Movido: ", 0x0A);
+    terminal_print(src);
+    terminal_print(" -> ");
+    terminal_print_line(dst);
+    return 1;
+}
+
+/* ---- cmd_rename ---- */
+static int cmd_rename(int argc, const char* argv[], int background) {
+    return cmd_mv(argc, argv, background);
+}
+
 /* ---- cmd_disk ---- */
 
 /* Print a byte as exactly 2 hex digits. */
@@ -2274,6 +2952,53 @@ static void disk_print_byte(unsigned char b) {
 static void disk_print_hex4(unsigned int v) {
     disk_print_byte((unsigned char)(v >> 8));
     disk_print_byte((unsigned char)(v));
+}
+
+/* Print a uint32 as exactly 8 hex digits. */
+static void disk_print_hex8(uint32_t v) {
+    disk_print_byte((unsigned char)(v >> 24));
+    disk_print_byte((unsigned char)(v >> 16));
+    disk_print_byte((unsigned char)(v >> 8));
+    disk_print_byte((unsigned char)(v));
+}
+
+/* Print a uint64 as exactly 16 hex digits. */
+static void disk_print_hex16(uint64_t v) {
+    disk_print_hex8((uint32_t)(v >> 32));
+    disk_print_hex8((uint32_t)(v & 0xFFFFFFFFULL));
+}
+
+static uint32_t disk_le32(const unsigned char* p) {
+    return ((uint32_t)p[0])
+         | ((uint32_t)p[1] << 8)
+         | ((uint32_t)p[2] << 16)
+         | ((uint32_t)p[3] << 24);
+}
+
+static uint64_t disk_le64(const unsigned char* p) {
+    uint64_t lo = (uint64_t)disk_le32(p);
+    uint64_t hi = (uint64_t)disk_le32(p + 4);
+    return lo | (hi << 32);
+}
+
+static int disk_guid_is_zero(const unsigned char* g) {
+    int i;
+    for (i = 0; i < 16; i++) if (g[i] != 0U) return 0;
+    return 1;
+}
+
+/* Print GUID in canonical text form. */
+static void disk_print_guid(const unsigned char* g) {
+    disk_print_byte(g[3]); disk_print_byte(g[2]); disk_print_byte(g[1]); disk_print_byte(g[0]);
+    terminal_put_char('-');
+    disk_print_byte(g[5]); disk_print_byte(g[4]);
+    terminal_put_char('-');
+    disk_print_byte(g[7]); disk_print_byte(g[6]);
+    terminal_put_char('-');
+    disk_print_byte(g[8]); disk_print_byte(g[9]);
+    terminal_put_char('-');
+    disk_print_byte(g[10]); disk_print_byte(g[11]); disk_print_byte(g[12]);
+    disk_print_byte(g[13]); disk_print_byte(g[14]); disk_print_byte(g[15]);
 }
 
 /* Parse a decimal or 0x-prefixed hex number from a string.
@@ -2360,6 +3085,44 @@ static const char* disk_part_type_name(unsigned char type) {
         case 0xEE: return "GPT prot.";
         default:   return "unknown";
     }
+}
+
+static void disk_print_fsck_report(const char* fstype, const fat_fsck_report_t* r) {
+    shell_print_text_with_color("fsck-lite ", 0x0B);
+    shell_print_text_with_color(fstype, 0x0F);
+    terminal_print_line(":");
+
+    terminal_print("  errores: ");
+    terminal_print_uint(r->errors);
+    terminal_print("  warnings: ");
+    terminal_print_uint(r->warnings);
+    terminal_put_char('\n');
+
+    terminal_print("  FAT fuera de rango: ");
+    terminal_print_uint(r->fat_out_of_range);
+    terminal_put_char('\n');
+
+    terminal_print("  FAT bad cluster: ");
+    terminal_print_uint(r->fat_bad_clusters);
+    terminal_put_char('\n');
+
+    terminal_print("  loops detectados: ");
+    terminal_print_uint(r->fat_loops);
+    terminal_put_char('\n');
+
+    terminal_print("  entradas dir corruptas: ");
+    terminal_print_uint(r->dir_corrupt_entries);
+    terminal_put_char('\n');
+
+    terminal_print("  first cluster invalido: ");
+    terminal_print_uint(r->invalid_start_cluster);
+    terminal_put_char('\n');
+
+    terminal_print("  archivos revisados: ");
+    terminal_print_uint(r->files_checked);
+    terminal_print("  directorios revisados: ");
+    terminal_print_uint(r->dirs_checked);
+    terminal_put_char('\n');
 }
 
 static int cmd_disk(int argc, const char* argv[], int background) {
@@ -2480,8 +3243,9 @@ static int cmd_disk(int argc, const char* argv[], int background) {
         }
 
         fat_root = fat16_mount(dev_idx);
+        if (!fat_root) fat_root = fat32_mount(dev_idx);
         if (!fat_root) {
-            terminal_print_line("[error] no es FAT16 o BPB invalido");
+            terminal_print_line("[error] no es FAT16/FAT32 o BPB invalido");
             return 1;
         }
 
@@ -2497,7 +3261,185 @@ static int cmd_disk(int argc, const char* argv[], int background) {
         return 1;
     }
 
-    terminal_print_line("Uso: disk [read <lba> [nombre]] [mount <dev> <ruta>]");
+    /* disk fsck <devname>   → lightweight FAT integrity scan */
+    if (str_equals_ignore_case(argv[1], "fsck")) {
+        const char*        devname;
+        int                dev_idx;
+        fat_fsck_report_t  rep;
+        int                rc;
+
+        if (argc < 3) {
+            terminal_print_line("Uso: disk fsck <dispositivo>");
+            terminal_print_line("  Ej: disk fsck hd0p1");
+            return 1;
+        }
+
+        devname = argv[2];
+        dev_idx = blkdev_find(devname);
+        if (dev_idx < 0) {
+            terminal_print("[error] dispositivo no encontrado: ");
+            terminal_print_line(devname);
+            return 1;
+        }
+
+        rc = fat16_fsck_lite(dev_idx, &rep);
+        if (rc == 0) {
+            disk_print_fsck_report("FAT16", &rep);
+            return 1;
+        }
+
+        rc = fat32_fsck_lite(dev_idx, &rep);
+        if (rc == 0) {
+            disk_print_fsck_report("FAT32", &rep);
+            return 1;
+        }
+
+        terminal_print_line("[error] no es FAT16/FAT32 o BPB invalido");
+        return 1;
+    }
+
+    /* disk gpt <devname>   → inspect GPT header + partition entries */
+    if (str_equals_ignore_case(argv[1], "gpt")) {
+        const char*    devname;
+        int            dev_idx;
+        blkdev_t       dev;
+        unsigned char  sec[512];
+        uint64_t       table_lba;
+        uint32_t       entry_count;
+        uint32_t       entry_size;
+        uint32_t       shown = 0;
+        uint32_t       i;
+
+        if (argc < 3) {
+            terminal_print_line("Uso: disk gpt <dispositivo>");
+            terminal_print_line("  Ej: disk gpt hd0");
+            return 1;
+        }
+
+        devname = argv[2];
+        dev_idx = blkdev_find(devname);
+        if (dev_idx < 0) {
+            terminal_print("[error] dispositivo no encontrado: ");
+            terminal_print_line(devname);
+            return 1;
+        }
+
+        if (blkdev_get(dev_idx, &dev) < 0) {
+            terminal_print_line("[error] no se pudo leer descriptor del dispositivo");
+            return 1;
+        }
+
+        if (dev.block_size != 512U) {
+            terminal_print_line("[error] GPT requiere block size de 512 bytes");
+            return 1;
+        }
+
+        if (blkdev_read(dev_idx, 1U, 1U, sec) != 1) {
+            terminal_print_line("[error] fallo leyendo GPT header (LBA1)");
+            return 1;
+        }
+
+        if (!(sec[0] == 'E' && sec[1] == 'F' && sec[2] == 'I' && sec[3] == ' ' &&
+              sec[4] == 'P' && sec[5] == 'A' && sec[6] == 'R' && sec[7] == 'T')) {
+            terminal_print_line("[error] firma GPT no encontrada (EFI PART)");
+            return 1;
+        }
+
+        table_lba   = disk_le64(sec + 72);
+        entry_count = disk_le32(sec + 80);
+        entry_size  = disk_le32(sec + 84);
+
+        shell_print_text_with_color("GPT header ", 0x0B);
+        shell_print_text_with_color(devname, 0x0F);
+        terminal_put_char('\n');
+
+        terminal_print("  revision: 0x");
+        disk_print_hex8(disk_le32(sec + 8));
+        terminal_print("  header_size: ");
+        terminal_print_uint(disk_le32(sec + 12));
+        terminal_put_char('\n');
+
+        terminal_print("  current_lba: 0x");
+        disk_print_hex16(disk_le64(sec + 24));
+        terminal_print("  backup_lba: 0x");
+        disk_print_hex16(disk_le64(sec + 32));
+        terminal_put_char('\n');
+
+        terminal_print("  first_usable: 0x");
+        disk_print_hex16(disk_le64(sec + 40));
+        terminal_print("  last_usable: 0x");
+        disk_print_hex16(disk_le64(sec + 48));
+        terminal_put_char('\n');
+
+        terminal_print("  entries_lba: 0x");
+        disk_print_hex16(table_lba);
+        terminal_print("  entries: ");
+        terminal_print_uint(entry_count);
+        terminal_print("  entry_size: ");
+        terminal_print_uint(entry_size);
+        terminal_put_char('\n');
+
+        if (entry_size < 128U || entry_size > 512U) {
+            terminal_print_line("[error] tamaño de entrada GPT no soportado");
+            return 1;
+        }
+
+        for (i = 0; i < entry_count; i++) {
+            unsigned char entry[512];
+            uint64_t      byte_off = (uint64_t)i * (uint64_t)entry_size;
+            uint64_t      lba      = table_lba + (byte_off / 512ULL);
+            uint32_t      off      = (uint32_t)(byte_off % 512ULL);
+            uint32_t      j;
+            uint64_t      first_lba;
+            uint64_t      last_lba;
+            uint64_t      sectors;
+
+            if (lba >= (uint64_t)dev.block_count) break;
+
+            if (off + entry_size <= 512U) {
+                if (blkdev_read(dev_idx, (uint32_t)lba, 1U, sec) != 1) break;
+                for (j = 0; j < entry_size; j++) entry[j] = sec[off + j];
+            } else {
+                uint32_t k = 0;
+                if (blkdev_read(dev_idx, (uint32_t)lba, 1U, sec) != 1) break;
+                for (j = off; j < 512U && k < entry_size; j++) entry[k++] = sec[j];
+                if (blkdev_read(dev_idx, (uint32_t)(lba + 1ULL), 1U, sec) != 1) break;
+                for (j = 0; j < 512U && k < entry_size; j++) entry[k++] = sec[j];
+            }
+
+            if (disk_guid_is_zero(entry + 0)) continue;
+
+            first_lba = disk_le64(entry + 32);
+            last_lba  = disk_le64(entry + 40);
+            if (last_lba < first_lba) continue;
+            sectors = last_lba - first_lba + 1ULL;
+
+            terminal_print("  p");
+            terminal_print_uint(i + 1U);
+            terminal_print(": type=");
+            disk_print_guid(entry + 0);
+            terminal_print("  first=0x");
+            disk_print_hex16(first_lba);
+            terminal_print("  last=0x");
+            disk_print_hex16(last_lba);
+            terminal_print("  sectors=");
+            if (sectors <= 0xFFFFFFFFULL) {
+                terminal_print_uint((unsigned int)sectors);
+            } else {
+                terminal_print("0x");
+                disk_print_hex16(sectors);
+            }
+            terminal_put_char('\n');
+            shown++;
+        }
+
+        terminal_print("  entradas usadas detectadas: ");
+        terminal_print_uint(shown);
+        terminal_put_char('\n');
+        return 1;
+    }
+
+    terminal_print_line("Uso: disk [read <lba> [nombre]] [mount <dev> <ruta>] [fsck <dev>] [gpt <dev>]");
     return 1;
 }
 

@@ -33,6 +33,7 @@ El objetivo del proyecto es tener una base pequeña pero completa sobre la que s
 - GDT propia con segmentos kernel/user y TSS cargada para preparar ring 3.
 - Manejadores básicos de excepciones CPU y page fault con diagnóstico visible.
 - Syscalls sobre `int 0x80` con soporte completo de operaciones VFS desde user mode.
+- Syscalls con validación de acceso completa: punteros de usuario validados, máscara de flags en `open`, bounds en `readdir`, y errno en todos los caminos de error; syscalls FS legacy bloqueadas desde user mode.
 - Syscalls de procesos en user mode: `getpid`, `kill`, `wait`, `exec`, `fork`, `execv` y `get_errno`.
 - Buffer de logs de kernel con niveles DEBUG/INFO/WARN/ERROR, consultable con `dmesg`.
 - Primitivas gráficas básicas de framebuffer accesibles desde la shell.
@@ -40,13 +41,17 @@ El objetivo del proyecto es tener una base pequeña pero completa sobre la que s
 - Espacio virtual de usuario por tarea mediante directorios de página propios y cambio de `CR3` en el scheduler.
 - Primer proceso `init` (PID 1) ejecutando el loop interactivo de shell/eventos.
 - Recolección de procesos zombie y reasignación de huérfanos hacia `init`.
+- Señales completas: entrega, handlers en userland con salto/retorno seguro y preservación de contexto, máscara/bloqueo por proceso, señales no bloqueables (`SIGKILL`), `SIGCHLD` + `wait`/`waitpid`.
 - VFS con tabla de montajes, resolución de rutas absolutas y relativas, normalización, cwd y FDs por tarea.
+- VFS con permisos tipo UNIX de 9 bits (rwxrwxrwx) almacenados por ruta, con enforcement en `open`, `create`, `delete` y `rename`.
+- VFS con `rename`, `stat`, `chmod` y gestión de flags de apertura y modos de acceso.
 - ramfs escribible con soporte de directorios virtuales: `mkdir`, `touch`, redirección `>`/`>>`, borrado `rm`.
 - Tabla de file descriptors por tarea integrada con VFS, con herencia en `fork` y limpieza segura por referencia.
 - Driver ATA PIO con detección automática de unidades master y slave al arranque.
-- Capa de dispositivos de bloque (`blkdev`) con particionado MBR automático.
-- FAT16 de solo lectura: `read`, `readdir`, montaje automático sobre particiones detectadas.
-- Comandos VFS de primer nivel: `ls`, `cat`, `cd`, `pwd`, `touch`, `rm`, `mkdir`.
+- Capa de dispositivos de bloque (`blkdev`) con particionado MBR y GPT automático (hasta 32 particiones).
+- FAT16 read/write: `read`, `readdir`, `write`, montaje automático sobre particiones detectadas.
+- FAT32 read/write con soporte LFN (Long File Names).
+- Comandos VFS de primer nivel: `ls`, `cat`, `cd`, `pwd`, `touch`, `rm`, `mkdir`, `rename`, `stat`, `chmod`.
 - Consola con backends VGA/framebuffer desacoplados, buffer de pantalla propio y fuente PSF 8x16.
 
 ## Estructura del repositorio
@@ -61,9 +66,9 @@ El objetivo del proyecto es tener una base pequeña pero completa sobre la que s
 - `kernel/task`: scheduler y PIT.
 - `drivers/console`: terminal lógica y backends VGA/framebuffer.
 - `drivers/input`: teclado, ratón PS/2 y capa de input genérico.
-- `drivers/disk`: driver ATA PIO y capa de dispositivos de bloque con particionado MBR.
+- `drivers/disk`: driver ATA PIO y capa de dispositivos de bloque con particionado MBR y GPT (hasta 32 particiones).
 - `userland/shell`: shell, editor de línea y parser.
-- `fs`: VFS, ramfs escribible, FAT16 de solo lectura y almacenamiento en memoria.
+- `fs`: VFS con permisos UNIX, ramfs escribible, FAT16/FAT32 con LFN y almacenamiento en memoria.
 - `docs/TECHNICAL.md`: documentación técnica del kernel, subsistemas y flujo de arranque.
 - `lib`: utilidades base como cadenas.
 - `include`: headers organizados con la misma lógica por subsistemas.
@@ -74,7 +79,7 @@ El objetivo del proyecto es tener una base pequeña pero completa sobre la que s
 2. GRUB carga el kernel y pasa el puntero a la estructura Multiboot en `EBX`.
 3. `_start` crea la pila inicial y llama a `kernel_main()`.
 4. `kernel/kernel.c` inicializa terminal, heap, VFS (ramfs montado en `/`), scheduler, framebuffer y arranca la tarea `init`.
-5. El kernel intenta `ata_init()`, registra unidades ATA como dispositivos de bloque, lee tablas de particiones MBR y monta automáticamente las particiones FAT16 encontradas (p.ej. en `/sd0p0`).
+5. El kernel intenta `ata_init()`, registra unidades ATA como dispositivos de bloque, detecta particiones MBR o GPT automáticamente, y monta las particiones FAT16/FAT32 encontradas (p.ej. en `/sd0p0`).
 6. `interrupts_init()` crea la IDT, remapea el PIC, configura el PIT y habilita interrupciones.
 7. El loop principal del kernel hace `hlt`; la tarea `init` (PID 1) consume eventos y ejecuta la shell interactiva.
 
@@ -103,7 +108,7 @@ La parte visual ha cambiado bastante respecto al estado inicial:
 - `drivers/input/input.c`, `include/drivers/input/input.h`: abstracción de eventos de entrada para desacoplar consumidores del dispositivo concreto.
 - `drivers/input/mouse.c`, `include/drivers/input/mouse.h`: driver PS/2, cola de paquetes y estado acumulado.
 - `drivers/disk/ata.c`: driver ATA PIO 28-bit LBA para leer sectores de disco.
-- `drivers/disk/blkdev.c`: capa de dispositivos de bloque con soporte de particiones MBR.
+- `drivers/disk/blkdev.c`: capa de dispositivos de bloque con soporte de particiones MBR y GPT (`blkdev_probe_gpt`), nombres de partición multi-dígito, hasta 32 particiones por disco.
 - `kernel/idt.c`, `include/kernel/idt.h`: estructuras e instalación de la IDT.
 - `kernel/interrupts.c`, `include/kernel/interrupts.h`, `arch/x86/interrupts.s`: PIC, IRQ0/IRQ1, `int 0x80` y stubs ASM.
 - `kernel/gdt.c`, `include/kernel/gdt.h`, `arch/x86/gdt.s`: GDT propia, segmentos y TSS.
@@ -118,9 +123,10 @@ La parte visual ha cambiado bastante respecto al estado inicial:
 - `kernel/mem/heap.c`, `include/kernel/mem/heap.h`: heap del kernel.
 - `kernel/syscall.c`, `include/kernel/syscall.h`: dispatcher de syscalls, wrappers de invocación y syscalls VFS completas.
 - `kernel/elf.c`, `include/kernel/elf.h`: validación básica de imágenes ELF32 i386.
-- `fs/vfs.c`: capa VFS con tabla de montajes, resolución de rutas, FDs por tarea y operaciones de directorio.
+- `fs/vfs.c`: capa VFS con tabla de montajes, resolución de rutas, FDs por tarea, operaciones de directorio, tabla de permisos UNIX por ruta (256 entradas), enforcement en `open`/`create`/`delete`/`rename`, y APIs `vfs_chmod`/`vfs_get_mode`.
 - `fs/ramfs.c`: filesystem en RAM escribible con soporte de directorios virtuales.
-- `fs/fat16.c`: driver FAT16 de solo lectura (read, readdir, mount sobre blkdev).
+- `fs/fat16.c`: driver FAT16 read/write (read, readdir, write, mount sobre blkdev).
+- `fs/fat32.c`: driver FAT32 read/write con soporte LFN completo.
 - `fs/fs.c`, `include/fs/fs.h`: almacenamiento clave-valor en memoria usado por ramfs.
 - `lib/string.c`, `include/lib/string.h`: helpers de cadenas.
 - `include/multiboot.h`: subset de la estructura Multiboot usado por el kernel.
@@ -165,7 +171,8 @@ Comandos implementados ahora mismo:
 - `history`: imprime el historial del editor de línea.
 - `count [n] [&]`: demo por pasos cancelable.
 - `sleep <ms> [&]`: duerme una tarea en foreground o background.
-- `uptime`: muestra ticks y milisegundos desde arranque.
+- `uptime`: muestra tiempo de arranque formateado (H:m:s) y ticks.
+- `date`: muestra la fecha/hora actual leída del RTC CMOS, el epoch Unix aproximado y el contador monotónico en microsegundos.
 - `ps` / `jobs`: lista tareas activas.
 - `getpid`: muestra el PID de la tarea actual.
 - `nice <id> <high|normal|low>`: cambia prioridad de una tarea.
@@ -181,8 +188,11 @@ Comandos implementados ahora mismo:
 - `touch <ruta>`: crea un archivo vacío en el VFS.
 - `rm <ruta>`: borra un archivo del VFS.
 - `mkdir <ruta>`: crea un directorio en el VFS.
-- `vfs [ls|cat|touch|rm] [ruta]`: operaciones VFS de bajo nivel con diagnóstico.
-- `disk [read <lba>] [mount <dev> <ruta>]`: operaciones de disco y montaje manual.
+- `rename <origen> <destino>`: renombra o mueve un archivo/directorio en el VFS.
+- `stat <ruta>`: muestra metadatos del nodo VFS, tamaño y modo en octal.
+- `chmod <modo_octal> <ruta>`: cambia los permisos UNIX de un nodo VFS.
+- `vfs [ls|cat|touch|rm|stat|chmod] [ruta]`: operaciones VFS de bajo nivel con diagnóstico.
+- `disk [read <lba> [dev]] [mount <dev> <ruta>] [fsck <dev>] [gpt <dev>]`: operaciones de disco, montaje manual e inspección de tabla GPT.
 - `elfinfo <NOMBRE>`: inspecciona una imagen ELF32 i386 del FS.
 - `exec <NOMBRE> [args...] [&]`: carga y ejecuta un ELF en user mode pasando `argv`.
 - `yield`: cede CPU al scheduler.
@@ -231,25 +241,39 @@ El dispatcher de `syscall.c` soporta:
 - yield (`SYSCALL_YIELD`),
 - alloc/free (`SYSCALL_ALLOC`, `SYSCALL_FREE`),
 - exit (`SYSCALL_EXIT`),
-- consulta de número de archivos (`SYSCALL_FS_COUNT`),
-- copia de nombre de archivo por índice a un buffer de usuario (`SYSCALL_FS_NAME_AT`, `SYSCALL_FS_NAME_COPY`),
-- tamaño de archivo (`SYSCALL_FS_SIZE`),
-- lectura de archivo (`SYSCALL_FS_READ`),
+- syscalls FS legacy (`SYSCALL_FS_COUNT`, `SYSCALL_FS_NAME_AT`, `SYSCALL_FS_NAME_COPY`, `SYSCALL_FS_SIZE`, `SYSCALL_FS_READ`): accesibles solo desde kernel mode; retornan `EPERM` si las invoca un proceso de usuario,
 - operaciones VFS completas: `SYSCALL_VFS_OPEN`, `SYSCALL_VFS_CLOSE`, `SYSCALL_VFS_READ`, `SYSCALL_VFS_WRITE`, `SYSCALL_VFS_SEEK`, `SYSCALL_VFS_READDIR`, `SYSCALL_VFS_CREATE`, `SYSCALL_VFS_DELETE`,
-- y syscalls de procesos: `SYSCALL_GETPID`, `SYSCALL_KILL`, `SYSCALL_WAIT`, `SYSCALL_EXEC`, `SYSCALL_GET_ERRNO`, `SYSCALL_FORK`, `SYSCALL_EXECV`.
+- y syscalls de procesos: `SYSCALL_GETPID`, `SYSCALL_KILL`, `SYSCALL_WAIT`, `SYSCALL_EXEC`, `SYSCALL_GET_ERRNO`, `SYSCALL_FORK`, `SYSCALL_EXECV`, `SYSCALL_EXECVE`, `SYSCALL_SIGNAL`, `SYSCALL_WAITPID`, `SYSCALL_SIGPROCMASK`.
+
+Todas las syscalls VFS validan punteros de usuario, comprueban la máscara de flags permitidos en `open`, verifican los bounds de `name_max` en `readdir`, y propagan `errno` (`EFAULT`, `EINVAL`, `EACCES`, `EBADF`) en todos los caminos de error.
 
 ## Sistema de archivos
 
 Lyth OS cuenta con una capa VFS sobre la que se montan diferentes backends:
 
 - **ramfs** (montado en `/`): filesystem en RAM completamente escribible. Soporta directorios virtuales (`mkdir`), creación y borrado de archivos (`touch`, `rm`), escritura con truncado y modo append (`>`, `>>`), y lectura (`cat`, `<`).
-- **FAT16** (montado automáticamente en `/sd0p0`, `/sd0p1`, etc.): driver de solo lectura. Se detecta y monta al arranque si hay partición FAT16 en disco (requiere imagen `disk.img` adjunta a QEMU).
+- **FAT16** (montado automáticamente en `/sd0p0`, `/sd0p1`, etc.): driver con lectura y escritura. Se detecta y monta al arranque si hay partición FAT16 en disco (requiere imagen `disk.img` adjunta a QEMU).
+- **FAT32** (montado automáticamente): driver con lectura y escritura, soporte completo de LFN (Long File Names) para nombres de hasta 255 caracteres.
+
+Particionado:
+
+- **MBR**: detección automática de hasta 4 particiones primarias con tipo FAT16/FAT32.
+- **GPT**: detección automática mediante MBR protectora (`0xEE`), lectura de hasta 32 entradas de partición desde la tabla LBA1; el comando `disk gpt <dev>` permite inspeccionar la tabla GPT de cualquier disco.
+
+Permisos tipo UNIX:
+
+- Tabla de permisos por ruta (256 entradas), modos de 9 bits `rwxrwxrwx`.
+- Modos por defecto: `/` → 0777, directorios → 0755, archivos → 0644.
+- Enforcement activo en `open` (lectura/escritura/ejecución), `create`, `delete` y `rename` (comprobación del directorio padre).
+- API: `vfs_chmod(path, mode)`, `vfs_get_mode(path, &mode)`.
 
 Operaciones VFS disponibles:
 
 - `vfs_open`, `vfs_close`, `vfs_read`, `vfs_write`, `vfs_seek` (SET/CUR/END).
 - `vfs_readdir`: iteración de entradas de directorio por índice.
-- `vfs_create`, `vfs_delete`: creación y borrado de archivos y directorios.
+- `vfs_create`, `vfs_delete`, `vfs_rename`: creación, borrado y renombrado de archivos y directorios.
+- `vfs_stat`: metadatos (tamaño, tipo, modo).
+- `vfs_chmod`, `vfs_get_mode`: gestión de permisos UNIX.
 - `vfs_resolve`: resolución de rutas absolutas y relativas, normalización de `.` y `..`.
 - `vfs_mount`: registro de puntos de montaje.
 - Tabla de FDs por tarea con init/close automático en el scheduler.
@@ -330,10 +354,14 @@ Si vuelves a tocar el proyecto, los archivos más importantes ahora son:
 
 ## Próximos pasos razonables
 
-- Añadir `rename` y `stat` en VFS.
-- Implementar escritura FAT16 (actualmente solo lectura).
-- Añadir `waitpid` completo con devolución explícita de `exit_code` al padre.
-- Implementar señales básicas (`signal`, `sigaction`, entrega y máscara por proceso).
-- Mejorar aislamiento de memoria con guard pages para stacks de tarea.
-- Añadir serie COM1 como canal de debug adicional.
-- Implementar un panic screen con backtrace visible del kernel.
+- Implementar usuarios y grupos (UID/GID por proceso, `getuid`/`setuid`).
+- Añadir guard pages para stacks de tarea (protección de desbordamiento de pila).
+- Implementar `mmap` / regiones mapeadas y copy-on-write.
+- Panic screen con backtrace del kernel y volcado de registros.
+- Backtrace del kernel con resolución de símbolos desde la tabla ELF.
+- Soporte de consolas virtuales (`/dev/tty0`, `/dev/tty1`, ...).
+- Implementar `poll`/`select` para multiplexación de I/O.
+- IPC avanzado: pipes con buffer circular, memoria compartida.
+- Límites de recursos por proceso (FD limits).
+- Soporte APIC/IOAPIC para reemplazar el PIC 8259.
+- Idle task explícita para el scheduler cuando no hay trabajo pendiente.

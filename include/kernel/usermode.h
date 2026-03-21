@@ -12,5 +12,10 @@ int usermode_spawn_elf_vfs_argv(const char* vfs_path,
                                 int argc, const char* const* argv,
                                 int envc, const char* const* envp,
                                 int foreground);
+/* Replace current user task image with a VFS ELF (exec semantics). */
+int usermode_exec_current_vfs_argv(const char* vfs_path,
+                                   int argc, const char* const* argv,
+                                   int envc, const char* const* envp,
+                                   unsigned int frame_esp);
 
 #endif

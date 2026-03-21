@@ -111,6 +111,67 @@ static vfs_node_t    root_node_pool[FAT16_MAX_VOLUMES];
 static fat16_priv_t  root_priv_pool[FAT16_MAX_VOLUMES];
 
 /* ============================================================
+ *  LFN structures and helpers
+ * ============================================================ */
+
+/* LFN directory entry (attr == FAT_ATTR_LFN == 0x0F) */
+typedef struct __attribute__((packed)) {
+    uint8_t  order;       /* seq num; bit 6 (0x40) set on first entry */
+    uint16_t name1[5];    /* UTF-16LE chars  1-5  */
+    uint8_t  attr;        /* always 0x0F */
+    uint8_t  type;        /* always 0x00 */
+    uint8_t  checksum;    /* checksum of the 8.3 entry that follows */
+    uint16_t name2[6];    /* UTF-16LE chars  6-11 */
+    uint16_t first_cl;    /* always 0x0000 */
+    uint16_t name3[2];    /* UTF-16LE chars 12-13 */
+} fat_lfn_entry_t;
+
+typedef struct {
+    char buf[256];  /* assembled LFN (NUL-terminated) */
+    int  valid;     /* 1 = buf holds a pending LFN */
+} fat_lfn_state_t;
+
+static void lfn_state_reset(fat_lfn_state_t* st) {
+    st->valid  = 0;
+    st->buf[0] = '\0';
+}
+
+/* Extract up to 13 UTF-16LE chars from one LFN entry into dst[base..]. */
+static void lfn_extract_13(const fat_lfn_entry_t* e, char* dst, int base) {
+    int pos = base;
+    int k;
+    for (k = 0; k < 5 && pos < 255; k++) {
+        uint16_t ch = e->name1[k];
+        if (ch == 0x0000U || ch == 0xFFFFU) { dst[pos] = '\0'; return; }
+        dst[pos++] = (char)(ch & 0x7FU);
+    }
+    for (k = 0; k < 6 && pos < 255; k++) {
+        uint16_t ch = e->name2[k];
+        if (ch == 0x0000U || ch == 0xFFFFU) { dst[pos] = '\0'; return; }
+        dst[pos++] = (char)(ch & 0x7FU);
+    }
+    for (k = 0; k < 2 && pos < 255; k++) {
+        uint16_t ch = e->name3[k];
+        if (ch == 0x0000U || ch == 0xFFFFU) { dst[pos] = '\0'; return; }
+        dst[pos++] = (char)(ch & 0x7FU);
+    }
+}
+
+/* Feed one LFN entry into the accumulator state. */
+static void lfn_state_feed(fat_lfn_state_t* st, const fat_lfn_entry_t* e) {
+    int order = (int)(e->order & 0x3FU);
+    int slot  = order - 1;
+    int z;
+    if (slot < 0 || slot >= 20) { st->valid = 0; return; }
+    if (e->order & 0x40U) {
+        for (z = 0; z < 256; z++) st->buf[z] = '\0';
+        st->valid = 1;
+    }
+    if (!st->valid) return;
+    lfn_extract_13(e, st->buf, slot * 13);
+}
+
+/* ============================================================
  *  Low-level I/O
  * ============================================================ */
 
@@ -305,7 +366,7 @@ static int fat16_name_match(const char* vfs_name,
  *  when all entries have been visited.
  * ============================================================ */
 
-typedef int (*fat16_dir_cb)(void* cookie, const fat16_dirent_t* e);
+typedef int (*fat16_dir_cb)(void* cookie, const fat16_dirent_t* e, const char* lfn);
 
 static int fat16_walk_dir(fat16_vol_t* vol, uint16_t first_cluster,
                           fat16_dir_cb cb, void* cookie) {
@@ -314,12 +375,14 @@ static int fat16_walk_dir(fat16_vol_t* vol, uint16_t first_cluster,
 
     if (first_cluster == 0) {
         /* ---- Fixed root directory region ---- */
+        fat_lfn_state_t lfn;
         uint32_t total_sectors = ((uint32_t)vol->root_entry_count * 32U +
                                   (uint32_t)vol->bytes_per_sector - 1U)
                                  / (uint32_t)vol->bytes_per_sector;
         uint32_t s;
         uint8_t  sec[512];
 
+        lfn_state_reset(&lfn);
         for (s = 0; s < total_sectors; s++) {
             fat16_dirent_t* ent;
             uint32_t i;
@@ -329,13 +392,17 @@ static int fat16_walk_dir(fat16_vol_t* vol, uint16_t first_cluster,
 
             for (i = 0; i < entries_per_sector; i++) {
                 if (ent[i].name[0] == 0x00) return 0;      /* end of table */
-                if ((uint8_t)ent[i].name[0] == 0xE5U) continue; /* deleted */
-                if (ent[i].attr == FAT_ATTR_LFN)  continue;
-                if (ent[i].attr & FAT_ATTR_VOLID) continue;
-                if (ent[i].name[0] == '.') continue;        /* . and .. */
+                if ((uint8_t)ent[i].name[0] == 0xE5U) { lfn_state_reset(&lfn); continue; }
+                if (ent[i].attr == FAT_ATTR_LFN) {
+                    lfn_state_feed(&lfn, (const fat_lfn_entry_t*)(const void*)&ent[i]);
+                    continue;
+                }
+                if (ent[i].attr & FAT_ATTR_VOLID) { lfn_state_reset(&lfn); continue; }
+                if (ent[i].name[0] == '.') { lfn_state_reset(&lfn); continue; }
 
                 {
-                    int r = cb(cookie, &ent[i]);
+                    int r = cb(cookie, &ent[i], lfn.valid ? lfn.buf : (const char*)0);
+                    lfn_state_reset(&lfn);
                     if (r) return r;
                 }
             }
@@ -345,11 +412,13 @@ static int fat16_walk_dir(fat16_vol_t* vol, uint16_t first_cluster,
         /* ---- Cluster-chain subdirectory ---- */
         uint8_t* cbuf;
         uint16_t cluster = first_cluster;
+        fat_lfn_state_t lfn;
 
         if (vol->cluster_size == 0) return 0;
         cbuf = (uint8_t*)kmalloc(vol->cluster_size);
         if (!cbuf) return 0;
 
+        lfn_state_reset(&lfn);
         while (cluster >= 2U && cluster < FAT16_EOC_MIN) {
             fat16_dirent_t* ent;
             uint32_t        eps = vol->cluster_size / sizeof(fat16_dirent_t);
@@ -360,13 +429,17 @@ static int fat16_walk_dir(fat16_vol_t* vol, uint16_t first_cluster,
 
             for (i = 0; i < eps; i++) {
                 if (ent[i].name[0] == 0x00) { kfree(cbuf); return 0; }
-                if ((uint8_t)ent[i].name[0] == 0xE5U) continue;
-                if (ent[i].attr == FAT_ATTR_LFN)  continue;
-                if (ent[i].attr & FAT_ATTR_VOLID) continue;
-                if (ent[i].name[0] == '.') continue;
+                if ((uint8_t)ent[i].name[0] == 0xE5U) { lfn_state_reset(&lfn); continue; }
+                if (ent[i].attr == FAT_ATTR_LFN) {
+                    lfn_state_feed(&lfn, (const fat_lfn_entry_t*)(const void*)&ent[i]);
+                    continue;
+                }
+                if (ent[i].attr & FAT_ATTR_VOLID) { lfn_state_reset(&lfn); continue; }
+                if (ent[i].name[0] == '.') { lfn_state_reset(&lfn); continue; }
 
                 {
-                    int r = cb(cookie, &ent[i]);
+                    int r = cb(cookie, &ent[i], lfn.valid ? lfn.buf : (const char*)0);
+                    lfn_state_reset(&lfn);
                     if (r) { kfree(cbuf); return r; }
                 }
             }
@@ -388,7 +461,7 @@ static int fat16_walk_dir(fat16_vol_t* vol, uint16_t first_cluster,
  * ============================================================ */
 
 typedef int (*fat16_dir_cb_loc)(void* cookie, const fat16_dirent_t* e,
-                                uint32_t lba, uint32_t idx);
+                                uint32_t lba, uint32_t idx, const char* lfn);
 
 static int fat16_walk_dir_loc(fat16_vol_t* vol, uint16_t first_cluster,
                                fat16_dir_cb_loc cb, void* cookie) {
@@ -399,6 +472,8 @@ static int fat16_walk_dir_loc(fat16_vol_t* vol, uint16_t first_cluster,
         uint32_t total_s = ((uint32_t)vol->root_entry_count * 32U + bps - 1U) / bps;
         uint32_t s;
         uint8_t  sec[512];
+        fat_lfn_state_t lfn;
+        lfn_state_reset(&lfn);
 
         for (s = 0; s < total_s; s++) {
             fat16_dirent_t* ent;
@@ -410,12 +485,16 @@ static int fat16_walk_dir_loc(fat16_vol_t* vol, uint16_t first_cluster,
 
             for (i = 0; i < eps; i++) {
                 if (ent[i].name[0] == 0x00) return 0;
-                if ((uint8_t)ent[i].name[0] == 0xE5U) continue;
-                if (ent[i].attr == FAT_ATTR_LFN)  continue;
-                if (ent[i].attr & FAT_ATTR_VOLID) continue;
-                if (ent[i].name[0] == '.') continue;
+                if ((uint8_t)ent[i].name[0] == 0xE5U) { lfn_state_reset(&lfn); continue; }
+                if (ent[i].attr == FAT_ATTR_LFN) {
+                    lfn_state_feed(&lfn, (const fat_lfn_entry_t*)(const void*)&ent[i]);
+                    continue;
+                }
+                if (ent[i].attr & FAT_ATTR_VOLID) { lfn_state_reset(&lfn); continue; }
+                if (ent[i].name[0] == '.') { lfn_state_reset(&lfn); continue; }
                 {
-                    int r = cb(cookie, &ent[i], lba, i);
+                    int r = cb(cookie, &ent[i], lba, i, lfn.valid ? lfn.buf : (const char*)0);
+                    lfn_state_reset(&lfn);
                     if (r) return r;
                 }
             }
@@ -424,10 +503,12 @@ static int fat16_walk_dir_loc(fat16_vol_t* vol, uint16_t first_cluster,
     } else {
         uint8_t* cbuf;
         uint16_t cluster = first_cluster;
+        fat_lfn_state_t lfn;
 
         if (vol->cluster_size == 0) return 0;
         cbuf = (uint8_t*)kmalloc(vol->cluster_size);
         if (!cbuf) return 0;
+        lfn_state_reset(&lfn);
 
         while (cluster >= 2U && cluster < FAT16_EOC_MIN) {
             fat16_dirent_t* ent;
@@ -446,12 +527,16 @@ static int fat16_walk_dir_loc(fat16_vol_t* vol, uint16_t first_cluster,
                 uint32_t lba   = base_lba + sec_i;
 
                 if (ent[i].name[0] == 0x00) { kfree(cbuf); return 0; }
-                if ((uint8_t)ent[i].name[0] == 0xE5U) continue;
-                if (ent[i].attr == FAT_ATTR_LFN)  continue;
-                if (ent[i].attr & FAT_ATTR_VOLID) continue;
-                if (ent[i].name[0] == '.') continue;
+                if ((uint8_t)ent[i].name[0] == 0xE5U) { lfn_state_reset(&lfn); continue; }
+                if (ent[i].attr == FAT_ATTR_LFN) {
+                    lfn_state_feed(&lfn, (const fat_lfn_entry_t*)(const void*)&ent[i]);
+                    continue;
+                }
+                if (ent[i].attr & FAT_ATTR_VOLID) { lfn_state_reset(&lfn); continue; }
+                if (ent[i].name[0] == '.') { lfn_state_reset(&lfn); continue; }
                 {
-                    int r = cb(cookie, &ent[i], lba, ent_i);
+                    int r = cb(cookie, &ent[i], lba, ent_i, lfn.valid ? lfn.buf : (const char*)0);
+                    lfn_state_reset(&lfn);
                     if (r) { kfree(cbuf); return r; }
                 }
             }
@@ -476,11 +561,17 @@ typedef struct {
     int          found;
 } fat16_readdir_ctx_t;
 
-static int fat16_readdir_cb(void* cookie, const fat16_dirent_t* e) {
+static int fat16_readdir_cb(void* cookie, const fat16_dirent_t* e, const char* lfn) {
     fat16_readdir_ctx_t* ctx = (fat16_readdir_ctx_t*)cookie;
 
     if (ctx->cur == ctx->idx) {
-        fat16_format_name(e->name, e->ext, ctx->out);
+        if (lfn && lfn[0]) {
+            unsigned int i = 0;
+            while (lfn[i] && i < ctx->out_max - 1U) { ctx->out[i] = lfn[i]; i++; }
+            ctx->out[i] = '\0';
+        } else {
+            fat16_format_name(e->name, e->ext, ctx->out);
+        }
         ctx->found = 1;
         return 1;   /* stop */
     }
@@ -498,10 +589,12 @@ typedef struct {
 } fat16_finddir_loc_ctx_t;
 
 static int fat16_finddir_loc_cb(void* cookie, const fat16_dirent_t* e,
-                                 uint32_t lba, uint32_t idx) {
+                                 uint32_t lba, uint32_t idx, const char* lfn) {
     fat16_finddir_loc_ctx_t* ctx = (fat16_finddir_loc_ctx_t*)cookie;
-
-    if (fat16_name_match(ctx->target, e->name, e->ext)) {
+    int match = 0;
+    if (lfn && lfn[0]) match = str_equals_ignore_case(ctx->target, lfn);
+    if (!match)        match = fat16_name_match(ctx->target, e->name, e->ext);
+    if (match) {
         ctx->result     = *e;
         ctx->dirent_lba = lba;
         ctx->dirent_idx = idx;

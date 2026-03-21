@@ -11,6 +11,7 @@
 #include "fs.h"
 #include "vfs.h"
 #include "ramfs.h"
+#include "devfs.h"
 #include "task.h"
 #include "physmem.h"
 #include "paging.h"
@@ -18,7 +19,13 @@
 #include "ata.h"
 #include "blkdev.h"
 #include "fat16.h"
+#include "fat32.h"
 #include "init.h"
+#include "tty_vfs.h"
+#include "serial.h"
+#include "rtc.h"
+#include "ktest.h"
+#include "boot_tests.h"
 
 static void terminal_write_uint(uint32_t value) {
     char buffer[16];
@@ -100,6 +107,8 @@ void kernel_main(unsigned long mbi_ptr) {
     klog_clear();
     klog_write(KLOG_LEVEL_INFO, "boot", "GDT inicializada");
     terminal_init();
+        serial_init();
+        serial_print("[boot] Lyth OS serial activo\n");
     if (fb_init(mbi)) {
         terminal_clear();
         klog_write(KLOG_LEVEL_INFO, "video", "Framebuffer activado");
@@ -113,10 +122,12 @@ void kernel_main(unsigned long mbi_ptr) {
     fs_init();
     vfs_init();
     vfs_mount("/", ramfs_create_root());
+    vfs_mount("/dev", devfs_create_root());
     task_system_init();
     klog_write(KLOG_LEVEL_INFO, "mem", "Heap, physmem y paging inicializados");
     klog_write(KLOG_LEVEL_INFO, "fs", "FS en memoria listo");
     klog_write(KLOG_LEVEL_INFO, "vfs", "VFS inicializado, ramfs montado en /");
+    klog_write(KLOG_LEVEL_INFO, "devfs", "devfs montado en /dev");
     klog_write(KLOG_LEVEL_INFO, "task", "Scheduler listo");
 
     print_framebuffer_info();
@@ -131,7 +142,9 @@ void kernel_main(unsigned long mbi_ptr) {
         klog_write(KLOG_LEVEL_WARN, "mouse", "Ratón PS/2 no disponible");
     }
     interrupts_init();
-    klog_write(KLOG_LEVEL_INFO, "irq", "IDT/PIC/PIT inicializados");
+    rtc_init();
+    klog_write(KLOG_LEVEL_INFO, "rtc",  "RTC CMOS inicializado");
+    klog_write(KLOG_LEVEL_INFO, "irq",  "IDT/PIC/PIT inicializados");
 
     ata_init();
     if (ata_is_present(ATA_DRIVE_MASTER))
@@ -159,20 +172,25 @@ void kernel_main(unsigned long mbi_ptr) {
         klog_write(KLOG_LEVEL_INFO, "blkdev", "Capa de bloques lista");
     }
 
-    /* Auto-mount FAT16 partitions --------------------------------- */
+    /* Auto-mount FAT16 / FAT32 partitions ------------------------- */
     {
         int di;
         int fat_count = 0;
 
         for (di = 0; di < BLKDEV_MAX; di++) {
             blkdev_t     dev;
-            vfs_node_t*  fat_root;
+            vfs_node_t*  fat_root = 0;
             char         mnt[VFS_PATH_MAX];
+            const char*  fs_label = "fat16";
             unsigned int k;
 
             if (blkdev_get(di, &dev) < 0) continue;
 
             fat_root = fat16_mount(di);
+            if (!fat_root) {
+                fat_root = fat32_mount(di);
+                fs_label = "fat32";
+            }
             if (!fat_root) continue;
 
             /* Mount at /<devname> (e.g. /hd0p1) */
@@ -182,20 +200,28 @@ void kernel_main(unsigned long mbi_ptr) {
             mnt[k + 1] = '\0';
 
             if (vfs_mount(mnt, fat_root) == 0) {
-                klog_write(KLOG_LEVEL_INFO, "fat16", "FAT16 montado");
+                klog_write(KLOG_LEVEL_INFO, fs_label, "FAT montado");
                 fat_count++;
             }
         }
 
         if (fat_count == 0)
-            klog_write(KLOG_LEVEL_INFO, "fat16", "Sin particiones FAT16 detectadas");
+            klog_write(KLOG_LEVEL_INFO, "fat", "Sin particiones FAT detectadas");
     }
+
+    /* Set up the TTY VFS node and register it so all new tasks get
+       fd 0/1/2 pre-filled with stdin/stdout/stderr. */
+    tty_vfs_init();
+     vfs_set_tty_node(devfs_tty_node());
+     klog_write(KLOG_LEVEL_INFO, "tty", "TTY VFS node listo (/dev/tty, fd 0/1/2)");
+
+    /* Mini harness de arranque (salida en pantalla + serial COM1). */
+    boot_tests_run();
 
     /* Spawn the init task (PID 1) — owns the shell and event loop. */
     init_start();
-    klog_write(KLOG_LEVEL_INFO, "init", "Proceso init (PID 1) creado");
 
     while (1) {
-        __asm__ volatile ("hlt");
+        __asm__ __volatile__("hlt");
     }
 }

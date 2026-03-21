@@ -19,9 +19,9 @@
 - [ ] APIC / IOAPIC
 - [ ] HPET
 - [ ] Timers por proceso
-- [ ] RTC / reloj del sistema
+- [x] RTC / reloj del sistema
 - [x] sleep por syscall
-- [ ] Fuente de tiempo monotónica
+- [x] Fuente de tiempo monotónica
 
 ## 4. Input
 - [x] Teclado completo
@@ -77,21 +77,21 @@
 - [x] Puntos de montaje
 - [x] Integración de FD con VFS
 - [x] Tabla global de archivos abiertos
-- [ ] Flags de apertura y modos de acceso
+- [x] Flags de apertura y modos de acceso
 - [x] Operaciones de directorio (open/read dir)
-- [ ] rename / unlink / stat
-- [ ] Caché de bloques
-- [ ] Caché de vnodes / dentries
-- [ ] Integración de dispositivos en VFS (/dev)
+- [x] rename / unlink / stat
+- [x] Caché de bloques
+- [x] Caché de vnodes / dentries
+- [x] Integración de dispositivos en VFS (/dev)
 - [x] FAT16 read-only
 - [x] FAT16 write
-- [ ] FAT32 read-only
-- [ ] FAT32 write
-- [ ] Soporte LFN (Long File Names)
+- [x] FAT32 read-only
+- [x] FAT32 write
+- [x] Soporte LFN (Long File Names)
 - [x] Soporte disco real
 - [x] Soporte de particiones MBR
-- [ ] Soporte de particiones GPT
-- [ ] Verificación básica de integridad del filesystem
+- [x] Soporte de particiones GPT
+- [x] Verificación básica de integridad del filesystem
 
 ## 10. Procesos
 - [x] Modo usuario
@@ -111,9 +111,12 @@
 - [x] exit
 - [x] wait / waitpid (task_wait_id)
 - [x] Recolección de procesos zombie
-- [ ] Señales básicas
-- [ ] Entrega de señales
-- [ ] Manejo de señales en userland
+- [x] Señales básicas
+- [x] Entrega de señales
+- [x] Manejo de señales en userland
+- [x] Handlers de señales en userland (salto/retorno seguro y preservación de contexto)
+- [x] Máscara / bloqueo de señales (incluye no bloqueables/no capturables como SIGKILL y semántica de pendientes)
+- [x] Acciones por defecto de señales e integración SIGCHLD + wait/waitpid (notificación vs recolección)
 
 ## 11. Drivers
 - [x] VGA / framebuffer
@@ -123,8 +126,8 @@
 - [x] Disco
 - [ ] USB
 - [ ] Red
-- [ ] RTC
-- [ ] Serie (COM1) para debug
+- [x] RTC
+- [x] Serie (COM1) para debug
 
 ## 12. Red
 - [ ] ARP
@@ -137,10 +140,10 @@
 ## 13. Seguridad
 - [x] Separación kernel/user
 - [x] Aislamiento procesos
-- [ ] Permisos tipo UNIX
+- [x] Permisos tipo UNIX
 - [ ] Usuarios y grupos
 - [ ] UID / GID por proceso
-- [ ] Validación de acceso en syscalls
+- [x] Validación de acceso en syscalls
 
 ## 14. Debug
 - [x] Logs

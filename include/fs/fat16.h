@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "vfs.h"
+#include "fat_fsck.h"
 
 /* ============================================================
  *  FAT16 VFS backend  (read + write)
@@ -30,5 +31,20 @@
  * The returned node pointer is valid for the lifetime of the kernel;
  * pass it directly to vfs_mount(). */
 vfs_node_t* fat16_mount(int blkdev_idx);
+
+/*
+ * Run a lightweight integrity check for a FAT16 volume.
+ *
+ * Checks include:
+ *  - boot sector layout sanity
+ *  - FAT entry range sanity
+ *  - chain loop detection
+ *  - obvious corrupt directory entries
+ *  - invalid first-cluster values in file entries
+ *
+ * Returns 0 on success (filesystem recognized and scanned), -1 on failure
+ * (not FAT16 or I/O error while scanning metadata).
+ */
+int fat16_fsck_lite(int blkdev_idx, fat_fsck_report_t* out);
 
 #endif /* FAT16_H */

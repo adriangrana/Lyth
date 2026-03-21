@@ -183,6 +183,21 @@ unsigned int syscall_interrupt_handler(unsigned int current_esp) {
         /* fork needs access to the raw frame to clone the register state,
            so it bypasses the normal syscall_callback path. */
         frame->eax = (unsigned int)task_fork_from_frame(current_esp);
+    } else if (frame->eax == SYSCALL_EXEC) {
+        frame->eax = syscall_exec_interrupt(current_esp,
+                                            frame->ebx,
+                                            frame->ecx);
+    } else if (frame->eax == SYSCALL_EXECV) {
+        frame->eax = syscall_execv_interrupt(current_esp,
+                                             frame->ebx,
+                                             frame->ecx,
+                                             frame->edx,
+                                             frame->esi);
+    } else if (frame->eax == SYSCALL_EXECVE) {
+        frame->eax = syscall_execve_interrupt(current_esp,
+                                              frame->ebx,
+                                              frame->ecx,
+                                              frame->edx);
     } else {
         frame->eax = syscall_callback(frame->eax,
                                       frame->ebx,

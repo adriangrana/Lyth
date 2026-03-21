@@ -1,6 +1,8 @@
 #ifndef SYSCALL_H
 #define SYSCALL_H
 
+#include "signal.h"
+
 enum {
     SYSCALL_WRITE = 1,
     SYSCALL_GET_TICKS = 2,
@@ -30,14 +32,38 @@ enum {
     SYSCALL_EXEC         = 24,  /* exec(path, fg)          -> id   */
     SYSCALL_GET_ERRNO    = 25,  /* get_errno()             -> errno */
     SYSCALL_FORK         = 26,  /* fork()                  -> child_pid / 0 / -1 */
-    SYSCALL_EXECV        = 27   /* execv(path,fg,argv,argc) -> id / -1 */
+    SYSCALL_EXECV        = 27,  /* execv(path,fg,argv,argc) -> id / -1 */
+    SYSCALL_SIGNAL       = 28,  /* signal(sig, handler)     -> old_handler / -1 */
+    SYSCALL_KILLSIG      = 29,  /* kill(pid, sig)           -> 0 / -1 */
+    SYSCALL_SIGPENDING   = 30,  /* sigpending()             -> bitmask */
+    SYSCALL_SIGPROCMASK  = 31,  /* sigprocmask(how, mask)   -> oldmask / -1 */
+    SYSCALL_WAITPID      = 32,  /* waitpid(pid, *status)    -> child_pid / -1 */
+    SYSCALL_EXECVE       = 33,  /* execve(path, argv, envp) -> 0 / -1  (in-place) */
+    SYSCALL_GET_TIME     = 34,  /* get_time(rtc_time_t* buf) -> 0 / -1 */
+    SYSCALL_GET_MONOTONIC_MS = 35 /* get_monotonic_ms()      -> ms since boot */
 };
+
+typedef void (*sys_signal_handler_t)(int);
+#define SYSCALL_SIG_DFL ((sys_signal_handler_t)0)
+#define SYSCALL_SIG_IGN ((sys_signal_handler_t)1)
 
 unsigned int syscall_callback(unsigned int number,
                               unsigned int arg0,
                               unsigned int arg1,
                               unsigned int arg2,
                               unsigned int arg3);
+unsigned int syscall_exec_interrupt(unsigned int frame_esp,
+                                    unsigned int path,
+                                    unsigned int foreground);
+unsigned int syscall_execv_interrupt(unsigned int frame_esp,
+                                     unsigned int path,
+                                     unsigned int foreground,
+                                     unsigned int argv,
+                                     unsigned int argc);
+unsigned int syscall_execve_interrupt(unsigned int frame_esp,
+                                      unsigned int path,
+                                      unsigned int argv_ptr,
+                                      unsigned int envp_ptr);
 unsigned int syscall_invoke(unsigned int number,
                             unsigned int arg0,
                             unsigned int arg1,
@@ -58,6 +84,7 @@ unsigned int syscall_fs_size(const char* name);
 
 /* VFS / file-descriptor helpers */
 int  syscall_vfs_open   (const char* path);
+int  syscall_vfs_open_flags(const char* path, unsigned int open_flags);
 void syscall_vfs_close  (int fd);
 int  syscall_vfs_read   (int fd, unsigned char* buf, unsigned int size);
 int  syscall_vfs_write  (int fd, const unsigned char* buf, unsigned int size);
@@ -70,6 +97,7 @@ int  syscall_vfs_delete (const char* path);
 /* Process management helpers */
 int  syscall_getpid(void);
 int  syscall_kill(int id);
+int  syscall_waitpid(int pid, int* status);
 void syscall_wait(int id);
 int  syscall_exec(const char* path, int foreground);
 int  syscall_get_errno(void);
@@ -77,5 +105,18 @@ int  syscall_fork(void);
 /* exec with explicit argv array */
 int  syscall_execv(const char* path, int foreground,
                    const char* const* argv, int argc);
+/* exec with argv + envp (NULL-terminated arrays, POSIX-style) */
+int  syscall_execve(const char* path,
+                    const char* const* argv,
+                    const char* const* envp);
+sys_signal_handler_t syscall_signal(int signum, sys_signal_handler_t handler);
+int  syscall_killsig(int id, int signum);
+unsigned int syscall_sigpending(void);
+int  syscall_sigprocmask(unsigned int how, unsigned int mask, unsigned int* old_mask_out);
+
+/* Time / clock helpers */
+struct rtc_time_t_fwd;  /* forward-declared; include rtc.h for full type */
+int          syscall_get_time(void* rtc_time_buf); /* fills rtc_time_t*  */
+unsigned int syscall_get_monotonic_ms(void);       /* µs-precision mono  */
 
 #endif

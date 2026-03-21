@@ -69,6 +69,11 @@ typedef struct {
     vfs_fd_entry_t fd_table[VFS_MAX_FD]; /* per-task open file descriptors */
     int k_errno;                         /* per-task errno for syscalls */
     int parent_id;                       /* PID of the task that spawned this one */
+    unsigned int pending_signals;        /* bitmask of pending signals */
+    unsigned int signal_mask;            /* blocked signals bitmask */
+    unsigned int signal_handlers[LYTH_SIGNAL_MAX + 1]; /* 0/1 special or user handler */
+    uint32_t signal_trampoline_va;       /* user-space stub to restore stack after handler */
+    uint32_t waitpid_status_uptr;        /* user vaddr where WAITPID status is written on wake */
 } task_entry_t;
 
 static task_entry_t tasks[TASK_MAX_COUNT];
@@ -84,6 +89,7 @@ static void (*foreground_complete_handler)(int id, const char* name, int cancell
 static int sys_init_pid = -1;   /* PID of the init/reaper task */
 
 static void task_thread_bootstrap(void);
+static void complete_task(task_entry_t* task);
 
 static unsigned int interrupt_save(void) {
     unsigned int flags;
@@ -115,6 +121,131 @@ static void copy_text(char* dest, const char* src, int max_length) {
     }
 
     dest[i] = '\0';
+}
+
+/* POSIX status encoding:
+ *   normal exit  -> (exit_code & 0xFF) << 8
+ *   signal death -> signum & 0x7F  (bit 7 stays 0)
+ */
+static int encode_child_status(const task_entry_t* t) {
+    if (!t) return 0;
+    if (t->exit_code >= 128)
+        return (t->exit_code - 128) & 0x7F;   /* killed by signal */
+    return (t->exit_code & 0xFF) << 8;         /* normal exit */
+}
+
+/* Write a 32-bit int into a task's user-space at virtual address 'vaddr'.
+ * Uses the physical mapping so it works from any execution context.
+ */
+static void write_user_int32(task_entry_t* t, uint32_t vaddr, int value) {
+    uint32_t base   = PAGING_USER_BASE;
+    uint32_t size   = PAGING_USER_SIZE;
+    uint32_t offset;
+    if (!t || !t->user_physical_base || !vaddr) return;
+    if (vaddr < base || vaddr + 4U > base + size) return;
+    offset = vaddr - base;
+    *(int*)(uintptr_t)(t->user_physical_base + offset) = value;
+}
+
+static int signal_is_valid(int signum) {
+    return signum > 0 && signum <= LYTH_SIGNAL_MAX;
+}
+
+static int signal_is_fatal_by_default(int signum) {
+    switch (signum) {
+        case LYTH_SIGCHLD:
+            return 0;
+        default:
+            return 1;
+    }
+}
+
+static int signal_default_is_ignore(int signum) {
+    switch (signum) {
+        case LYTH_SIGCHLD:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static unsigned int signal_bit(int signum) {
+    return (signum > 0 && signum <= LYTH_SIGNAL_MAX) ? (1U << signum) : 0U;
+}
+
+static unsigned int signal_mask_sanitize(unsigned int mask) {
+    /* SIGKILL must never be blocked. */
+    return mask & ~signal_bit(LYTH_SIGKILL);
+}
+
+static int signal_is_blocked(const task_entry_t* task, int signum) {
+    unsigned int bit;
+
+    if (task == 0) {
+        return 0;
+    }
+
+    if (signum == LYTH_SIGKILL) {
+        return 0;
+    }
+
+    bit = signal_bit(signum);
+    return bit != 0U && (task->signal_mask & bit) != 0U;
+}
+
+static void task_install_signal_trampoline(task_entry_t* task) {
+    static const unsigned char code[] = { 0x83, 0xC4, 0x04, 0xC3 }; /* add $4,%esp ; ret */
+    uint32_t va;
+    uint32_t offset;
+    unsigned char* dst;
+
+    if (task == 0 || !task->user_mode || task->user_physical_base == 0) {
+        if (task != 0) {
+            task->signal_trampoline_va = 0;
+        }
+        return;
+    }
+
+    va = PAGING_USER_BASE + PAGING_USER_SIZE - TASK_USER_STACK_SIZE - 16U;
+    offset = va - PAGING_USER_BASE;
+    if (offset + sizeof(code) > PAGING_USER_SIZE) {
+        task->signal_trampoline_va = 0;
+        return;
+    }
+
+    dst = (unsigned char*)(uintptr_t)(task->user_physical_base + offset);
+    for (unsigned int i = 0; i < sizeof(code); i++) {
+        dst[i] = code[i];
+    }
+
+    task->signal_trampoline_va = va;
+}
+
+static void task_signal_handlers_init(task_entry_t* task) {
+    if (task == 0) {
+        return;
+    }
+
+    task->pending_signals = 0;
+    task->signal_mask = 0;
+    for (int i = 0; i <= LYTH_SIGNAL_MAX; i++) {
+        task->signal_handlers[i] = LYTH_SIG_DFL;
+    }
+    task->signal_trampoline_va = 0;
+}
+
+static void task_signal_handlers_copy(task_entry_t* dst, const task_entry_t* src) {
+    if (dst == 0 || src == 0) {
+        return;
+    }
+
+    dst->pending_signals = 0;
+    dst->signal_mask = signal_mask_sanitize(src->signal_mask);
+    for (int i = 0; i <= LYTH_SIGNAL_MAX; i++) {
+        dst->signal_handlers[i] = src->signal_handlers[i];
+    }
+    dst->signal_handlers[LYTH_SIGKILL] = LYTH_SIG_DFL;
+    dst->signal_trampoline_va = src->signal_trampoline_va;
 }
 
 static task_entry_t* find_task_by_id(int id) {
@@ -180,6 +311,13 @@ static void clear_task(task_entry_t* task) {
     task->page_directory = 0;
     task->k_errno = 0;
     task->parent_id = 0;
+    task->waitpid_status_uptr = 0;
+    task->pending_signals = 0;
+    task->signal_mask = 0;
+    task->signal_trampoline_va = 0;
+    for (int i = 0; i <= LYTH_SIGNAL_MAX; i++) {
+        task->signal_handlers[i] = LYTH_SIG_DFL;
+    }
 }
 
 /*
@@ -232,6 +370,138 @@ static void reparent_children(int old_parent_id, int new_parent_id) {
     }
 }
 
+static int task_queue_signal_locked(task_entry_t* target, int signum) {
+    if (target == 0 || !target->used || !signal_is_valid(signum)) {
+        return 0;
+    }
+
+    if (target->state == TASK_STATE_ZOMBIE) {
+        return 0;
+    }
+
+    if (signum == LYTH_SIGKILL) {
+        target->cancel_requested = 1;
+        target->exit_code = 128 + signum;
+
+        if (target->state == TASK_STATE_RUNNING) {
+            target->state = TASK_STATE_CANCELLED;
+            return 1;
+        }
+
+        target->state = TASK_STATE_CANCELLED;
+        complete_task(target);
+        return 1;
+    }
+
+    /* Coalesced pending semantics: one bit per signal number. */
+    target->pending_signals |= signal_bit(signum);
+
+    if (target->state == TASK_STATE_SLEEPING || target->state == TASK_STATE_BLOCKED) {
+        target->blocked_event_id = -1;
+        target->state = TASK_STATE_READY;
+    }
+
+    return 1;
+}
+
+static int task_pop_pending_signal(task_entry_t* task) {
+    if (task == 0) {
+        return 0;
+    }
+
+    for (int signum = 1; signum <= LYTH_SIGNAL_MAX; signum++) {
+        unsigned int bit = signal_bit(signum);
+        if ((task->pending_signals & bit) && !signal_is_blocked(task, signum)) {
+            task->pending_signals &= ~bit;
+            return signum;
+        }
+    }
+
+    return 0;
+}
+
+static int task_push_user_signal_frame(task_entry_t* task,
+                                       task_user_stack_frame_t* frame,
+                                       unsigned int handler,
+                                       int signum) {
+    uint32_t new_user_esp;
+    uint32_t offset;
+    uint32_t* sp;
+
+    if (task == 0 || frame == 0 || handler <= LYTH_SIG_IGN || task->signal_trampoline_va == 0) {
+        return 0;
+    }
+
+    if (frame->user_esp < (PAGING_USER_BASE + 12U) ||
+        frame->user_esp > (PAGING_USER_BASE + PAGING_USER_SIZE)) {
+        return 0;
+    }
+
+    new_user_esp = frame->user_esp - 12U;
+    if (new_user_esp < PAGING_USER_BASE) {
+        return 0;
+    }
+
+    offset = new_user_esp - PAGING_USER_BASE;
+    if (offset + 12U > PAGING_USER_SIZE) {
+        return 0;
+    }
+
+    sp = (uint32_t*)(uintptr_t)(task->user_physical_base + offset);
+    /* cdecl frame for handler(int):
+       [esp+0]  = return address -> trampoline
+       [esp+4]  = signum argument
+       [esp+8]  = original eip (consumed by trampoline ret)
+     */
+    sp[0] = task->signal_trampoline_va;
+    sp[1] = (uint32_t)signum;
+    sp[2] = frame->eip;
+
+    frame->user_esp = new_user_esp;
+    frame->eip = handler;
+    return 1;
+}
+
+static void task_deliver_signals_current(task_entry_t* task, unsigned int frame_esp) {
+    task_user_stack_frame_t* frame;
+    int signum;
+    unsigned int handler;
+
+    if (task == 0 || !task->used || !task->user_mode || task->state != TASK_STATE_RUNNING) {
+        return;
+    }
+
+    signum = task_pop_pending_signal(task);
+    if (signum == 0) {
+        return;
+    }
+
+    handler = task->signal_handlers[signum];
+
+    if (handler == LYTH_SIG_IGN) {
+        return;
+    }
+
+    if (handler == LYTH_SIG_DFL || signum == LYTH_SIGKILL) {
+        if (signal_default_is_ignore(signum)) {
+            return;
+        }
+        if (signal_is_fatal_by_default(signum) || signum == LYTH_SIGKILL) {
+            task->cancel_requested = 1;
+            task->exit_code = 128 + signum;
+            task->state = TASK_STATE_CANCELLED;
+        }
+        return;
+    }
+
+    frame = (task_user_stack_frame_t*)frame_esp;
+    if (!task_push_user_signal_frame(task, frame, handler, signum)) {
+        task->cancel_requested = 1;
+        task->exit_code = 128 + signum;
+        task->state = TASK_STATE_CANCELLED;
+    }
+}
+
 static void complete_task(task_entry_t* task) {
     int task_id;
     const char* task_name;
@@ -264,8 +534,38 @@ static void complete_task(task_entry_t* task) {
     /* Wake any task blocked waiting for this specific task ID. */
     task_signal_event(task_id);
 
-    /* Decide: zombify (parent alive) or clear immediately. */
     parent = (parent_id > 0) ? find_task_by_id(parent_id) : 0;
+
+    /* Notify parent with SIGCHLD for basic child-exit delivery semantics. */
+    if (parent != 0 && parent->used && parent->id != task_id) {
+        task_queue_signal_locked(parent, LYTH_SIGCHLD);
+    }
+
+    if (parent != 0 &&
+        parent->state == TASK_STATE_BLOCKED &&
+        (parent->blocked_event_id == task_id || parent->blocked_event_id == parent->id)) {
+        /* Parent is actively waiting for this child (or any child):
+           wake it and reap immediately. */
+
+        /* Write child PID as the syscall return value into parent's saved frame. */
+        if (parent->saved_esp != 0) {
+            task_user_stack_frame_t* pframe =
+                (task_user_stack_frame_t*)parent->saved_esp;
+            pframe->eax = (unsigned int)task_id;
+        }
+        /* Write POSIX status to user-space pointer if set. */
+        if (parent->waitpid_status_uptr) {
+            write_user_int32(parent, parent->waitpid_status_uptr,
+                             encode_child_status(task));
+            parent->waitpid_status_uptr = 0;
+        }
+
+        task_signal_event(parent->blocked_event_id);
+        clear_task(task);
+        return;
+    }
+
+    /* Decide: zombify (parent alive) or clear immediately. */
     if (parent != 0 && parent->state != TASK_STATE_ZOMBIE) {
         /* Parent is still alive — become a zombie so it can collect exit status. */
         zombify_task(task);
@@ -433,7 +733,9 @@ void task_system_init(void) {
         tasks[i].user_physical_base = 0;
         tasks[i].user_heap_base = 0;
         tasks[i].user_heap_size = 0;
+        tasks[i].waitpid_status_uptr = 0;
         vfs_task_fd_init(tasks[i].fd_table);
+        task_signal_handlers_init(&tasks[i]);
     }
 
     current_task_index = -1;
@@ -494,6 +796,9 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
     tasks[slot].user_entry = 0;
     tasks[slot].user_mode = 0;
     tasks[slot].parent_id = (current_task_index >= 0) ? tasks[current_task_index].id : 0;
+    tasks[slot].waitpid_status_uptr = 0;
+    task_signal_handlers_init(&tasks[slot]);
+    vfs_task_fd_init(tasks[slot].fd_table);  /* (re-)install stdio if tty is ready */
 
     tasks[slot].stack = (unsigned char*)kmalloc(TASK_STACK_SIZE);
     if (tasks[slot].stack == 0) {
@@ -587,6 +892,10 @@ int task_spawn_user(const char* name,
     tasks[slot].page_directory = page_directory;
     tasks[slot].user_initial_esp = initial_user_esp;
     tasks[slot].parent_id = (current_task_index >= 0) ? tasks[current_task_index].id : 0;
+    tasks[slot].waitpid_status_uptr = 0;
+    task_signal_handlers_init(&tasks[slot]);
+
+    vfs_task_fd_init(tasks[slot].fd_table);  /* (re-)install stdio if tty is ready */
 
     if (tasks[slot].stack == 0) {
         clear_task(&tasks[slot]);
@@ -595,6 +904,7 @@ int task_spawn_user(const char* name,
     }
 
     tasks[slot].user_stack = (unsigned char*)(uintptr_t)(PAGING_USER_BASE + PAGING_USER_SIZE - TASK_USER_STACK_SIZE);
+    task_install_signal_trampoline(&tasks[slot]);
 
     initialize_task_stack(&tasks[slot]);
 
@@ -812,6 +1122,11 @@ vfs_fd_entry_t* task_current_fd_table(void) {
     }
 
     return tasks[current_task_index].fd_table;
+
+vfs_fd_entry_t* task_get_fd_table(int task_id) {
+    task_entry_t* t = find_task_by_id(task_id);
+    return t ? t->fd_table : 0;
+}
 }
 
 void* task_current_data(void) {
@@ -895,33 +1210,188 @@ int task_list(task_snapshot_t* out, int max_tasks) {
 }
 
 int task_kill(int id) {
+    return task_send_signal(id, LYTH_SIGTERM);
+}
+
+int task_send_signal(int id, int signum) {
     unsigned int flags;
     task_entry_t* task;
+    int result;
+
+    if (!signal_is_valid(signum)) {
+        return 0;
+    }
 
     flags = interrupt_save();
     task = find_task_by_id(id);
-
     if (task == 0) {
         interrupt_restore(flags);
         return 0;
     }
 
-    if (task->state == TASK_STATE_ZOMBIE) {
-        /* Already finished — just reap the zombie immediately. */
-        clear_task(task);
-        interrupt_restore(flags);
-        return 1;
+    result = task_queue_signal_locked(task, signum);
+    interrupt_restore(flags);
+    return result;
+}
+
+int task_set_signal_handler(int signum, unsigned int handler, unsigned int* old_handler_out) {
+    unsigned int flags;
+    task_entry_t* task;
+
+    if (current_task_index < 0 || !signal_is_valid(signum) || signum == LYTH_SIGKILL) {
+        return 0;
     }
 
-    if (task->state == TASK_STATE_RUNNING) {
-        task->cancel_requested = 1;
-        interrupt_restore(flags);
-        return 1;
+    task = &tasks[current_task_index];
+
+    if (!task->user_mode) {
+        return 0;
     }
 
-    task->cancel_requested = 1;
-    task->state = TASK_STATE_CANCELLED;
-    complete_task(task);
+    flags = interrupt_save();
+    if (old_handler_out != 0) {
+        *old_handler_out = task->signal_handlers[signum];
+    }
+    task->signal_handlers[signum] = handler;
+    interrupt_restore(flags);
+    return 1;
+}
+
+unsigned int task_pending_signals(void) {
+    if (current_task_index < 0) {
+        return 0;
+    }
+
+    return tasks[current_task_index].pending_signals;
+}
+
+int task_sigprocmask(unsigned int how, unsigned int mask, unsigned int* old_mask_out) {
+    unsigned int flags;
+    task_entry_t* task;
+
+    if (current_task_index < 0) {
+        return 0;
+    }
+
+    task = &tasks[current_task_index];
+
+    flags = interrupt_save();
+
+    if (old_mask_out != 0) {
+        *old_mask_out = task->signal_mask;
+    }
+
+    mask = signal_mask_sanitize(mask);
+    switch (how) {
+        case LYTH_SIG_BLOCK:
+            task->signal_mask = signal_mask_sanitize(task->signal_mask | mask);
+            break;
+        case LYTH_SIG_UNBLOCK:
+            task->signal_mask = signal_mask_sanitize(task->signal_mask & ~mask);
+            break;
+        case LYTH_SIG_SETMASK:
+            task->signal_mask = signal_mask_sanitize(mask);
+            break;
+        default:
+            interrupt_restore(flags);
+            return 0;
+    }
+
+    interrupt_restore(flags);
+    return 1;
+}
+
+int task_exec_current_user_from_frame(unsigned int frame_esp,
+                                      const char* new_name,
+                                      unsigned int entry_point,
+                                      uint32_t user_physical_base,
+                                      uint32_t user_heap_base,
+                                      uint32_t user_heap_size,
+                                      uint32_t* page_directory,
+                                      uint32_t initial_user_esp) {
+    unsigned int flags;
+    task_entry_t* task;
+    task_user_stack_frame_t* frame;
+    uint32_t* old_page_directory;
+    uint32_t old_user_physical_base;
+    unsigned int top_user_esp;
+
+    if (current_task_index < 0 || frame_esp == 0 || entry_point == 0 ||
+        user_physical_base == 0 || page_directory == 0) {
+        return 0;
+    }
+
+    task = &tasks[current_task_index];
+    if (!task->used || !task->user_mode) {
+        return 0;
+    }
+
+    top_user_esp = PAGING_USER_BASE + PAGING_USER_SIZE;
+    if (initial_user_esp == 0) {
+        initial_user_esp = top_user_esp;
+    }
+    if (initial_user_esp < PAGING_USER_BASE || initial_user_esp > top_user_esp) {
+        return 0;
+    }
+
+    flags = interrupt_save();
+
+    old_page_directory = task->page_directory;
+    old_user_physical_base = task->user_physical_base;
+
+    if (new_name != 0) {
+        copy_text(task->name, new_name, TASK_NAME_MAX);
+    }
+
+    if (task->data != 0) {
+        kfree(task->data);
+        task->data = 0;
+    }
+
+    task->state = TASK_STATE_RUNNING;
+    task->cancel_requested = 0;
+    task->wake_tick = 0;
+    task->blocked_event_id = -1;
+    task->step = 0;
+    task->data_size = 0;
+    task->exit_code = 0;
+    task->user_entry = entry_point;
+    task->user_mode = 1;
+    task->user_physical_base = user_physical_base;
+    task->user_heap_base = user_heap_base;
+    task->user_heap_size = user_heap_size;
+    task->page_directory = page_directory;
+    task->user_stack = (unsigned char*)(uintptr_t)(PAGING_USER_BASE + PAGING_USER_SIZE - TASK_USER_STACK_SIZE);
+    task->user_initial_esp = initial_user_esp;
+    task->k_errno = 0;
+    task->pending_signals = 0;
+
+    /* POSIX-like: caught handlers reset to default on exec; SIG_IGN preserved. */
+    for (int signum = 1; signum <= LYTH_SIGNAL_MAX; signum++) {
+        if (task->signal_handlers[signum] > LYTH_SIG_IGN) {
+            task->signal_handlers[signum] = LYTH_SIG_DFL;
+        }
+    }
+
+    task_install_signal_trampoline(task);
+
+    frame = (task_user_stack_frame_t*)frame_esp;
+    frame->eax = 0;
+    frame->eip = entry_point;
+    frame->cs = user_code_selector | 0x03;
+    frame->eflags |= 0x00000200U;
+    frame->user_esp = initial_user_esp;
+    frame->user_ss = user_data_selector | 0x03;
+
+    paging_switch_directory(page_directory);
+
+    if (old_page_directory != 0) {
+        paging_destroy_user_directory(old_page_directory);
+    }
+    if (old_user_physical_base != 0) {
+        physmem_free_region(old_user_physical_base, PAGING_USER_SIZE);
+    }
+
     interrupt_restore(flags);
     return 1;
 }
@@ -974,6 +1444,7 @@ unsigned int task_schedule_on_timer(unsigned int current_esp) {
     unsigned int next_esp;
 
     if (current_task_index >= 0) {
+        task_deliver_signals_current(&tasks[current_task_index], current_esp);
         next_esp = schedule_back_to_idle(current_esp);
     } else {
         next_esp = schedule_from_idle(current_esp);
@@ -1066,7 +1537,9 @@ int task_fork_from_frame(unsigned int frame_esp) {
     tasks[slot].page_directory   = child_dir;
     tasks[slot].k_errno          = 0;
     tasks[slot].parent_id        = parent->id;   /* fork child's parent = the forking task */
+    task_signal_handlers_copy(&tasks[slot], parent);
     vfs_task_fd_inherit(tasks[slot].fd_table, parent->fd_table);  /* inherit open FDs */
+    task_install_signal_trampoline(&tasks[slot]);
 
     /* Build child kernel stack: clone parent's syscall frame, child gets eax=0 */
     child_stack_top = (unsigned int)(child_kstack + TASK_STACK_SIZE);
@@ -1109,28 +1582,157 @@ int task_parent_id(int id) {
 void task_wait_id(int target_id) {
     unsigned int flags;
     task_entry_t* target;
+    task_entry_t* self;
+    int self_id;
 
-    if (current_task_index < 0 || target_id < 0) return;
+    if (current_task_index < 0) return;
+
+    self = &tasks[current_task_index];
+    self_id = self->id;
 
     flags = interrupt_save();
+
+    if (target_id == -1) {
+        int has_child = 0;
+
+        for (int i = 0; i < TASK_MAX_COUNT; i++) {
+            if (!tasks[i].used || tasks[i].parent_id != self_id) {
+                continue;
+            }
+
+            has_child = 1;
+            if (tasks[i].state == TASK_STATE_ZOMBIE) {
+                clear_task(&tasks[i]);
+                interrupt_restore(flags);
+                return;
+            }
+        }
+
+        if (!has_child) {
+            interrupt_restore(flags);
+            return;
+        }
+
+        /* Wait for any child: complete_task() signals parent_id event. */
+        self->blocked_event_id = self_id;
+        self->state = TASK_STATE_BLOCKED;
+        interrupt_restore(flags);
+        return;
+    }
+
+    if (target_id < 0) {
+        interrupt_restore(flags);
+        return;
+    }
+
     target = find_task_by_id(target_id);
     if (target == 0 || target->state == TASK_STATE_ZOMBIE) {
-        /* Task already gone or already a zombie — nothing to wait for. */
+        /* If this is our zombie child, reap it now; else nothing to wait for. */
+        if (target != 0 && target->state == TASK_STATE_ZOMBIE && target->parent_id == self_id) {
+            clear_task(target);
+        }
         interrupt_restore(flags);
         return;
     }
 
     /* Set up the block atomically while interrupts are off. */
-    tasks[current_task_index].blocked_event_id = target_id;
-    tasks[current_task_index].state = TASK_STATE_BLOCKED;
+    self->blocked_event_id = target_id;
+    self->state = TASK_STATE_BLOCKED;
     interrupt_restore(flags);
 }
 
-unsigned int task_schedule_on_syscall(unsigned int current_esp) {    unsigned int flags = interrupt_save();
+/* ---- waitpid: wait with status collection ---- */
+int task_waitpid(int target_id, uint32_t status_uptr) {
+    unsigned int flags;
+    task_entry_t* self;
+    task_entry_t* target;
+    int self_id;
+
+    if (current_task_index < 0) return -1;
+
+    self = &tasks[current_task_index];
+    self_id = self->id;
+
+    flags = interrupt_save();
+
+    if (target_id == -1) {
+        /* Any child */
+        int has_child = 0;
+
+        for (int i = 0; i < TASK_MAX_COUNT; i++) {
+            if (!tasks[i].used || tasks[i].parent_id != self_id) continue;
+            has_child = 1;
+            if (tasks[i].state == TASK_STATE_ZOMBIE) {
+                int child_pid  = tasks[i].id;
+                int child_stat = encode_child_status(&tasks[i]);
+                clear_task(&tasks[i]);
+                interrupt_restore(flags);
+                if (status_uptr)
+                    write_user_int32(self, status_uptr, child_stat);
+                return child_pid;
+            }
+        }
+
+        if (!has_child) {
+            interrupt_restore(flags);
+            task_set_errno(10); /* ECHILD */
+            return -1;
+        }
+
+        /* Block; complete_task() will fill frame->eax and write status. */
+        self->waitpid_status_uptr = status_uptr;
+        self->blocked_event_id = self_id;
+        self->state = TASK_STATE_BLOCKED;
+        interrupt_restore(flags);
+        return 0; /* overridden by complete_task */
+    }
+
+    if (target_id <= 0) {
+        interrupt_restore(flags);
+        task_set_errno(22); /* EINVAL */
+        return -1;
+    }
+
+    target = find_task_by_id(target_id);
+
+    if (target == 0) {
+        interrupt_restore(flags);
+        task_set_errno(10); /* ECHILD */
+        return -1;
+    }
+
+    if (target->parent_id != self_id) {
+        interrupt_restore(flags);
+        task_set_errno(10); /* ECHILD */
+        return -1;
+    }
+
+    if (target->state == TASK_STATE_ZOMBIE) {
+        int child_pid  = target->id;
+        int child_stat = encode_child_status(target);
+        clear_task(target);
+        interrupt_restore(flags);
+        if (status_uptr)
+            write_user_int32(self, status_uptr, child_stat);
+        return child_pid;
+    }
+
+    /* Block waiting for this specific child. */
+    self->waitpid_status_uptr = status_uptr;
+    self->blocked_event_id = target_id;
+    self->state = TASK_STATE_BLOCKED;
+    interrupt_restore(flags);
+    return 0; /* overridden by complete_task */
+}
+
+unsigned int task_schedule_on_syscall(unsigned int current_esp) {
+    unsigned int flags = interrupt_save();
     unsigned int next_esp = current_esp;
 
     if (current_task_index >= 0) {
         task_entry_t* task = &tasks[current_task_index];
+
+        task_deliver_signals_current(task, current_esp);
 
         if (task->state != TASK_STATE_RUNNING) {
             next_esp = schedule_back_to_idle(current_esp);

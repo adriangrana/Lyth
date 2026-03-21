@@ -20,7 +20,39 @@
 #define VFS_SEEK_CUR 1
 #define VFS_SEEK_END 2
 
+/* ---- Open flags / access modes ---- */
+#define VFS_O_RDONLY 0x0001U
+#define VFS_O_WRONLY 0x0002U
+#define VFS_O_RDWR   (VFS_O_RDONLY | VFS_O_WRONLY)
+#define VFS_O_APPEND 0x0010U
+#define VFS_O_CREAT  0x0020U
+#define VFS_O_TRUNC  0x0040U
+#define VFS_O_EXCL   0x0080U
+#define VFS_O_DIRECTORY 0x0100U
+#define VFS_O_ACCMODE (VFS_O_RDONLY | VFS_O_WRONLY)
+
+/* ---- UNIX-like mode bits ---- */
+#define VFS_MODE_IRUSR 0x0100U
+#define VFS_MODE_IWUSR 0x0080U
+#define VFS_MODE_IXUSR 0x0040U
+#define VFS_MODE_IRGRP 0x0020U
+#define VFS_MODE_IWGRP 0x0010U
+#define VFS_MODE_IXGRP 0x0008U
+#define VFS_MODE_IROTH 0x0004U
+#define VFS_MODE_IWOTH 0x0002U
+#define VFS_MODE_IXOTH 0x0001U
+
+#define VFS_MODE_FILE_DEFAULT 0x01A4U /* 0644 */
+#define VFS_MODE_DIR_DEFAULT  0x01EDU /* 0755 */
+#define VFS_MODE_ROOT_DEFAULT 0x01FFU /* 0777 */
+
 typedef struct vfs_node vfs_node_t;
+
+typedef struct {
+   unsigned int size;
+   unsigned int flags;
+   unsigned int mode;
+} vfs_stat_t;
 
 /* ---- Operations table (vtable for a filesystem backend) ---- */
 typedef struct {
@@ -91,10 +123,22 @@ vfs_node_t*  vfs_resolve(const char* path);
 int          vfs_create  (const char* path, unsigned int flags);
 /* Remove the file or directory at 'path'. Returns 0 on success, -1 on error. */
 int          vfs_delete  (const char* path);
+/* POSIX-style alias for delete(path). */
+int          vfs_unlink  (const char* path);
+/* Rename/move a path. Current generic implementation supports files.
+   Returns 0 on success, -1 on error. */
+int          vfs_rename  (const char* old_path, const char* new_path);
+/* Retrieve basic metadata for a path (size + flags). */
+int          vfs_stat    (const char* path, vfs_stat_t* out);
+/* Change/get UNIX-like permission bits for an absolute path. */
+int          vfs_chmod   (const char* path, unsigned int mode);
+int          vfs_get_mode(const char* path, unsigned int* mode_out);
 
 /* ---- File-descriptor API ---- */
 /* Open a file/directory by absolute path. Returns fd >= 0 or -1 on error. */
 int          vfs_open    (const char* path);
+/* Open with access/creation flags (VFS_O_*). */
+int          vfs_open_flags(const char* path, unsigned int open_flags);
 /* Close a file descriptor. */
 void         vfs_close   (int fd);
 /* Read up to 'size' bytes from fd into buf. Advances the internal offset.
@@ -119,15 +163,25 @@ unsigned int vfs_fd_offset(int fd);
 typedef struct {
     vfs_node_t*  node;
     unsigned int offset;
+   unsigned int open_flags;
     int          used;
 } vfs_fd_entry_t;
 
-/* Initialise a fresh fd table (zero all slots). */
+/* Initialise a fresh fd table (zero all slots, install tty on fd 0/1/2
+   if a TTY node has been registered via vfs_set_tty_node). */
 void vfs_task_fd_init    (vfs_fd_entry_t* table);
 /* Close all open FDs in a table (call on task teardown). */
 void vfs_task_fd_close_all(vfs_fd_entry_t* table);
 /* Copy src fd table into dst, incrementing ref_count on every shared node.
    Used by fork to give the child the same open files as the parent. */
 void vfs_task_fd_inherit (vfs_fd_entry_t* dst, const vfs_fd_entry_t* src);
+
+/* Register the global TTY node used for fd 0/1/2.
+   Call once after tty_vfs_init() and before spawning user tasks. */
+void vfs_set_tty_node(vfs_node_t* node);
+
+/* Install the TTY node on fd 0, 1, 2 of a given fd table (if those
+   slots are currently unused and a TTY node is registered). */
+void vfs_install_stdio(vfs_fd_entry_t* table);
 
 #endif

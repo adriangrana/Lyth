@@ -11,13 +11,13 @@
  *
  *  Devices are stored in a static table and addressed by integer
  *  index.  Partition sub-devices are registered automatically by
- *  blkdev_probe_partitions() after reading the MBR.
+ *  blkdev_probe_partitions() after reading MBR/GPT metadata.
  *
  *  Naming convention:
  *    "hd0"   – first ATA drive (master)
  *    "hd1"   – second ATA drive (slave)
- *    "hd0p1" – first MBR partition of hd0
- *    "hd0p2" – second MBR partition of hd0, etc.
+ *    "hd0p1" – first partition entry of hd0 (MBR or GPT)
+ *    "hd0p2" – second partition entry of hd0, etc.
  * ============================================================ */
 
 #define BLKDEV_MAX       16   /* max registered devices (disks + partitions) */
@@ -89,11 +89,20 @@ int blkdev_find(const char* name);
 int blkdev_read (int index, uint32_t lba, uint32_t count, uint8_t* buf);
 int blkdev_write(int index, uint32_t lba, uint32_t count, const uint8_t* buf);
 
+/* ---- Block cache control -------------------------------------- */
+
+/* Invalidate all cached sectors for every block device. */
+void blkdev_cache_invalidate_all(void);
+
+/* Invalidate all cached sectors belonging to one block device index. */
+void blkdev_cache_invalidate_device(int index);
+
 /* ---- Partition probing ----------------------------------------- */
 
-/* Read the MBR of device 'index', then register any non-empty primary
-   partitions as child block devices ("<name>p1" … "<name>p4").
-   Returns the number of partitions registered (0 if no valid MBR). */
+/* Probe partitions on device 'index'.
+   - If protective MBR + valid GPT is present, register GPT entries.
+   - Otherwise, fall back to classic MBR primary partitions.
+   Returns the number of partitions registered. */
 int blkdev_probe_partitions(int index);
 
 #endif /* BLKDEV_H */

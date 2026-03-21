@@ -398,3 +398,121 @@ int usermode_spawn_elf_vfs_argv(const char* vfs_path,
     kfree(image);
     return task_id;
 }
+
+int usermode_exec_current_vfs_argv(const char* vfs_path,
+                                   int argc, const char* const* argv,
+                                   int envc, const char* const* envp,
+                                   unsigned int frame_esp) {
+    int            fd;
+    int            file_size;
+    unsigned char* image;
+    int            n_read;
+    int            total;
+    elf_image_info_t info;
+    const elf32_header_t* header;
+    uint32_t user_physical_base = 0;
+    uint32_t highest_user_end   = paging_user_base();
+    uint32_t user_heap_base;
+    uint32_t user_heap_size;
+    uint32_t* page_directory = 0;
+    int ok;
+    const char* task_name;
+    const char* p;
+    uint32_t initial_esp;
+
+    if (vfs_path == 0) return -1;
+
+    fd = vfs_open(vfs_path);
+    if (fd < 0) return -1;
+
+    file_size = vfs_seek(fd, 0, VFS_SEEK_END);
+    vfs_seek(fd, 0, VFS_SEEK_SET);
+    if (file_size <= 0) { vfs_close(fd); return -1; }
+
+    image = (unsigned char*)kmalloc((unsigned int)file_size);
+    if (!image) { vfs_close(fd); return -1; }
+
+    total = 0;
+    while (total < file_size) {
+        n_read = vfs_read(fd, image + total, (unsigned int)(file_size - total));
+        if (n_read <= 0) break;
+        total += n_read;
+    }
+    vfs_close(fd);
+
+    if (total != file_size) { kfree(image); return -1; }
+
+    if (!elf_parse_image(image, (unsigned int)file_size, &info)) {
+        kfree(image); return -1;
+    }
+
+    user_physical_base = physmem_alloc_region(paging_user_size(), paging_user_size());
+    if (user_physical_base == 0) { kfree(image); return -1; }
+
+    page_directory = paging_create_user_directory(user_physical_base);
+    if (page_directory == 0) {
+        physmem_free_region(user_physical_base, paging_user_size());
+        kfree(image);
+        return -1;
+    }
+
+    zero_memory((uint8_t*)(uintptr_t)user_physical_base, paging_user_size());
+
+    header = (const elf32_header_t*)image;
+    for (uint16_t i = 0; i < header->phnum; i++) {
+        const elf32_program_header_t* ph =
+            (const elf32_program_header_t*)(image + header->phoff
+                                            + (i * header->phentsize));
+        if (ph->type != ELF_PROGRAM_TYPE_LOAD) continue;
+        if (!paging_address_is_user_accessible(ph->vaddr, ph->memsz) ||
+            ph->offset + ph->filesz > (uint32_t)file_size ||
+            ph->memsz < ph->filesz) {
+            paging_destroy_user_directory(page_directory);
+            physmem_free_region(user_physical_base, paging_user_size());
+            kfree(image);
+            return -1;
+        }
+        if (ph->vaddr + ph->memsz > highest_user_end)
+            highest_user_end = ph->vaddr + ph->memsz;
+        zero_memory((uint8_t*)(uintptr_t)(user_physical_base
+                    + (ph->vaddr - paging_user_base())), ph->memsz);
+        copy_memory((uint8_t*)(uintptr_t)(user_physical_base
+                    + (ph->vaddr - paging_user_base())),
+                    image + ph->offset, ph->filesz);
+    }
+
+    user_heap_base = align_up(highest_user_end, 16U);
+    if (user_heap_base >= PAGING_USER_STACK_TOP) {
+        paging_destroy_user_directory(page_directory);
+        physmem_free_region(user_physical_base, paging_user_size());
+        kfree(image);
+        return -1;
+    }
+    user_heap_size = PAGING_USER_STACK_TOP - user_heap_base;
+
+    /* Use the basename of vfs_path as process name after exec */
+    task_name = vfs_path;
+    for (p = vfs_path; *p; p++)
+        if (*p == '/') task_name = p + 1;
+    if (*task_name == '\0') task_name = vfs_path;
+
+    initial_esp = setup_user_stack_argv(user_physical_base, argc, argv, envc, envp);
+
+    ok = task_exec_current_user_from_frame(frame_esp,
+                                           task_name,
+                                           info.entry,
+                                           user_physical_base,
+                                           user_heap_base,
+                                           user_heap_size,
+                                           page_directory,
+                                           initial_esp);
+    if (!ok) {
+        paging_destroy_user_directory(page_directory);
+        physmem_free_region(user_physical_base, paging_user_size());
+        kfree(image);
+        return -1;
+    }
+
+    kfree(image);
+    return 0;
+}

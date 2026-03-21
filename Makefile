@@ -15,7 +15,7 @@ FB_MOUSE_CURSOR ?= 0
 QEMU_FLAGS = -boot d -cdrom $(ISO_IMAGE) -m 128 -no-reboot -no-shutdown -vga std -display $(QEMU_DISPLAY)
 DISK_IMG  ?= disk.img
 
-.PHONY: help compile create-iso execute debug gdb-wait gdb-connect clean run disk-create disk-fat16
+.PHONY: help compile create-iso execute debug gdb-wait gdb-connect clean run disk-create disk-fat16 disk-fat32 harness-serial
 
 BOOT_OBJ = $(BUILD_DIR)/boot.o
 GDT_ASM_OBJ = $(BUILD_DIR)/gdt_asm.o
@@ -43,6 +43,7 @@ PAGING_OBJ = $(BUILD_DIR)/paging.o
 FS_OBJ = $(BUILD_DIR)/fs.o
 VFS_OBJ = $(BUILD_DIR)/vfs.o
 RAMFS_OBJ = $(BUILD_DIR)/ramfs.o
+DEVFS_OBJ = $(BUILD_DIR)/devfs.o
 SYSCALL_OBJ = $(BUILD_DIR)/syscall.o
 FBCONSOLE_OBJ = $(BUILD_DIR)/fbconsole.o
 ELF_OBJ = $(BUILD_DIR)/elf.o
@@ -51,6 +52,13 @@ INIT_OBJ     = $(BUILD_DIR)/init.o
 ATA_OBJ = $(BUILD_DIR)/ata.o
 BLKDEV_OBJ = $(BUILD_DIR)/blkdev.o
 FAT16_OBJ = $(BUILD_DIR)/fat16.o
+FAT32_OBJ = $(BUILD_DIR)/fat32.o
+FAT_FSCK_OBJ = $(BUILD_DIR)/fat_fsck.o
+TTY_VFS_OBJ = $(BUILD_DIR)/tty_vfs.o
+SERIAL_OBJ = $(BUILD_DIR)/serial.o
+KTEST_OBJ = $(BUILD_DIR)/ktest.o
+BOOT_TESTS_OBJ = $(BUILD_DIR)/boot_tests.o
+RTC_OBJ        = $(BUILD_DIR)/rtc.o
 
 CFLAGS = -m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-frame-pointer -fno-optimize-sibling-calls \
 	-DFB_MOUSE_CURSOR_ENABLED=$(FB_MOUSE_CURSOR) \
@@ -60,10 +68,13 @@ CFLAGS = -m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-fr
 	-Iinclude/kernel/task \
 	-Iinclude/drivers/console \
 	-Iinclude/drivers/input \
+	-Iinclude/drivers/serial \
 	-Iinclude/userland/shell \
 	-Iinclude/fs \
 	-Iinclude/lib \
-	-Iinclude/drivers/disk
+	-Iinclude/drivers/disk \
+	-Iinclude/drivers/rtc \
+	-Iinclude/kernel/tests
 LDFLAGS = -m elf_i386 -T arch/x86/linker.ld
 
 FONT_PSF = assets/font.psf
@@ -71,7 +82,7 @@ FONT_TOOL = tools/psf2h.py
 FONT_HEADER = include/font_psf.h
 GRUB_CFG = arch/x86/boot/grub.cfg
 
-OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ)
+OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ)
 
 $(FONT_HEADER): $(FONT_PSF) $(FONT_TOOL)
 	$(PYTHON) $(FONT_TOOL) $(FONT_PSF) $(FONT_HEADER)
@@ -112,14 +123,22 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(CC) $(CFLAGS) -c fs/fs.c -o $(FS_OBJ)
 	$(CC) $(CFLAGS) -c fs/vfs.c -o $(VFS_OBJ)
 	$(CC) $(CFLAGS) -c fs/ramfs.c -o $(RAMFS_OBJ)
+	$(CC) $(CFLAGS) -c fs/devfs.c -o $(DEVFS_OBJ)
 	$(CC) $(CFLAGS) -c kernel/syscall.c -o $(SYSCALL_OBJ)
 	$(CC) $(CFLAGS) -c drivers/console/fbconsole.c -o $(FBCONSOLE_OBJ)
+	$(CC) $(CFLAGS) -c drivers/console/tty_vfs.c -o $(TTY_VFS_OBJ)
+	$(CC) $(CFLAGS) -c drivers/serial/serial.c -o $(SERIAL_OBJ)
 	$(CC) $(CFLAGS) -c kernel/elf.c -o $(ELF_OBJ)
 	$(CC) $(CFLAGS) -c kernel/usermode.c -o $(USERMODE_OBJ)
 	$(CC) $(CFLAGS) -c kernel/init.c -o $(INIT_OBJ)
+	$(CC) $(CFLAGS) -c kernel/ktest.c -o $(KTEST_OBJ)
+	$(CC) $(CFLAGS) -c kernel/tests/boot_tests.c -o $(BOOT_TESTS_OBJ)
+	$(CC) $(CFLAGS) -c drivers/rtc/rtc.c -o $(RTC_OBJ)
 	$(CC) $(CFLAGS) -c drivers/disk/ata.c -o $(ATA_OBJ)
 	$(CC) $(CFLAGS) -c drivers/disk/blkdev.c -o $(BLKDEV_OBJ)
 	$(CC) $(CFLAGS) -c fs/fat16.c -o $(FAT16_OBJ)
+	$(CC) $(CFLAGS) -c fs/fat32.c -o $(FAT32_OBJ)
+	$(CC) $(CFLAGS) -c fs/fat_fsck.c -o $(FAT_FSCK_OBJ)
 	$(AS) --32 arch/x86/gdt.s -o $(GDT_ASM_OBJ)
 	$(AS) --32 arch/x86/interrupts.s -o $(INTERRUPTS_ASM_OBJ)
 	$(AS) --32 arch/x86/boot/boot.s -o $(BOOT_OBJ)
@@ -174,3 +193,19 @@ disk-fat16: ## crea disk.img (32 MB) FAT16 plano con archivos de prueba (requier
 	@echo "Imagen lista: $(DISK_IMG)"
 	@echo "  -> arranca con: make execute"
 	@echo "  -> en la shell:  vfs ls /hd0    vfs cat /hd0/hola.txt"
+
+disk-fat32: ## crea disk.img (64 MB) FAT32 con LFN de prueba (requiere dosfstools + mtools)
+	@echo "Creando imagen FAT32 (64 MB)..."
+	rm -f "$(DISK_IMG)"
+	dd if=/dev/zero of="$(DISK_IMG)" bs=1M count=64 2>/dev/null
+	mkfs.fat -F 32 -n "LYTH32" "$(DISK_IMG)"
+	@echo "Copiando archivos de prueba (con LFN)..."
+	echo "Hola desde FAT32" | MTOOLS_SKIP_CHECK=1 mcopy -i "$(DISK_IMG)" - ::"archivo largo de prueba.txt"
+	MTOOLS_SKIP_CHECK=1 mmd -i "$(DISK_IMG)" ::documentos
+	echo "Lyth OS FAT32 test" | MTOOLS_SKIP_CHECK=1 mcopy -i "$(DISK_IMG)" - ::"documentos/info del sistema.txt"
+	@echo "Imagen lista: $(DISK_IMG)"
+	@echo "  -> arranca con: make execute"
+	@echo "  -> en la shell:  vfs ls /hd0    vfs cat /hd0/archivo largo de prueba.txt"
+
+harness-serial: ## ejecuta mini harness por serie y valida boot tests
+	./tools/harness_serial.sh
