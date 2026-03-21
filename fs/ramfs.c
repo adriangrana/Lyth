@@ -153,10 +153,12 @@ static vfs_ops_t ramfs_file_ops = {
 
 static int ramfs_vdir_readdir(vfs_node_t* node, unsigned int index,
                               char* name_out, unsigned int name_max) {
-    const char*  prefix = (const char*)node->impl;
-    unsigned int found  = 0;
+    const char*  prefix     = (const char*)node->impl;
+    unsigned int prefix_len = str_length(prefix);
+    unsigned int found      = 0;
     int          i;
 
+    /* Files in flat store under this prefix */
     for (i = 0; ; i++) {
         const char*  e = fs_name_at(i);
         const char*  stem;
@@ -164,9 +166,8 @@ static int ramfs_vdir_readdir(vfs_node_t* node, unsigned int index,
 
         if (!e) break;
         if (!name_has_prefix(e, prefix)) continue;
-        stem = e + str_length(prefix) + 1; /* skip "prefix/" */
-        /* Skip entries that belong to a deeper subdir */
-        if (name_has_slash(stem)) continue;
+        stem = e + prefix_len + 1U; /* skip "prefix/" */
+        if (name_has_slash(stem)) continue; /* deeper entries */
 
         if (found == index) {
             for (j = 0; stem[j] && j < name_max - 1U; j++) name_out[j] = stem[j];
@@ -175,26 +176,75 @@ static int ramfs_vdir_readdir(vfs_node_t* node, unsigned int index,
         }
         found++;
     }
+
+    /* Nested virtual subdirectories: vdirs whose name is "prefix/child" */
+    for (i = 0; i < RAMFS_MAX_DIRS; i++) {
+        const char*  dname;
+        const char*  stem;
+        unsigned int j;
+
+        if (!ramfs_vdirs[i].used) continue;
+        dname = ramfs_vdirs[i].name;
+        if (!name_has_prefix(dname, prefix)) continue;
+        stem = dname + prefix_len + 1U;
+        if (name_has_slash(stem)) continue; /* only direct children */
+
+        if (found == index) {
+            for (j = 0; stem[j] && j < name_max - 1U; j++) name_out[j] = stem[j];
+            name_out[j] = '\0';
+            return 0;
+        }
+        found++;
+    }
+
     return -1;
 }
 
 static vfs_node_t* ramfs_vdir_finddir(vfs_node_t* node, const char* name) {
-    const char* prefix = (const char*)node->impl;
-    char        key[VFS_PATH_MAX];
+    const char*  prefix = (const char*)node->impl;
+    char         key[VFS_PATH_MAX];
+    int          i;
 
     build_key(prefix, name, key, sizeof(key));
+
+    /* Check for a nested virtual subdirectory first */
+    for (i = 0; i < RAMFS_MAX_DIRS; i++) {
+        if (ramfs_vdirs[i].used && str_equals(ramfs_vdirs[i].name, key))
+            return make_vdir_node(i);
+    }
+
+    /* Fall through to flat file store */
     if (!fs_exists(key)) return 0;
     return make_file_node(key);
 }
 
 static vfs_node_t* ramfs_vdir_create(vfs_node_t* node, const char* name,
                                      unsigned int flags) {
-    const char* prefix = (const char*)node->impl;
-    char        key[VFS_PATH_MAX];
-
-    if (flags & VFS_FLAG_DIR) return 0; /* nested dirs not supported yet */
+    const char*  prefix = (const char*)node->impl;
+    char         key[VFS_PATH_MAX];
+    unsigned int i;
 
     build_key(prefix, name, key, sizeof(key));
+
+    if (flags & VFS_FLAG_DIR) {
+        /* Create a nested virtual subdirectory (e.g. "home/root"). */
+        int slot = -1;
+        for (i = 0; i < RAMFS_MAX_DIRS; i++) {
+            if (ramfs_vdirs[i].used && str_equals(ramfs_vdirs[i].name, key))
+                return make_vdir_node((int)i); /* already exists */
+        }
+        for (i = 0; i < RAMFS_MAX_DIRS; i++) {
+            if (!ramfs_vdirs[i].used) { slot = (int)i; break; }
+        }
+        if (slot < 0) return 0; /* table full */
+
+        ramfs_vdirs[slot].used = 1;
+        for (i = 0; key[i] && i < VFS_NAME_MAX - 1U; i++)
+            ramfs_vdirs[slot].name[i] = key[i];
+        ramfs_vdirs[slot].name[i] = '\0';
+        return make_vdir_node(slot);
+    }
+
     if (fs_write(key, 0, 0, 0) < 0) return 0;
     return make_file_node(key);
 }
@@ -285,8 +335,12 @@ static vfs_node_t* ramfs_dir_create(vfs_node_t* node, const char* name,
     (void)node;
 
     if (flags & VFS_FLAG_DIR) {
-        /* Register a new virtual directory */
+        /* Register a new virtual directory, but never duplicate. */
         int slot = -1;
+        for (i = 0; i < RAMFS_MAX_DIRS; i++) {
+            if (ramfs_vdirs[i].used && str_equals(ramfs_vdirs[i].name, name))
+                return make_vdir_node((int)i); /* already exists */
+        }
         for (i = 0; i < RAMFS_MAX_DIRS; i++) {
             if (!ramfs_vdirs[i].used) { slot = (int)i; break; }
         }

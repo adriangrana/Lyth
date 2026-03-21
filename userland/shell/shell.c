@@ -2457,6 +2457,15 @@ static int cmd_su(int argc, const char* argv[], int background) {
         return 1;
     }
 
+    /* Pre-create the home directory while we still have the current user's
+       privileges (typically root).  After task_force_identity the new UID
+       may lack write permission on /home, so this must happen first. */
+    {
+        char pre_home[VFS_PATH_MAX];
+        shell_build_user_home_path(user->name, pre_home, sizeof(pre_home));
+        shell_mkdir_p(pre_home); /* idempotent */
+    }
+
     task_force_identity(user->uid, user->gid);
     shell_apply_user_session(0);
     terminal_print("sesion -> ");
