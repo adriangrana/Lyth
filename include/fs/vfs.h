@@ -29,6 +29,7 @@
 #define VFS_O_TRUNC  0x0040U
 #define VFS_O_EXCL   0x0080U
 #define VFS_O_DIRECTORY 0x0100U
+#define VFS_O_NONBLOCK  0x0200U
 #define VFS_O_ACCMODE (VFS_O_RDONLY | VFS_O_WRONLY)
 
 /* ---- UNIX-like mode bits ---- */
