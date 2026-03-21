@@ -2009,7 +2009,6 @@ static int cmd_ls(int argc, const char* argv[], int background) {
     }
 
     while (vfs_readdir(fd, (unsigned int)idx, entry, sizeof(entry)) == 0) {
-        /* Try to open the entry to detect if it's a directory */
         char full[VFS_PATH_MAX];
         vfs_node_t* n;
         unsigned int fl = 0;
@@ -2026,7 +2025,12 @@ static int cmd_ls(int argc, const char* argv[], int background) {
         full[pi] = '\0';
 
         n = vfs_resolve(full);
-        if (n) fl = n->flags;
+        if (n) {
+            fl = n->flags;
+            /* Free the dynamically-allocated resolve result */
+            if (n->flags & VFS_FLAG_DYNAMIC)
+                kfree(n);
+        }
 
         if (fl & VFS_FLAG_DIR) {
             shell_print_text_with_color(entry, 0x0E);

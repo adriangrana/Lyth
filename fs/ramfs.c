@@ -62,6 +62,7 @@ static vfs_node_t* make_file_node(const char* key) {
     node->name[i]    = '\0';
     node->flags      = VFS_FLAG_FILE | VFS_FLAG_DYNAMIC;
     node->size       = fs_size(key);
+    node->ref_count  = 0;
     node->impl       = 0;
     node->ops        = &ramfs_file_ops;
     node->mountpoint = 0;
@@ -80,6 +81,7 @@ static vfs_node_t* make_vdir_node(int slot) {
     node->name[i]    = '\0';
     node->flags      = VFS_FLAG_DIR | VFS_FLAG_DYNAMIC;
     node->size       = 0;
+    node->ref_count  = 0;
     node->impl       = (void*)ramfs_vdirs[slot].name; /* prefix pointer */
     node->ops        = &ramfs_vdir_ops;
     node->mountpoint = 0;
@@ -293,13 +295,15 @@ static int ramfs_dir_readdir(vfs_node_t* node, unsigned int index,
         flat_idx++;
     }
 
-    /* Second: virtual directories */
+    /* Second: top-level virtual directories only (no '/' in name) */
     {
         unsigned int want    = index - flat_idx;
         unsigned int dir_idx = 0;
         for (i = 0; i < RAMFS_MAX_DIRS; i++) {
             unsigned int j;
             if (!ramfs_vdirs[i].used) continue;
+            /* Skip nested vdirs (e.g. "home/root") — only list top-level */
+            if (name_has_slash(ramfs_vdirs[i].name)) continue;
             if (dir_idx == want) {
                 const char* dname = ramfs_vdirs[i].name;
                 for (j = 0; dname[j] && j < name_max - 1U; j++) name_out[j] = dname[j];
