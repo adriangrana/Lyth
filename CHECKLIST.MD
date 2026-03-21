@@ -141,8 +141,8 @@
 - [x] Separación kernel/user
 - [x] Aislamiento procesos
 - [x] Permisos tipo UNIX
-- [ ] Usuarios y grupos
-- [ ] UID / GID por proceso
+- [x] Usuarios y grupos
+- [x] UID / GID por proceso
 - [x] Validación de acceso en syscalls
 
 ## 14. Debug

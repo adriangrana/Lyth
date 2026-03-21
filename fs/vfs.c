@@ -25,6 +25,8 @@ typedef struct {
     int          used;
     char         path[VFS_PATH_MAX];
     unsigned int mode;
+    unsigned int uid;
+    unsigned int gid;
 } vfs_perm_entry_t;
 
 static vfs_perm_entry_t vfs_perm_table[VFS_PERM_MAX];
@@ -35,6 +37,8 @@ static void vfs_perm_init(void) {
         vfs_perm_table[i].used = 0;
         vfs_perm_table[i].path[0] = '\0';
         vfs_perm_table[i].mode = 0;
+        vfs_perm_table[i].uid = 0;
+        vfs_perm_table[i].gid = 0;
     }
 }
 
@@ -242,8 +246,9 @@ static void vfs_dentry_cache_insert(vfs_node_t* parent, const char* name,
 
 static vfs_fd_entry_t kernel_fd_table[VFS_MAX_FD];
 static void vfs_node_ref(vfs_node_t* node);
-static int vfs_perm_set(const char* path, unsigned int mode);
+static int vfs_perm_set(const char* path, unsigned int mode, unsigned int uid, unsigned int gid);
 static unsigned int vfs_default_mode_for_path(const char* path, unsigned int flags);
+static int vfs_perm_get_owner(const char* path, unsigned int* uid_out, unsigned int* gid_out);
 
 /* Global TTY node for stdin/stdout/stderr pre-installation. */
 static vfs_node_t* g_tty_node = 0;
@@ -319,7 +324,9 @@ int vfs_mount(const char* path, vfs_node_t* root) {
             mounts[i].root = root;
             mounts[i].used = 1;
             vfs_perm_set(mounts[i].path,
-                         vfs_default_mode_for_path(mounts[i].path, root->flags));
+                         vfs_default_mode_for_path(mounts[i].path, root->flags),
+                         0U,
+                         0U);
             vfs_cache_invalidate_all();
             return 0;
         }
@@ -553,7 +560,7 @@ static int vfs_perm_find(const char* path) {
     return -1;
 }
 
-static int vfs_perm_set(const char* path, unsigned int mode) {
+static int vfs_perm_set(const char* path, unsigned int mode, unsigned int uid, unsigned int gid) {
     int i = vfs_perm_find(path);
     unsigned int j;
 
@@ -561,6 +568,8 @@ static int vfs_perm_set(const char* path, unsigned int mode) {
 
     if (i >= 0) {
         vfs_perm_table[i].mode = mode;
+        vfs_perm_table[i].uid = uid;
+        vfs_perm_table[i].gid = gid;
         return 0;
     }
 
@@ -571,6 +580,8 @@ static int vfs_perm_set(const char* path, unsigned int mode) {
                 vfs_perm_table[i].path[j] = path[j];
             vfs_perm_table[i].path[j] = '\0';
             vfs_perm_table[i].mode = mode;
+            vfs_perm_table[i].uid = uid;
+            vfs_perm_table[i].gid = gid;
             return 0;
         }
     }
@@ -584,6 +595,8 @@ static void vfs_perm_remove(const char* path) {
     vfs_perm_table[i].used = 0;
     vfs_perm_table[i].path[0] = '\0';
     vfs_perm_table[i].mode = 0;
+    vfs_perm_table[i].uid = 0;
+    vfs_perm_table[i].gid = 0;
 }
 
 static unsigned int vfs_default_mode_for_path(const char* path, unsigned int flags) {
@@ -592,28 +605,64 @@ static unsigned int vfs_default_mode_for_path(const char* path, unsigned int fla
     return VFS_MODE_FILE_DEFAULT;
 }
 
-static int vfs_mode_check_read(unsigned int mode) {
-    return (mode & VFS_MODE_IRUSR) ? 1 : 0;
+static int vfs_mode_check_read(unsigned int mode, unsigned int owner_uid, unsigned int owner_gid) {
+    unsigned int euid = task_current_euid();
+    unsigned int egid = task_current_egid();
+    if (euid == 0U) return 1; /* root bypass */
+    if (euid == owner_uid) return (mode & VFS_MODE_IRUSR) ? 1 : 0;
+    if (egid == owner_gid) return (mode & VFS_MODE_IRGRP) ? 1 : 0;
+    return (mode & VFS_MODE_IROTH) ? 1 : 0;
 }
 
-static int vfs_mode_check_write(unsigned int mode) {
-    return (mode & VFS_MODE_IWUSR) ? 1 : 0;
+static int vfs_mode_check_write(unsigned int mode, unsigned int owner_uid, unsigned int owner_gid) {
+    unsigned int euid = task_current_euid();
+    unsigned int egid = task_current_egid();
+    if (euid == 0U) return 1;
+    if (euid == owner_uid) return (mode & VFS_MODE_IWUSR) ? 1 : 0;
+    if (egid == owner_gid) return (mode & VFS_MODE_IWGRP) ? 1 : 0;
+    return (mode & VFS_MODE_IWOTH) ? 1 : 0;
 }
 
-static int vfs_mode_check_exec(unsigned int mode) {
-    return (mode & VFS_MODE_IXUSR) ? 1 : 0;
+static int vfs_mode_check_exec(unsigned int mode, unsigned int owner_uid, unsigned int owner_gid) {
+    unsigned int euid = task_current_euid();
+    unsigned int egid = task_current_egid();
+    if (euid == 0U) return 1;
+    if (euid == owner_uid) return (mode & VFS_MODE_IXUSR) ? 1 : 0;
+    if (egid == owner_gid) return (mode & VFS_MODE_IXGRP) ? 1 : 0;
+    return (mode & VFS_MODE_IXOTH) ? 1 : 0;
+}
+
+static int vfs_perm_get_owner(const char* path, unsigned int* uid_out, unsigned int* gid_out) {
+    int i;
+    if (!path || !uid_out || !gid_out) return -1;
+    i = vfs_perm_find(path);
+    if (i < 0) return -1;
+    *uid_out = vfs_perm_table[i].uid;
+    *gid_out = vfs_perm_table[i].gid;
+    return 0;
 }
 
 int vfs_chmod(const char* path, unsigned int mode) {
     vfs_node_t* node;
     int dynamic_node;
+    unsigned int uid = 0U;
+    unsigned int gid = 0U;
 
     if (!path) return -1;
     node = vfs_resolve(path);
     if (!node) return -1;
 
     dynamic_node = (int)(node->flags & VFS_FLAG_DYNAMIC);
-    if (vfs_perm_set(path, mode & 0x01FFU) != 0) {
+    if (vfs_perm_get_owner(path, &uid, &gid) != 0) {
+        uid = 0U;
+        gid = 0U;
+    }
+    /* chmod allowed for root or owner */
+    if (task_current_euid() != 0U && task_current_euid() != uid) {
+        if (dynamic_node && node->ref_count == 0U) kfree(node);
+        return -1;
+    }
+    if (vfs_perm_set(path, mode & 0x01FFU, uid, gid) != 0) {
         if (dynamic_node && node->ref_count == 0U) kfree(node);
         return -1;
     }
@@ -641,13 +690,45 @@ int vfs_get_mode(const char* path, unsigned int* mode_out) {
     dynamic_node = (int)(node->flags & VFS_FLAG_DYNAMIC);
 
     mode = vfs_default_mode_for_path(path, node->flags);
-    if (vfs_perm_set(path, mode) != 0) {
+    if (vfs_perm_set(path, mode, 0U, 0U) != 0) {
         if (dynamic_node && node->ref_count == 0U) kfree(node);
         return -1;
     }
 
     if (dynamic_node && node->ref_count == 0U) kfree(node);
     *mode_out = mode;
+    return 0;
+}
+
+int vfs_chown(const char* path, unsigned int uid, unsigned int gid) {
+    int i;
+    /* Only root can chown/chgrp */
+    if (task_current_euid() != 0U) return -1;
+    if (!path) return -1;
+    i = vfs_perm_find(path);
+    if (i < 0) {
+        unsigned int mode;
+        if (vfs_get_mode(path, &mode) != 0) return -1;
+        i = vfs_perm_find(path);
+        if (i < 0) return -1;
+    }
+    vfs_perm_table[i].uid = uid;
+    vfs_perm_table[i].gid = gid;
+    return 0;
+}
+
+int vfs_get_owner(const char* path, unsigned int* uid_out, unsigned int* gid_out) {
+    int i;
+    if (!path || !uid_out || !gid_out) return -1;
+    i = vfs_perm_find(path);
+    if (i < 0) {
+        unsigned int mode;
+        if (vfs_get_mode(path, &mode) != 0) return -1;
+        i = vfs_perm_find(path);
+        if (i < 0) return -1;
+    }
+    *uid_out = vfs_perm_table[i].uid;
+    *gid_out = vfs_perm_table[i].gid;
     return 0;
 }
 
@@ -664,8 +745,11 @@ int vfs_create(const char* path, unsigned int flags) {
 
     {
         unsigned int dir_mode;
+        unsigned int dir_uid = 0U;
+        unsigned int dir_gid = 0U;
         if (vfs_get_mode(dir_buf, &dir_mode) != 0) return -1;
-        if (!vfs_mode_check_write(dir_mode) || !vfs_mode_check_exec(dir_mode))
+        if (vfs_get_owner(dir_buf, &dir_uid, &dir_gid) != 0) return -1;
+        if (!vfs_mode_check_write(dir_mode, dir_uid, dir_gid) || !vfs_mode_check_exec(dir_mode, dir_uid, dir_gid))
             return -1;
     }
 
@@ -677,7 +761,10 @@ int vfs_create(const char* path, unsigned int flags) {
     if (dynamic_dir) kfree(dir);
 
     if (!result) return -1;
-    vfs_perm_set(path, (flags & VFS_FLAG_DIR) ? VFS_MODE_DIR_DEFAULT : VFS_MODE_FILE_DEFAULT);
+    vfs_perm_set(path,
+                 (flags & VFS_FLAG_DIR) ? VFS_MODE_DIR_DEFAULT : VFS_MODE_FILE_DEFAULT,
+                 task_current_euid(),
+                 task_current_egid());
     if (result->flags & VFS_FLAG_DYNAMIC) kfree(result);
     vfs_cache_invalidate_all();
     return 0;
@@ -696,8 +783,11 @@ int vfs_delete(const char* path) {
 
     {
         unsigned int dir_mode;
+        unsigned int dir_uid = 0U;
+        unsigned int dir_gid = 0U;
         if (vfs_get_mode(dir_buf, &dir_mode) != 0) return -1;
-        if (!vfs_mode_check_write(dir_mode) || !vfs_mode_check_exec(dir_mode))
+        if (vfs_get_owner(dir_buf, &dir_uid, &dir_gid) != 0) return -1;
+        if (!vfs_mode_check_write(dir_mode, dir_uid, dir_gid) || !vfs_mode_check_exec(dir_mode, dir_uid, dir_gid))
             return -1;
     }
 
@@ -732,6 +822,10 @@ int vfs_stat(const char* path, vfs_stat_t* out) {
     out->flags = node->flags;
     if (vfs_get_mode(path, &out->mode) != 0)
         out->mode = vfs_default_mode_for_path(path, node->flags);
+    if (vfs_get_owner(path, &out->uid, &out->gid) != 0) {
+        out->uid = 0U;
+        out->gid = 0U;
+    }
 
     if (dynamic_node && node->ref_count == 0U) kfree(node);
     return 0;
@@ -755,10 +849,14 @@ int vfs_rename(const char* old_path, const char* new_path) {
     if (split_path(new_path, new_dir, VFS_PATH_MAX, new_name, VFS_NAME_MAX) != 0) return -1;
     {
         unsigned int m;
+        unsigned int duid = 0U;
+        unsigned int dgid = 0U;
         if (vfs_get_mode(old_dir, &m) != 0) return -1;
-        if (!vfs_mode_check_write(m) || !vfs_mode_check_exec(m)) return -1;
+        if (vfs_get_owner(old_dir, &duid, &dgid) != 0) return -1;
+        if (!vfs_mode_check_write(m, duid, dgid) || !vfs_mode_check_exec(m, duid, dgid)) return -1;
         if (vfs_get_mode(new_dir, &m) != 0) return -1;
-        if (!vfs_mode_check_write(m) || !vfs_mode_check_exec(m)) return -1;
+        if (vfs_get_owner(new_dir, &duid, &dgid) != 0) return -1;
+        if (!vfs_mode_check_write(m, duid, dgid) || !vfs_mode_check_exec(m, duid, dgid)) return -1;
     }
 
     (void)vfs_get_mode(old_path, &old_mode);
@@ -809,7 +907,15 @@ int vfs_rename(const char* old_path, const char* new_path) {
     }
 
     if (vfs_delete(old_path) != 0) return -1;
-    if (old_mode != 0U) vfs_perm_set(new_path, old_mode);
+    if (old_mode != 0U) {
+        unsigned int old_uid = 0U;
+        unsigned int old_gid = 0U;
+        if (vfs_perm_get_owner(old_path, &old_uid, &old_gid) != 0) {
+            old_uid = 0U;
+            old_gid = 0U;
+        }
+        vfs_perm_set(new_path, old_mode, old_uid, old_gid);
+    }
     vfs_cache_invalidate_all();
     return 0;
 }
@@ -848,6 +954,8 @@ int vfs_open_flags(const char* path, unsigned int open_flags) {
     vfs_node_t* node;
     int dynamic_node;
     unsigned int mode = 0;
+    unsigned int owner_uid = 0U;
+    unsigned int owner_gid = 0U;
     int need_read;
     int need_write;
     int need_exec;
@@ -878,21 +986,25 @@ int vfs_open_flags(const char* path, unsigned int open_flags) {
         if (dynamic_node && node->ref_count == 0U) kfree(node);
         return -1;
     }
+    if (vfs_get_owner(path, &owner_uid, &owner_gid) != 0) {
+        if (dynamic_node && node->ref_count == 0U) kfree(node);
+        return -1;
+    }
 
     need_read  = ((open_flags & VFS_O_RDONLY) != 0U) ? 1 : 0;
     need_write = ((open_flags & VFS_O_WRONLY) != 0U) ? 1 : 0;
     if (open_flags & (VFS_O_TRUNC | VFS_O_APPEND)) need_write = 1;
     need_exec  = (node->flags & VFS_FLAG_DIR) ? 1 : 0;
 
-    if (need_read && !vfs_mode_check_read(mode)) {
+    if (need_read && !vfs_mode_check_read(mode, owner_uid, owner_gid)) {
         if (dynamic_node && node->ref_count == 0U) kfree(node);
         return -1;
     }
-    if (need_write && !vfs_mode_check_write(mode)) {
+    if (need_write && !vfs_mode_check_write(mode, owner_uid, owner_gid)) {
         if (dynamic_node && node->ref_count == 0U) kfree(node);
         return -1;
     }
-    if (need_exec && !vfs_mode_check_exec(mode)) {
+    if (need_exec && !vfs_mode_check_exec(mode, owner_uid, owner_gid)) {
         if (dynamic_node && node->ref_count == 0U) kfree(node);
         return -1;
     }

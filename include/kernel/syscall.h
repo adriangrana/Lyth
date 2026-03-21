@@ -46,7 +46,15 @@ enum {
     SYSCALL_SELECT       = 37,  /* select(nfds, *rmask, *wmask, timeout_ms) */
     SYSCALL_PIPE         = 38,  /* pipe(int fds[2], flags) */
     SYSCALL_GETRLIMIT    = 39,  /* getrlimit(resource, rlimit_t*) -> 0/-1 */
-    SYSCALL_SETRLIMIT    = 40   /* setrlimit(resource, const rlimit_t*) -> 0/-1 */
+    SYSCALL_SETRLIMIT    = 40,  /* setrlimit(resource, const rlimit_t*) -> 0/-1 */
+    SYSCALL_GETUID       = 41,
+    SYSCALL_GETGID       = 42,
+    SYSCALL_GETEUID      = 43,
+    SYSCALL_GETEGID      = 44,
+    SYSCALL_SETUID       = 45,
+    SYSCALL_SETGID       = 46,
+    SYSCALL_VFS_CHOWN    = 47,
+    SYSCALL_VFS_GETOWNER = 48
 };
 
 #define SYSCALL_POLLIN   0x0001U
@@ -146,5 +154,13 @@ int syscall_select(unsigned int nfds,
 int syscall_pipe(int fds_out[2], unsigned int flags);
 int syscall_getrlimit(int resource, rlimit_t* rl);
 int syscall_setrlimit(int resource, const rlimit_t* rl);
+unsigned int syscall_getuid(void);
+unsigned int syscall_getgid(void);
+unsigned int syscall_geteuid(void);
+unsigned int syscall_getegid(void);
+int syscall_setuid(unsigned int uid);
+int syscall_setgid(unsigned int gid);
+int syscall_vfs_chown(const char* path, unsigned int uid, unsigned int gid);
+int syscall_vfs_getowner(const char* path, unsigned int* uid_out, unsigned int* gid_out);
 
 #endif

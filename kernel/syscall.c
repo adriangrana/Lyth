@@ -10,6 +10,7 @@
 #include "pipe.h"
 #include "paging.h"
 #include "string.h"
+#include "ugdb.h"
 #include <stdint.h>
 
 #define SYSCALL_MAX_TEXT_LENGTH 1024U
@@ -658,9 +659,68 @@ unsigned int syscall_callback(unsigned int number,
                 return (unsigned int)rc;
             }
 
+        case SYSCALL_VFS_CHOWN:
+            if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH)) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+            if (!ugdb_find_by_uid(arg1) || !ugdb_find_group_by_gid(arg2)) {
+                task_set_errno(22); /* EINVAL unknown uid/gid */
+                return (unsigned int)-1;
+            }
+            {
+                int rc = vfs_chown((const char*)arg0, arg1, arg2);
+                if (rc < 0) task_set_errno(1); /* EPERM/EACCES generic */
+                return (unsigned int)rc;
+            }
+
+        case SYSCALL_VFS_GETOWNER:
+            if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH) ||
+                !syscall_validate_user_buffer((const void*)arg1, sizeof(unsigned int)) ||
+                !syscall_validate_user_buffer((const void*)arg2, sizeof(unsigned int))) {
+                task_set_errno(14); /* EFAULT/EINVAL */
+                return (unsigned int)-1;
+            }
+            {
+                unsigned int* uid_out = (unsigned int*)(uintptr_t)arg1;
+                unsigned int* gid_out = (unsigned int*)(uintptr_t)arg2;
+                int rc = vfs_get_owner((const char*)arg0, uid_out, gid_out);
+                if (rc < 0) task_set_errno(2); /* ENOENT/EINVAL generic */
+                return (unsigned int)rc;
+            }
+
         /* ---- process management ---- */
         case SYSCALL_GETPID:
             return (unsigned int)task_current_id();
+
+        case SYSCALL_GETUID:
+            return task_current_uid();
+        case SYSCALL_GETGID:
+            return task_current_gid();
+        case SYSCALL_GETEUID:
+            return task_current_euid();
+        case SYSCALL_GETEGID:
+            return task_current_egid();
+        case SYSCALL_SETUID:
+            if (!ugdb_find_by_uid(arg0)) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+            if (task_set_current_uid(arg0) != 0) {
+                task_set_errno(1); /* EPERM */
+                return (unsigned int)-1;
+            }
+            return 0;
+        case SYSCALL_SETGID:
+            if (!ugdb_find_group_by_gid(arg0)) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+            if (task_set_current_gid(arg0) != 0) {
+                task_set_errno(1); /* EPERM */
+                return (unsigned int)-1;
+            }
+            return 0;
 
         case SYSCALL_KILL: {
             int ok = task_send_signal((int)arg0, LYTH_SIGTERM);
@@ -1279,5 +1339,45 @@ int syscall_setrlimit(int resource, const rlimit_t* rl) {
                                (unsigned int)resource,
                                (unsigned int)(uintptr_t)rl,
                                0,
+                               0);
+}
+
+unsigned int syscall_getuid(void) {
+    return syscall_invoke(SYSCALL_GETUID, 0, 0, 0, 0);
+}
+
+unsigned int syscall_getgid(void) {
+    return syscall_invoke(SYSCALL_GETGID, 0, 0, 0, 0);
+}
+
+unsigned int syscall_geteuid(void) {
+    return syscall_invoke(SYSCALL_GETEUID, 0, 0, 0, 0);
+}
+
+unsigned int syscall_getegid(void) {
+    return syscall_invoke(SYSCALL_GETEGID, 0, 0, 0, 0);
+}
+
+int syscall_setuid(unsigned int uid) {
+    return (int)syscall_invoke(SYSCALL_SETUID, uid, 0, 0, 0);
+}
+
+int syscall_setgid(unsigned int gid) {
+    return (int)syscall_invoke(SYSCALL_SETGID, gid, 0, 0, 0);
+}
+
+int syscall_vfs_chown(const char* path, unsigned int uid, unsigned int gid) {
+    return (int)syscall_invoke(SYSCALL_VFS_CHOWN,
+                               (unsigned int)(uintptr_t)path,
+                               uid,
+                               gid,
+                               0);
+}
+
+int syscall_vfs_getowner(const char* path, unsigned int* uid_out, unsigned int* gid_out) {
+    return (int)syscall_invoke(SYSCALL_VFS_GETOWNER,
+                               (unsigned int)(uintptr_t)path,
+                               (unsigned int)(uintptr_t)uid_out,
+                               (unsigned int)(uintptr_t)gid_out,
                                0);
 }

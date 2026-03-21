@@ -7,6 +7,7 @@
 #include "physmem.h"
 #include "assert.h"
 #include "rlimit.h"
+#include "ugdb.h"
 #include <stdint.h>
 
 #define TASK_MAX_COUNT 16
@@ -79,6 +80,10 @@ typedef struct {
     uint32_t signal_trampoline_va;       /* user-space stub to restore stack after handler */
     uint32_t waitpid_status_uptr;        /* user vaddr where WAITPID status is written on wake */
     int sched_next;                      /* next index in ready queue, -1 = tail / not queued */
+    unsigned int uid;                    /* real user id */
+    unsigned int gid;                    /* real group id */
+    unsigned int euid;                   /* effective user id */
+    unsigned int egid;                   /* effective group id */
 } task_entry_t;
 
 /* ── Per-priority ready queues ────────────────────────────────────────────
@@ -969,9 +974,17 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
     tasks[slot].sched_next = -1;
     tasks[slot].fd_limit_soft = RLIM_NOFILE_DEFAULT;
     tasks[slot].fd_limit_hard = RLIM_NOFILE_DEFAULT;
+    /* Inherit uid/gid from parent; default to root for very first tasks */
+    if (current_task_index >= 0) {
+        tasks[slot].uid  = tasks[current_task_index].uid;
+        tasks[slot].gid  = tasks[current_task_index].gid;
+        tasks[slot].euid = tasks[current_task_index].euid;
+        tasks[slot].egid = tasks[current_task_index].egid;
+    } else {
+        tasks[slot].uid = tasks[slot].gid = tasks[slot].euid = tasks[slot].egid = 0U;
+    }
     task_signal_handlers_init(&tasks[slot]);
     vfs_task_fd_init(tasks[slot].fd_table);  /* (re-)install stdio if tty is ready */
-
     tasks[slot].stack = (unsigned char*)kmalloc(TASK_STACK_SIZE);
     if (tasks[slot].stack == 0) {
         clear_task(&tasks[slot]);
@@ -1069,6 +1082,14 @@ int task_spawn_user(const char* name,
     tasks[slot].sched_next = -1;
     tasks[slot].fd_limit_soft = RLIM_NOFILE_DEFAULT;
     tasks[slot].fd_limit_hard = RLIM_NOFILE_DEFAULT;
+    if (current_task_index >= 0) {
+        tasks[slot].uid  = tasks[current_task_index].uid;
+        tasks[slot].gid  = tasks[current_task_index].gid;
+        tasks[slot].euid = tasks[current_task_index].euid;
+        tasks[slot].egid = tasks[current_task_index].egid;
+    } else {
+        tasks[slot].uid = tasks[slot].gid = tasks[slot].euid = tasks[slot].egid = 0U;
+    }
     task_signal_handlers_init(&tasks[slot]);
 
     vfs_task_fd_init(tasks[slot].fd_table);  /* (re-)install stdio if tty is ready */
@@ -1656,6 +1677,64 @@ unsigned int task_schedule_on_timer(unsigned int current_esp) {
     return next_esp;
 }
 
+/* ── UID/GID identity ────────────────────────────────────────────────────── */
+
+unsigned int task_current_uid(void) {
+    return (current_task_index >= 0) ? tasks[current_task_index].uid  : 0U;
+}
+unsigned int task_current_gid(void) {
+    return (current_task_index >= 0) ? tasks[current_task_index].gid  : 0U;
+}
+unsigned int task_current_euid(void) {
+    return (current_task_index >= 0) ? tasks[current_task_index].euid : 0U;
+}
+unsigned int task_current_egid(void) {
+    return (current_task_index >= 0) ? tasks[current_task_index].egid : 0U;
+}
+
+/* setuid/setgid semantics (simplified POSIX):
+ *  - Root (euid==0) can set uid to anything.
+ *  - Non-root can only set euid back to real uid.
+ *  Returns 0 on success, -1 on EPERM. */
+int task_set_current_uid(unsigned int new_uid) {
+    if (current_task_index < 0) return -1;
+    if (tasks[current_task_index].euid == 0U) {
+        /* root: set both real and effective */
+        tasks[current_task_index].uid  = new_uid;
+        tasks[current_task_index].euid = new_uid;
+        return 0;
+    }
+    /* Non-root: only allowed to set euid to own real uid */
+    if (new_uid == tasks[current_task_index].uid) {
+        tasks[current_task_index].euid = new_uid;
+        return 0;
+    }
+    return -1; /* EPERM */
+}
+
+int task_set_current_gid(unsigned int new_gid) {
+    if (current_task_index < 0) return -1;
+    if (tasks[current_task_index].euid == 0U) {
+        tasks[current_task_index].gid  = new_gid;
+        tasks[current_task_index].egid = new_gid;
+        return 0;
+    }
+    if (new_gid == tasks[current_task_index].gid) {
+        tasks[current_task_index].egid = new_gid;
+        return 0;
+    }
+    return -1;
+}
+
+/* Force-set identity (root-only, called from su/login path in kernel). */
+void task_force_identity(unsigned int uid, unsigned int gid) {
+    if (current_task_index < 0) return;
+    tasks[current_task_index].uid  = uid;
+    tasks[current_task_index].gid  = gid;
+    tasks[current_task_index].euid = uid;
+    tasks[current_task_index].egid = gid;
+}
+
 /* ── Resource-limit helpers ─────────────────────────────────────────────── */
 
 int task_current_open_fd_count(void) {
@@ -1783,6 +1862,10 @@ int task_fork_from_frame(unsigned int frame_esp) {
     tasks[slot].sched_next       = -1;
     tasks[slot].fd_limit_soft = parent->fd_limit_soft;
     tasks[slot].fd_limit_hard = parent->fd_limit_hard;
+    tasks[slot].uid  = parent->uid;
+    tasks[slot].gid  = parent->gid;
+    tasks[slot].euid = parent->euid;
+    tasks[slot].egid = parent->egid;
     task_signal_handlers_copy(&tasks[slot], parent);
     vfs_task_fd_inherit(tasks[slot].fd_table, parent->fd_table);  /* inherit open FDs */
     task_install_signal_trampoline(&tasks[slot]);

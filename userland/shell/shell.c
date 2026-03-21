@@ -22,6 +22,7 @@
 #include "fat32.h"
 #include "rtc.h"
 #include "rlimit.h"
+#include "ugdb.h"
 
 #define SHELL_MAX_ARGS 8
 #define SHELL_TOKEN_MAX 64
@@ -113,10 +114,14 @@ static int cmd_unlink(int argc, const char* argv[], int background);
 static int cmd_stat(int argc, const char* argv[], int background);
 static int cmd_mkdir(int argc, const char* argv[], int background);
 static int cmd_chmod(int argc, const char* argv[], int background);
+static int cmd_chown(int argc, const char* argv[], int background);
 static int cmd_cp(int argc, const char* argv[], int background);
 static int cmd_mv(int argc, const char* argv[], int background);
 static int cmd_rename(int argc, const char* argv[], int background);
 static int cmd_getpid(int argc, const char* argv[], int background);
+static int cmd_whoami(int argc, const char* argv[], int background);
+static int cmd_id(int argc, const char* argv[], int background);
+static int cmd_su(int argc, const char* argv[], int background);
 static void shell_resolve_path(const char* input, char* out, unsigned int out_size);
 
 /* Current working directory (always an absolute VFS path). */
@@ -160,6 +165,9 @@ static command_t commands[] = {
     {"exec",    cmd_exec,    "carga y ejecuta un ELF: exec <NOMBRE> [args...] [&]"},
     {"repeat",  cmd_repeat,  "repite un comando N veces: repeat <N> <comando...>"},
     {"getpid",  cmd_getpid,  "muestra el PID del proceso actual"},
+    {"whoami",  cmd_whoami,  "muestra el usuario efectivo"},
+    {"id",      cmd_id,      "muestra uid/gid/euid/egid"},
+    {"su",      cmd_su,      "cambia identidad efectiva: su <usuario|uid>"},
     {"yield",   cmd_yield,   "cede CPU al scheduler"},
     {"ulimit",  cmd_ulimit,  "muestra/cambia limites de recursos: ulimit [-n <valor>] [-H] [-S]"},
     {"vfs",     cmd_vfs,     "VFS: mounts, ls/cat/touch/rm/stat/cp/mv/rename: vfs <subcmd> ..."},
@@ -172,6 +180,7 @@ static command_t commands[] = {
     {"stat",    cmd_stat,    "metadata basica: stat <ruta>"},
     {"mkdir",   cmd_mkdir,   "crea directorio: mkdir <ruta>"},
     {"chmod",   cmd_chmod,   "cambia permisos UNIX: chmod <modo_octal> <ruta>"},
+    {"chown",   cmd_chown,   "cambia propietario: chown <uid|user> <gid|group> <ruta>"},
     {"cp",      cmd_cp,      "copia archivo: cp <origen> <destino>"},
     {"mv",      cmd_mv,      "mueve/renombra archivo: mv <origen> <destino>"},
     {"rename",  cmd_rename,  "renombra archivo: rename <origen> <destino>"},
@@ -2012,6 +2021,70 @@ static int cmd_getpid(int argc, const char* argv[], int background) {
     return 1;
 }
 
+static int cmd_whoami(int argc, const char* argv[], int background) {
+    (void)argc;
+    (void)argv;
+    (void)background;
+    terminal_print_line(ugdb_username(task_current_euid()));
+    return 1;
+}
+
+static int cmd_id(int argc, const char* argv[], int background) {
+    unsigned int uid  = task_current_uid();
+    unsigned int gid  = task_current_gid();
+    unsigned int euid = task_current_euid();
+    unsigned int egid = task_current_egid();
+    (void)argc;
+    (void)argv;
+    (void)background;
+
+    terminal_print("uid="); terminal_print_uint(uid);
+    terminal_print("("); terminal_print(ugdb_username(uid)); terminal_print(") ");
+    terminal_print("gid="); terminal_print_uint(gid);
+    terminal_print("("); terminal_print(ugdb_groupname(gid)); terminal_print(") ");
+    terminal_print("euid="); terminal_print_uint(euid);
+    terminal_print("("); terminal_print(ugdb_username(euid)); terminal_print(") ");
+    terminal_print("egid="); terminal_print_uint(egid);
+    terminal_print("("); terminal_print(ugdb_groupname(egid)); terminal_print(")\n");
+    return 1;
+}
+
+static int cmd_su(int argc, const char* argv[], int background) {
+    const ugdb_user_t* user = 0;
+    int parsed_uid;
+
+    (void)background;
+    if (argc < 2) {
+        terminal_print_line("Uso: su <usuario|uid>");
+        return 1;
+    }
+
+    user = ugdb_find_by_name(argv[1]);
+    if (!user) {
+        parsed_uid = parser_parse_integer(argv[1], -1);
+        if (parsed_uid >= 0) user = ugdb_find_by_uid((unsigned int)parsed_uid);
+    }
+    if (!user) {
+        terminal_print("su: usuario no encontrado: ");
+        terminal_print_line(argv[1]);
+        return 1;
+    }
+
+    /* No passwords yet: only root can switch identity freely. */
+    if (task_current_euid() != 0U && user->uid != task_current_uid()) {
+        terminal_print_line("su: permiso denegado (solo root puede cambiar a otro usuario)");
+        return 1;
+    }
+
+    task_force_identity(user->uid, user->gid);
+    terminal_print("sesion -> ");
+    terminal_print(user->name);
+    terminal_print(" (uid=");
+    terminal_print_uint(user->uid);
+    terminal_print_line(")");
+    return 1;
+}
+
 static int cmd_yield(int argc, const char* argv[], int background) {
     (void)argc;
     (void)argv;
@@ -2864,6 +2937,16 @@ static int cmd_stat(int argc, const char* argv[], int background) {
     shell_print_text_with_color("Modo: ", 0x0B);
     shell_print_mode_octal(st.mode);
     terminal_print_line(" (octal)");
+    shell_print_text_with_color("Owner: ", 0x0B);
+    terminal_print_uint(st.uid);
+    terminal_print(" (");
+    terminal_print(ugdb_username(st.uid));
+    terminal_print_line(")");
+    shell_print_text_with_color("Group: ", 0x0B);
+    terminal_print_uint(st.gid);
+    terminal_print(" (");
+    terminal_print(ugdb_groupname(st.gid));
+    terminal_print_line(")");
     return 1;
 }
 
@@ -2917,6 +3000,59 @@ static int cmd_chmod(int argc, const char* argv[], int background) {
     terminal_print(path);
     terminal_print(" -> ");
     shell_print_mode_octal(mode);
+    terminal_put_char('\n');
+    return 1;
+}
+
+/* ---- cmd_chown ---- */
+static int cmd_chown(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    const ugdb_user_t* u = 0;
+    const ugdb_group_t* g = 0;
+    int uid_i;
+    int gid_i;
+
+    (void)background;
+    if (argc < 4) {
+        terminal_print_line("Uso: chown <uid|user> <gid|group> <ruta>");
+        return 1;
+    }
+
+    u = ugdb_find_by_name(argv[1]);
+    if (!u) {
+        uid_i = parser_parse_integer(argv[1], -1);
+        if (uid_i >= 0) u = ugdb_find_by_uid((unsigned int)uid_i);
+    }
+    if (!u) {
+        terminal_print("chown: usuario invalido: ");
+        terminal_print_line(argv[1]);
+        return 1;
+    }
+
+    g = ugdb_find_group_by_name(argv[2]);
+    if (!g) {
+        gid_i = parser_parse_integer(argv[2], -1);
+        if (gid_i >= 0) g = ugdb_find_group_by_gid((unsigned int)gid_i);
+    }
+    if (!g) {
+        terminal_print("chown: grupo invalido: ");
+        terminal_print_line(argv[2]);
+        return 1;
+    }
+
+    shell_resolve_path(argv[3], path, sizeof(path));
+    if (vfs_chown(path, u->uid, g->gid) != 0) {
+        terminal_print("[error] chown fallo (permiso/ruta): ");
+        terminal_print_line(path);
+        return 1;
+    }
+
+    terminal_print("owner actualizado: ");
+    terminal_print(path);
+    terminal_print(" -> ");
+    terminal_print(u->name);
+    terminal_print(":");
+    terminal_print(g->name);
     terminal_put_char('\n');
     return 1;
 }

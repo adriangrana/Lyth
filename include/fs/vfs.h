@@ -53,6 +53,8 @@ typedef struct {
    unsigned int size;
    unsigned int flags;
    unsigned int mode;
+   unsigned int uid;
+   unsigned int gid;
 } vfs_stat_t;
 
 /* ---- Operations table (vtable for a filesystem backend) ---- */
@@ -134,6 +136,9 @@ int          vfs_stat    (const char* path, vfs_stat_t* out);
 /* Change/get UNIX-like permission bits for an absolute path. */
 int          vfs_chmod   (const char* path, unsigned int mode);
 int          vfs_get_mode(const char* path, unsigned int* mode_out);
+/* Change/get ownership metadata (uid/gid) for an absolute path. */
+int          vfs_chown   (const char* path, unsigned int uid, unsigned int gid);
+int          vfs_get_owner(const char* path, unsigned int* uid_out, unsigned int* gid_out);
 
 /* ---- File-descriptor API ---- */
 /* Open a file/directory by absolute path. Returns fd >= 0 or -1 on error. */

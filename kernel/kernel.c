@@ -26,6 +26,7 @@
 #include "rtc.h"
 #include "ktest.h"
 #include "boot_tests.h"
+#include "ugdb.h"
 
 static void terminal_write_uint(uint32_t value) {
     char buffer[16];
@@ -119,6 +120,7 @@ void kernel_main(unsigned long mbi_ptr) {
     physmem_init(mbi);
     paging_init(mbi);
     heap_init();
+    ugdb_init();
     fs_init();
     vfs_init();
     vfs_mount("/", ramfs_create_root());

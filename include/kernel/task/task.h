@@ -130,4 +130,16 @@ int task_get_fd_rlimit(unsigned int* soft_out, unsigned int* hard_out);
    Returns 0 on success, -1 on violation. */
 int task_set_fd_rlimit(unsigned int new_soft, unsigned int new_hard);
 
+/* ---- UID / GID identity ---- */
+unsigned int task_current_uid(void);
+unsigned int task_current_gid(void);
+unsigned int task_current_euid(void);
+unsigned int task_current_egid(void);
+/* setuid/setgid: root can set any uid; non-root can only revert to real uid.
+   Returns 0 on success, -1 on EPERM. */
+int task_set_current_uid(unsigned int new_uid);
+int task_set_current_gid(unsigned int new_gid);
+/* Force-set identity unconditionally (kernel su / login path only). */
+void task_force_identity(unsigned int uid, unsigned int gid);
+
 #endif
