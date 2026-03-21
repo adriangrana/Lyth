@@ -41,12 +41,12 @@ static void vga_scroll(unsigned char color) {
     }
 }
 
-static void vga_put_cell(int row, int col, char c, unsigned char color) {
+static void vga_put_cell(int row, int col, unsigned int glyph, unsigned char color) {
     if (row < 0 || row >= VGA_HEIGHT || col < 0 || col >= VGA_WIDTH) {
         return;
     }
 
-    VGA[vga_index(row, col)] = ((unsigned short)color << 8) | (unsigned char)c;
+    VGA[vga_index(row, col)] = ((unsigned short)color << 8) | (unsigned char)glyph;
 }
 
 static void vga_show_cursor(int row, int col, unsigned char color) {
@@ -116,7 +116,7 @@ static const console_backend_t framebuffer_backend = {
     fb_columns,
     fb_clear_with_color,
     fb_scroll,
-    fb_put_char_at,
+    fb_put_glyph_at,
     fb_show_cursor,
     1
 };

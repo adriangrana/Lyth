@@ -6,7 +6,7 @@ typedef struct {
     int (*columns)(void);
     void (*clear)(unsigned char color);
     void (*scroll)(unsigned char color);
-    void (*put_cell)(int row, int col, char c, unsigned char color);
+    void (*put_cell)(int row, int col, unsigned int glyph, unsigned char color);
     void (*show_cursor)(int row, int col, unsigned char color);
     int software_cursor;
 } console_backend_t;

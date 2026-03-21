@@ -11,6 +11,7 @@
 #include "physmem.h"
 #include "paging.h"
 #include "fs.h"
+#include "vfs.h"
 #include "elf.h"
 #include "usermode.h"
 #include "klog.h"
@@ -91,6 +92,7 @@ static int cmd_source(int argc, const char* argv[], int background);
 static int cmd_elfinfo(int argc, const char* argv[], int background);
 static int cmd_exec(int argc, const char* argv[], int background);
 static int cmd_yield(int argc, const char* argv[], int background);
+static int cmd_vfs(int argc, const char* argv[], int background);
 
 static command_t commands[] = {
     {"help",    cmd_help,    "muestra esta ayuda"},
@@ -125,6 +127,7 @@ static command_t commands[] = {
     {"elfinfo", cmd_elfinfo, "inspecciona un ELF del FS: elfinfo <NOMBRE>"},
     {"exec",    cmd_exec,    "carga y ejecuta un ELF: exec <NOMBRE> [&]"},
     {"yield",   cmd_yield,   "cede CPU al scheduler"},
+    {"vfs",     cmd_vfs,     "VFS: mounts, open/read/ls por ruta: vfs [cat|ls] [ruta]"},
 };
 
 static const int command_count = sizeof(commands) / sizeof(commands[0]);
@@ -1900,6 +1903,133 @@ int shell_complete_command(const char* prefix, const char* matches[], int max_ma
     }
 
     return found;
+}
+
+/* ---- cmd_vfs ---- */
+static int cmd_vfs(int argc, const char* argv[], int background) {
+    (void)background;
+
+    /* vfs              → show mounts + fd table summary */
+    /* vfs ls [path]    → readdir via VFS fd */
+    /* vfs cat <path>   → read file via VFS fd */
+
+    if (argc == 1) {
+        /* Show mounted filesystems */
+        shell_print_text_with_color("VFS mounts\n", 0x0B);
+        shell_print_text_with_color("  /  \xe2\x86\x92  ramfs (in-memory)\n", 0x0F);
+        terminal_put_char('\n');
+
+        /* Show a summary: how many files accessible through VFS */
+        int fd = vfs_open("/");
+        if (fd >= 0) {
+            char entry[VFS_NAME_MAX];
+            int count = 0;
+
+            shell_print_text_with_color("Archivos accesibles via VFS (fd=", 0x07);
+            terminal_print_uint((unsigned int)fd);
+            shell_print_text_with_color("):\n", 0x07);
+
+            while (vfs_readdir(fd, (unsigned int)count, entry, sizeof(entry)) == 0) {
+                terminal_print("  ");
+                terminal_print_line(entry);
+                count++;
+            }
+
+            if (count == 0) {
+                terminal_print_line("  (sin entradas)");
+            }
+
+            vfs_close(fd);
+            terminal_put_char('\n');
+            terminal_print("Total: ");
+            terminal_print_uint((unsigned int)count);
+            terminal_print_line(" archivos");
+        } else {
+            terminal_print_line("[error] No se pudo abrir /");
+        }
+        return 1;
+    }
+
+    /* vfs ls [path] */
+    if (str_equals_ignore_case(argv[1], "ls")) {
+        const char* path = (argc >= 3) ? argv[2] : "/";
+        int fd = vfs_open(path);
+        int idx = 0;
+        char entry[VFS_NAME_MAX];
+
+        if (fd < 0) {
+            terminal_print("[error] No se pudo abrir: ");
+            terminal_print_line(path);
+            return 1;
+        }
+
+        shell_print_text_with_color("VFS ls ", 0x0B);
+        shell_print_text_with_color(path, 0x0F);
+        terminal_put_char('\n');
+
+        while (vfs_readdir(fd, (unsigned int)idx, entry, sizeof(entry)) == 0) {
+            terminal_print("  ");
+            shell_print_text_with_color(entry, 0x0F);
+            terminal_put_char('\n');
+            idx++;
+        }
+
+        if (idx == 0) terminal_print_line("  (directorio vacio)");
+        vfs_close(fd);
+        return 1;
+    }
+
+    /* vfs cat <path> */
+    if (str_equals_ignore_case(argv[1], "cat")) {
+        unsigned char buf[512];
+        int n;
+        int total = 0;
+
+        if (argc < 3) {
+            terminal_print_line("Uso: vfs cat <ruta>");
+            return 1;
+        }
+
+        /* Build an absolute path: if argv[2] doesn't start with '/', prepend '/' */
+        char path[VFS_PATH_MAX];
+        unsigned int pi = 0;
+        if (argv[2][0] != '/') path[pi++] = '/';
+        for (unsigned int j = 0; argv[2][j] != '\0' && pi < VFS_PATH_MAX - 1U; j++)
+            path[pi++] = argv[2][j];
+        path[pi] = '\0';
+
+        int fd = vfs_open(path);
+        if (fd < 0) {
+            terminal_print("[error] Archivo no encontrado: ");
+            terminal_print_line(path);
+            return 1;
+        }
+
+        shell_print_text_with_color("--- VFS cat ", 0x08);
+        shell_print_text_with_color(path, 0x0F);
+        shell_print_text_with_color(" (fd=", 0x08);
+        terminal_print_uint((unsigned int)fd);
+        shell_print_text_with_color(") ---\n", 0x08);
+
+        while ((n = vfs_read(fd, buf, sizeof(buf) - 1)) > 0) {
+            buf[n] = '\0';
+            terminal_print((const char*)buf);
+            total += n;
+        }
+
+        if (total > 0 && buf[total > (int)(sizeof(buf)-1) ? sizeof(buf)-1 : total-1] != '\n')
+            terminal_put_char('\n');
+
+        shell_print_text_with_color("--- ", 0x08);
+        terminal_print_uint((unsigned int)total);
+        shell_print_text_with_color(" bytes leidos via fd ---\n", 0x08);
+
+        vfs_close(fd);
+        return 1;
+    }
+
+    terminal_print_line("Uso: vfs [ls [ruta] | cat <ruta>]");
+    return 1;
 }
 
 int shell_complete_path(const char* prefix, const char* matches[], int max_matches) {

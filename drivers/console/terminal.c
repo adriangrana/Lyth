@@ -1,13 +1,14 @@
 #include "terminal.h"
 #include "console_backend.h"
 #include "timer.h"
+#include "utf8.h"
 #include <stdint.h>
 
 #define TERMINAL_MAX_COLUMNS 240
 #define TERMINAL_MAX_ROWS 80
 
 typedef struct {
-    char ch;
+    unsigned int glyph;  /* CP437 font glyph index */
     unsigned char color;
 } terminal_cell_t;
 
@@ -27,6 +28,10 @@ static int cursor_col = 0;
 
 static int cursor_visible = 0;
 static uint32_t last_blink = 0;
+
+/* UTF-8 multi-byte state machine */
+static uint32_t utf8_accum   = 0;  /* accumulated codepoint bits */
+static int      utf8_remain  = 0;  /* continuation bytes still needed */
 
 static int clamp_positive(int value, int fallback) {
     return value > 0 ? value : fallback;
@@ -63,7 +68,7 @@ static void render_cell(int row, int col) {
     backend->put_cell(
         row,
         col,
-        terminal_cells[row][col].ch,
+        terminal_cells[row][col].glyph,
         terminal_cells[row][col].color
     );
 }
@@ -129,7 +134,7 @@ void terminal_update_cursor(void) {
 static void reset_screen_buffer(void) {
     for (int row = 0; row < terminal_rows_count; row++) {
         for (int col = 0; col < terminal_cols; col++) {
-            terminal_cells[row][col].ch = ' ';
+            terminal_cells[row][col].glyph = ' ';
             terminal_cells[row][col].color = terminal_color;
         }
     }
@@ -149,7 +154,7 @@ static void scroll_if_needed(void) {
     }
 
     for (int col = 0; col < terminal_cols; col++) {
-        terminal_cells[terminal_rows_count - 1][col].ch = ' ';
+        terminal_cells[terminal_rows_count - 1][col].glyph = ' ';
         terminal_cells[terminal_rows_count - 1][col].color = terminal_color;
     }
 
@@ -263,16 +268,52 @@ void terminal_clear(void) {
 }
 
 void terminal_put_char(char c) {
-    sync_terminal_geometry();
+    unsigned char b = (unsigned char)c;
+    uint32_t cp;
+    unsigned int glyph;
 
+    /* Capture mode: pass raw bytes through (keeps valid UTF-8 in the buffer) */
     if (terminal_capture_active) {
         terminal_capture_put_char(c);
         return;
     }
 
+    sync_terminal_geometry();
+
+    /* ---- UTF-8 state machine ---- */
+    if (b < 0x80) {
+        /* ASCII — always resets any pending sequence */
+        utf8_remain = 0;
+        cp = b;
+    } else if (b >= 0xC0 && b <= 0xDF) {
+        utf8_accum  = (uint32_t)(b & 0x1F);
+        utf8_remain = 1;
+        return;
+    } else if (b >= 0xE0 && b <= 0xEF) {
+        utf8_accum  = (uint32_t)(b & 0x0F);
+        utf8_remain = 2;
+        return;
+    } else if (b >= 0xF0 && b <= 0xF7) {
+        utf8_accum  = (uint32_t)(b & 0x07);
+        utf8_remain = 3;
+        return;
+    } else if (b >= 0x80 && b <= 0xBF && utf8_remain > 0) {
+        utf8_accum = (utf8_accum << 6) | (uint32_t)(b & 0x3F);
+        utf8_remain--;
+        if (utf8_remain > 0) return;   /* more bytes needed */
+        cp = utf8_accum;
+        utf8_accum = 0;
+    } else {
+        /* Invalid byte — emit replacement and reset */
+        utf8_remain = 0;
+        cp = '?';
+    }
+
+    glyph = unicode_to_cp437(cp);
+
     hide_cursor();
 
-    if (c == '\n') {
+    if (cp == '\n') {
         cursor_row++;
         cursor_col = 0;
         scroll_if_needed();
@@ -281,7 +322,7 @@ void terminal_put_char(char c) {
         return;
     }
 
-    terminal_cells[cursor_row][cursor_col].ch = c;
+    terminal_cells[cursor_row][cursor_col].glyph = glyph;
     terminal_cells[cursor_row][cursor_col].color = terminal_color;
     render_cell(cursor_row, cursor_col);
 
@@ -312,7 +353,7 @@ void terminal_backspace(void) {
 
     if (cursor_col > 0) {
         cursor_col--;
-        terminal_cells[cursor_row][cursor_col].ch = ' ';
+        terminal_cells[cursor_row][cursor_col].glyph = ' ';
         terminal_cells[cursor_row][cursor_col].color = terminal_color;
         render_cell(cursor_row, cursor_col);
     }

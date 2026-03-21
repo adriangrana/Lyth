@@ -4,6 +4,7 @@
 #include "task.h"
 #include "heap.h"
 #include "fs.h"
+#include "vfs.h"
 #include "paging.h"
 #include "string.h"
 
@@ -232,6 +233,36 @@ unsigned int syscall_callback(unsigned int number,
             }
             return fs_size((const char*)arg0);
 
+        /* ---- VFS / file-descriptor syscalls ---- */
+
+        case SYSCALL_VFS_OPEN:
+            if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH))
+                return (unsigned int)-1;
+            return (unsigned int)vfs_open((const char*)arg0);
+
+        case SYSCALL_VFS_CLOSE:
+            vfs_close((int)arg0);
+            return 0;
+
+        case SYSCALL_VFS_READ:
+            if (!syscall_validate_user_buffer((const void*)arg1, arg2))
+                return (unsigned int)-1;
+            return (unsigned int)vfs_read((int)arg0, (unsigned char*)arg1, arg2);
+
+        case SYSCALL_VFS_WRITE:
+            if (!syscall_validate_user_buffer((const void*)arg1, arg2))
+                return (unsigned int)-1;
+            return (unsigned int)vfs_write((int)arg0, (const unsigned char*)arg1, arg2);
+
+        case SYSCALL_VFS_SEEK:
+            return (unsigned int)vfs_seek((int)arg0, (int)arg1, (int)arg2);
+
+        case SYSCALL_VFS_READDIR:
+            if (!syscall_validate_user_buffer((const void*)arg2, arg3))
+                return (unsigned int)-1;
+            return (unsigned int)vfs_readdir((int)arg0, arg1,
+                                             (char*)arg2, arg3);
+
         default:
             return 0;
     }
@@ -304,4 +335,42 @@ int syscall_fs_read(const char* name, char* buffer, unsigned int buffer_size) {
 
 unsigned int syscall_fs_size(const char* name) {
     return syscall_invoke(SYSCALL_FS_SIZE, (unsigned int)name, 0, 0, 0);
+}
+
+int syscall_vfs_open(const char* path) {
+    return (int)syscall_invoke(SYSCALL_VFS_OPEN, (unsigned int)path, 0, 0, 0);
+}
+
+void syscall_vfs_close(int fd) {
+    syscall_invoke(SYSCALL_VFS_CLOSE, (unsigned int)fd, 0, 0, 0);
+}
+
+int syscall_vfs_read(int fd, unsigned char* buf, unsigned int size) {
+    return (int)syscall_invoke(SYSCALL_VFS_READ,
+                               (unsigned int)fd,
+                               (unsigned int)buf,
+                               size, 0);
+}
+
+int syscall_vfs_write(int fd, const unsigned char* buf, unsigned int size) {
+    return (int)syscall_invoke(SYSCALL_VFS_WRITE,
+                               (unsigned int)fd,
+                               (unsigned int)buf,
+                               size, 0);
+}
+
+int syscall_vfs_seek(int fd, int offset, int whence) {
+    return (int)syscall_invoke(SYSCALL_VFS_SEEK,
+                               (unsigned int)fd,
+                               (unsigned int)offset,
+                               (unsigned int)whence, 0);
+}
+
+int syscall_vfs_readdir(int fd, unsigned int index,
+                        char* name_out, unsigned int name_max) {
+    return (int)syscall_invoke(SYSCALL_VFS_READDIR,
+                               (unsigned int)fd,
+                               index,
+                               (unsigned int)name_out,
+                               name_max);
 }

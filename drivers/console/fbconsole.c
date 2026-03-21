@@ -334,7 +334,7 @@ void fb_scroll(unsigned char color) {
     }
 }
 
-void fb_put_char_at(int row, int col, char c, unsigned char color) {
+void fb_put_glyph_at(int row, int col, unsigned int glyph, unsigned char color) {
     int origin_x;
     int origin_y;
     int restore_mouse;
@@ -346,8 +346,6 @@ void fb_put_char_at(int row, int col, char c, unsigned char color) {
     if (row < 0 || row >= fb_rows() || col < 0 || col >= fb_columns()) {
         return;
     }
-
-    unsigned int glyph = (unsigned char)c;
 
     if (glyph >= FONT_PSF_GLYPH_COUNT) {
         glyph = '?';

@@ -19,7 +19,7 @@ int fb_rows(void);
 int fb_columns(void);
 void fb_clear(void);
 void fb_scroll(unsigned char color);
-void fb_put_char_at(int row, int col, char c, unsigned char color);
+void fb_put_glyph_at(int row, int col, unsigned int glyph, unsigned char color);
 void fb_draw_cursor_at(int row, int col, unsigned char color);
 void fb_fill_rect(int x, int y, int width, int height, uint32_t rgb);
 void fb_draw_rect(int x, int y, int width, int height, uint32_t rgb);

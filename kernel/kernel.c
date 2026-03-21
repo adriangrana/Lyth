@@ -9,6 +9,8 @@
 #include "mouse.h"
 #include "heap.h"
 #include "fs.h"
+#include "vfs.h"
+#include "ramfs.h"
 #include "task.h"
 #include "physmem.h"
 #include "paging.h"
@@ -105,9 +107,12 @@ void kernel_main(unsigned long mbi_ptr) {
     paging_init(mbi);
     heap_init();
     fs_init();
+    vfs_init();
+    vfs_mount("/", ramfs_create_root());
     task_system_init();
     klog_write(KLOG_LEVEL_INFO, "mem", "Heap, physmem y paging inicializados");
     klog_write(KLOG_LEVEL_INFO, "fs", "FS en memoria listo");
+    klog_write(KLOG_LEVEL_INFO, "vfs", "VFS inicializado, ramfs montado en /");
     klog_write(KLOG_LEVEL_INFO, "task", "Scheduler listo");
 
     print_framebuffer_info();

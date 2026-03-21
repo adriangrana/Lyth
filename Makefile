@@ -30,6 +30,7 @@ SHELL_OBJ = $(BUILD_DIR)/shell.o
 PARSER_OBJ = $(BUILD_DIR)/parser.o
 TASK_OBJ = $(BUILD_DIR)/task.o
 STRING_OBJ = $(BUILD_DIR)/string.o
+UTF8_OBJ = $(BUILD_DIR)/utf8.o
 IDT_OBJ = $(BUILD_DIR)/idt.o
 INTERRUPTS_OBJ = $(BUILD_DIR)/interrupts.o
 KLOG_OBJ = $(BUILD_DIR)/klog.o
@@ -39,6 +40,8 @@ HEAP_OBJ = $(BUILD_DIR)/heap.o
 PHYSMEM_OBJ = $(BUILD_DIR)/physmem.o
 PAGING_OBJ = $(BUILD_DIR)/paging.o
 FS_OBJ = $(BUILD_DIR)/fs.o
+VFS_OBJ = $(BUILD_DIR)/vfs.o
+RAMFS_OBJ = $(BUILD_DIR)/ramfs.o
 SYSCALL_OBJ = $(BUILD_DIR)/syscall.o
 FBCONSOLE_OBJ = $(BUILD_DIR)/fbconsole.o
 ELF_OBJ = $(BUILD_DIR)/elf.o
@@ -62,7 +65,7 @@ FONT_TOOL = tools/psf2h.py
 FONT_HEADER = include/font_psf.h
 GRUB_CFG = arch/x86/boot/grub.cfg
 
-OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(FS_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ)
+OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ)
 
 $(FONT_HEADER): $(FONT_PSF) $(FONT_TOOL)
 	$(PYTHON) $(FONT_TOOL) $(FONT_PSF) $(FONT_HEADER)
@@ -92,6 +95,7 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(CC) $(CFLAGS) -c userland/shell/parser.c -o $(PARSER_OBJ)
 	$(CC) $(CFLAGS) -c kernel/task/task.c -o $(TASK_OBJ)
 	$(CC) $(CFLAGS) -c lib/string.c -o $(STRING_OBJ)
+	$(CC) $(CFLAGS) -c lib/utf8.c -o $(UTF8_OBJ)
 	$(CC) $(CFLAGS) -c kernel/idt.c -o $(IDT_OBJ)
 	$(CC) $(CFLAGS) -c kernel/interrupts.c -o $(INTERRUPTS_OBJ)
 	$(CC) $(CFLAGS) -c kernel/klog.c -o $(KLOG_OBJ)
@@ -100,6 +104,8 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(CC) $(CFLAGS) -c kernel/mem/physmem.c -o $(PHYSMEM_OBJ)
 	$(CC) $(CFLAGS) -c kernel/mem/paging.c -o $(PAGING_OBJ)
 	$(CC) $(CFLAGS) -c fs/fs.c -o $(FS_OBJ)
+	$(CC) $(CFLAGS) -c fs/vfs.c -o $(VFS_OBJ)
+	$(CC) $(CFLAGS) -c fs/ramfs.c -o $(RAMFS_OBJ)
 	$(CC) $(CFLAGS) -c kernel/syscall.c -o $(SYSCALL_OBJ)
 	$(CC) $(CFLAGS) -c drivers/console/fbconsole.c -o $(FBCONSOLE_OBJ)
 	$(CC) $(CFLAGS) -c kernel/elf.c -o $(ELF_OBJ)
