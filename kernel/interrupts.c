@@ -7,22 +7,7 @@
 #include "syscall.h"
 #include "task.h"
 #include "terminal.h"
-
-typedef struct {
-    unsigned int edi;
-    unsigned int esi;
-    unsigned int ebp;
-    unsigned int esp;
-    unsigned int ebx;
-    unsigned int edx;
-    unsigned int ecx;
-    unsigned int eax;
-    unsigned int vector;
-    unsigned int error_code;
-    unsigned int eip;
-    unsigned int cs;
-    unsigned int eflags;
-} interrupt_frame_t;
+#include "panic.h"
 
 static const char* exception_names[32] = {
     "Division by zero",
@@ -177,7 +162,7 @@ unsigned int mouse_interrupt_handler(unsigned int current_esp) {
 }
 
 unsigned int syscall_interrupt_handler(unsigned int current_esp) {
-    interrupt_frame_t* frame = (interrupt_frame_t*)current_esp;
+    panic_frame_t* frame = (panic_frame_t*)current_esp;
 
     if (frame->eax == SYSCALL_FORK) {
         /* fork needs access to the raw frame to clone the register state,
@@ -210,7 +195,7 @@ unsigned int syscall_interrupt_handler(unsigned int current_esp) {
 }
 
 unsigned int exception_interrupt_handler(unsigned int current_esp) {
-    interrupt_frame_t* frame = (interrupt_frame_t*)current_esp;
+    panic_frame_t* frame = (panic_frame_t*)current_esp;
     unsigned int vector = frame->vector & 0xFFU;
     int from_user_mode = (frame->cs & 0x03U) == 0x03U;
 
@@ -232,34 +217,9 @@ unsigned int exception_interrupt_handler(unsigned int current_esp) {
         return task_schedule_on_syscall(current_esp);
     }
 
-    terminal_set_color(0x0C);
-    terminal_print_line("");
-    terminal_print_line("*** CPU EXCEPTION ***");
-    terminal_print("Vector: ");
-    terminal_print_uint(vector);
-    terminal_print(" - ");
-    terminal_print_line(vector < 32 ? exception_names[vector] : "Unknown");
-    terminal_print("Error code: ");
-    terminal_print_hex(frame->error_code);
-    terminal_put_char('\n');
-    terminal_print("EIP: ");
-    terminal_print_hex(frame->eip);
-    terminal_put_char('\n');
-    terminal_print("CS: ");
-    terminal_print_hex(frame->cs);
-    terminal_put_char('\n');
-    terminal_print("EFLAGS: ");
-    terminal_print_hex(frame->eflags);
-    terminal_put_char('\n');
-
-    if (vector == 14) {
-        terminal_print("CR2: ");
-        terminal_print_hex(read_cr2());
-        terminal_put_char('\n');
-    }
-
-    terminal_set_color(0x0F);
-    cpu_halt_forever();
+    panic_show(vector < 32 ? exception_names[vector] : "Unknown exception",
+               frame,
+               (vector == 14U) ? read_cr2() : 0U);
     return current_esp;
 }
 

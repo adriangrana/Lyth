@@ -35,6 +35,7 @@ UTF8_OBJ = $(BUILD_DIR)/utf8.o
 IDT_OBJ = $(BUILD_DIR)/idt.o
 INTERRUPTS_OBJ = $(BUILD_DIR)/interrupts.o
 KLOG_OBJ = $(BUILD_DIR)/klog.o
+PANIC_OBJ = $(BUILD_DIR)/panic.o
 INTERRUPTS_ASM_OBJ = $(BUILD_DIR)/interrupts_asm.o
 TIMER_OBJ = $(BUILD_DIR)/timer.o
 HEAP_OBJ = $(BUILD_DIR)/heap.o
@@ -44,6 +45,7 @@ FS_OBJ = $(BUILD_DIR)/fs.o
 VFS_OBJ = $(BUILD_DIR)/vfs.o
 RAMFS_OBJ = $(BUILD_DIR)/ramfs.o
 DEVFS_OBJ = $(BUILD_DIR)/devfs.o
+PIPE_OBJ = $(BUILD_DIR)/pipe.o
 SYSCALL_OBJ = $(BUILD_DIR)/syscall.o
 FBCONSOLE_OBJ = $(BUILD_DIR)/fbconsole.o
 ELF_OBJ = $(BUILD_DIR)/elf.o
@@ -82,7 +84,7 @@ FONT_TOOL = tools/psf2h.py
 FONT_HEADER = include/font_psf.h
 GRUB_CFG = arch/x86/boot/grub.cfg
 
-OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ)
+OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ)
 
 $(FONT_HEADER): $(FONT_PSF) $(FONT_TOOL)
 	$(PYTHON) $(FONT_TOOL) $(FONT_PSF) $(FONT_HEADER)
@@ -116,6 +118,7 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(CC) $(CFLAGS) -c kernel/idt.c -o $(IDT_OBJ)
 	$(CC) $(CFLAGS) -c kernel/interrupts.c -o $(INTERRUPTS_OBJ)
 	$(CC) $(CFLAGS) -c kernel/klog.c -o $(KLOG_OBJ)
+	$(CC) $(CFLAGS) -c kernel/panic.c -o $(PANIC_OBJ)
 	$(CC) $(CFLAGS) -c kernel/task/timer.c -o $(TIMER_OBJ)
 	$(CC) $(CFLAGS) -c kernel/mem/heap.c -o $(HEAP_OBJ)
 	$(CC) $(CFLAGS) -c kernel/mem/physmem.c -o $(PHYSMEM_OBJ)
@@ -124,6 +127,7 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(CC) $(CFLAGS) -c fs/vfs.c -o $(VFS_OBJ)
 	$(CC) $(CFLAGS) -c fs/ramfs.c -o $(RAMFS_OBJ)
 	$(CC) $(CFLAGS) -c fs/devfs.c -o $(DEVFS_OBJ)
+	$(CC) $(CFLAGS) -c fs/pipe.c -o $(PIPE_OBJ)
 	$(CC) $(CFLAGS) -c kernel/syscall.c -o $(SYSCALL_OBJ)
 	$(CC) $(CFLAGS) -c drivers/console/fbconsole.c -o $(FBCONSOLE_OBJ)
 	$(CC) $(CFLAGS) -c drivers/console/tty_vfs.c -o $(TTY_VFS_OBJ)

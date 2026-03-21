@@ -5,6 +5,7 @@
 #include "gdt.h"
 #include "paging.h"
 #include "physmem.h"
+#include "assert.h"
 #include <stdint.h>
 
 #define TASK_MAX_COUNT 16
@@ -109,12 +110,31 @@ static int task_slot_index(const task_entry_t* t) {
     return (idx >= 0 && idx < TASK_MAX_COUNT) ? idx : -1;
 }
 
+static int sched_is_queued(int idx, int prio) {
+    int cur;
+    if (idx < 0 || idx >= TASK_MAX_COUNT || prio < 0 || prio >= SCHED_PRIO_COUNT) {
+        return 0;
+    }
+    cur = sched_ready_head[prio];
+    while (cur >= 0) {
+        if (cur == idx) {
+            return 1;
+        }
+        cur = tasks[cur].sched_next;
+    }
+    return 0;
+}
+
 /* Append tasks[idx] to the tail of its priority ready queue (FIFO). */
 static void sched_enqueue_ready(int idx) {
     int prio;
     if (idx < 0 || idx >= TASK_MAX_COUNT || !tasks[idx].used) return;
+    KASSERT(tasks[idx].state == TASK_STATE_READY);
     prio = (int)tasks[idx].priority;
     if (prio < 0 || prio >= SCHED_PRIO_COUNT) return;
+    if (sched_is_queued(idx, prio)) {
+        return;
+    }
     tasks[idx].sched_next = -1;
     if (sched_ready_tail[prio] < 0) {
         sched_ready_head[prio] = idx;
@@ -892,6 +912,8 @@ void task_system_init(void) {
             }
         }
     }
+
+    KASSERT_MSG(idle_task_id != -1, "idle task creation failed");
 }
 
 int task_spawn(const char* name, task_step_fn step, const void* data, unsigned int data_size, int foreground) {
