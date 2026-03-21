@@ -11,7 +11,9 @@ enum {
     SYSCALL_FS_COUNT = 7,
     SYSCALL_FS_NAME_AT = 8,
     SYSCALL_FS_READ = 9,
-    SYSCALL_FS_SIZE = 10
+    SYSCALL_FS_SIZE = 10,
+    SYSCALL_EXIT = 11,
+    SYSCALL_FS_NAME_COPY = 12
 };
 
 unsigned int syscall_callback(unsigned int number,
@@ -31,8 +33,9 @@ void syscall_sleep(unsigned int ticks);
 void syscall_yield(void);
 void* syscall_alloc(unsigned int size);
 void syscall_free(void* ptr);
+void syscall_exit(int exit_code);
 int syscall_fs_count(void);
-const char* syscall_fs_name_at(int index);
+int syscall_fs_name(int index, char* buffer, unsigned int buffer_size);
 int syscall_fs_read(const char* name, char* buffer, unsigned int buffer_size);
 unsigned int syscall_fs_size(const char* name);
 

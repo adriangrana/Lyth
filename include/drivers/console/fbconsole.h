@@ -21,6 +21,11 @@ void fb_clear(void);
 void fb_scroll(unsigned char color);
 void fb_put_char_at(int row, int col, char c, unsigned char color);
 void fb_draw_cursor_at(int row, int col, unsigned char color);
+void fb_fill_rect(int x, int y, int width, int height, uint32_t rgb);
+void fb_draw_rect(int x, int y, int width, int height, uint32_t rgb);
+void fb_draw_line(int x0, int y0, int x1, int y1, uint32_t rgb);
+void fb_move_mouse_cursor(int x, int y);
+void fb_hide_mouse_cursor(void);
 
 uint32_t fb_width(void);
 uint32_t fb_height(void);

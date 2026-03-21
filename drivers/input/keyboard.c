@@ -12,20 +12,168 @@ static inline unsigned char inb(unsigned short port) {
 static keyboard_event_t event_queue[KEYBOARD_EVENT_QUEUE_SIZE];
 static int event_head = 0;
 static int event_tail = 0;
-
 static int shift_pressed = 0;
 static int ctrl_pressed = 0;
 static int alt_pressed = 0;
+static int altgr_pressed = 0;
+static int capslock_enabled = 0;
+static int numlock_enabled = 1;
 static int scancode_set = 1;
 static int set2_break_prefix = 0;
 static int extended_prefix = 0;
+static keyboard_layout_t active_layout = KEYBOARD_LAYOUT_US;
 
-static int is_letter(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-}
+#define KEYBOARD_CHAR_ENYE_LOWER ((char)0xA4)
+#define KEYBOARD_CHAR_ENYE_UPPER ((char)0xA5)
+#define KEYBOARD_CHAR_C_CEDILLA_LOWER ((char)0x87)
+#define KEYBOARD_CHAR_C_CEDILLA_UPPER ((char)0x80)
+#define KEYBOARD_CHAR_INVERTED_QUESTION ((char)0xA8)
+#define KEYBOARD_CHAR_INVERTED_EXCLAMATION ((char)0xAD)
+#define KEYBOARD_CHAR_FEMININE_ORDINAL ((char)0xA6)
+#define KEYBOARD_CHAR_MASCULINE_ORDINAL ((char)0xA7)
+#define KEYBOARD_CHAR_MIDDLE_DOT ((char)0xFA)
+#define KEYBOARD_CHAR_NOT_SIGN ((char)0xAA)
 
 static char apply_caps(char c) {
+    if (!capslock_enabled) {
+        return c;
+    }
+
+    if (c >= 'a' && c <= 'z') {
+        return (char)(c - ('a' - 'A'));
+    }
+
+    if (c >= 'A' && c <= 'Z') {
+        return (char)(c + ('a' - 'A'));
+    }
+
+    switch (c) {
+        case KEYBOARD_CHAR_ENYE_LOWER:
+            return KEYBOARD_CHAR_ENYE_UPPER;
+        case KEYBOARD_CHAR_ENYE_UPPER:
+            return KEYBOARD_CHAR_ENYE_LOWER;
+        case KEYBOARD_CHAR_C_CEDILLA_LOWER:
+            return KEYBOARD_CHAR_C_CEDILLA_UPPER;
+        case KEYBOARD_CHAR_C_CEDILLA_UPPER:
+            return KEYBOARD_CHAR_C_CEDILLA_LOWER;
+        default:
+            return c;
+    }
+
     return c;
+}
+
+static int altgr_is_active(void) {
+    return altgr_pressed || (ctrl_pressed && alt_pressed);
+}
+
+static char translate_set1_altgr(unsigned char scancode, char current) {
+    if (active_layout != KEYBOARD_LAYOUT_ES || !altgr_is_active()) {
+        return current;
+    }
+
+    switch (scancode) {
+        case 0x02: return '|';
+        case 0x03: return '@';
+        case 0x04: return '#';
+        case 0x05: return '~';
+        case 0x07: return KEYBOARD_CHAR_NOT_SIGN;
+        case 0x1A: return '[';
+        case 0x1B: return ']';
+        case 0x28: return '{';
+        case 0x29: return '\\';
+        case 0x2B: return '}';
+        case 0x56: return '|';
+        default:   return current;
+    }
+}
+
+static char translate_set2_altgr(unsigned char scancode, char current) {
+    if (active_layout != KEYBOARD_LAYOUT_ES || !altgr_is_active()) {
+        return current;
+    }
+
+    switch (scancode) {
+        case 0x16: return '|';
+        case 0x1E: return '@';
+        case 0x26: return '#';
+        case 0x25: return '~';
+        case 0x36: return KEYBOARD_CHAR_NOT_SIGN;
+        case 0x54: return '[';
+        case 0x5B: return ']';
+        case 0x52: return '{';
+        case 0x0E: return '\\';
+        case 0x5D: return '}';
+        case 0x61: return '|';
+        default:   return current;
+    }
+}
+
+static char translate_set1_layout(unsigned char scancode, char current) {
+    if (active_layout != KEYBOARD_LAYOUT_ES) {
+        return current;
+    }
+
+    if (altgr_is_active()) {
+        return translate_set1_altgr(scancode, current);
+    }
+
+    switch (scancode) {
+        case 0x02: return shift_pressed ? '!' : '1';
+        case 0x03: return shift_pressed ? '"' : '2';
+        case 0x04: return shift_pressed ? KEYBOARD_CHAR_MIDDLE_DOT : '3';
+        case 0x05: return shift_pressed ? '$' : '4';
+        case 0x06: return shift_pressed ? '%' : '5';
+        case 0x07: return shift_pressed ? '&' : '6';
+        case 0x08: return shift_pressed ? '/' : '7';
+        case 0x09: return shift_pressed ? '(' : '8';
+        case 0x1A: return shift_pressed ? '^' : '`';
+        case 0x1B: return shift_pressed ? '*' : '+';
+        case 0x27: return shift_pressed ? KEYBOARD_CHAR_ENYE_UPPER : KEYBOARD_CHAR_ENYE_LOWER;
+        case 0x28: return shift_pressed ? '"' : '\'';
+        case 0x2B: return shift_pressed ? KEYBOARD_CHAR_C_CEDILLA_UPPER : KEYBOARD_CHAR_C_CEDILLA_LOWER;
+        case 0x33: return shift_pressed ? ';' : ',';
+        case 0x34: return shift_pressed ? ':' : '.';
+        case 0x35: return shift_pressed ? '_' : '-';
+        case 0x56: return shift_pressed ? '>' : '<';
+        default:   return current;
+    }
+}
+
+static char translate_set2_layout(unsigned char scancode, char current) {
+    if (active_layout != KEYBOARD_LAYOUT_ES) {
+        return current;
+    }
+
+    if (altgr_is_active()) {
+        return translate_set2_altgr(scancode, current);
+    }
+
+    switch (scancode) {
+        case 0x16: return shift_pressed ? '!' : '1';
+        case 0x1E: return shift_pressed ? '"' : '2';
+        case 0x26: return shift_pressed ? KEYBOARD_CHAR_MIDDLE_DOT : '3';
+        case 0x25: return shift_pressed ? '$' : '4';
+        case 0x2E: return shift_pressed ? '%' : '5';
+        case 0x36: return shift_pressed ? '&' : '6';
+        case 0x3D: return shift_pressed ? '/' : '7';
+        case 0x3E: return shift_pressed ? '(' : '8';
+        case 0x46: return shift_pressed ? ')' : '9';
+        case 0x45: return shift_pressed ? '=' : '0';
+        case 0x0E: return shift_pressed ? KEYBOARD_CHAR_FEMININE_ORDINAL : KEYBOARD_CHAR_MASCULINE_ORDINAL;
+        case 0x4E: return shift_pressed ? '?' : '\'';
+        case 0x55: return shift_pressed ? KEYBOARD_CHAR_INVERTED_QUESTION : KEYBOARD_CHAR_INVERTED_EXCLAMATION;
+        case 0x54: return shift_pressed ? '^' : '`';
+        case 0x5B: return shift_pressed ? '*' : '+';
+        case 0x4C: return shift_pressed ? KEYBOARD_CHAR_ENYE_UPPER : KEYBOARD_CHAR_ENYE_LOWER;
+        case 0x52: return shift_pressed ? '"' : '\'';
+        case 0x5D: return shift_pressed ? KEYBOARD_CHAR_C_CEDILLA_UPPER : KEYBOARD_CHAR_C_CEDILLA_LOWER;
+        case 0x41: return shift_pressed ? ';' : ',';
+        case 0x49: return shift_pressed ? ':' : '.';
+        case 0x4A: return shift_pressed ? '_' : '-';
+        case 0x61: return shift_pressed ? '>' : '<';
+        default:   return current;
+    }
 }
 
 static void queue_event(keyboard_event_type_t type, char character) {
@@ -45,7 +193,7 @@ static void queue_event(keyboard_event_type_t type, char character) {
     if (ctrl_pressed) {
         event_queue[event_head].modifiers |= KEY_MOD_CTRL;
     }
-    if (alt_pressed) {
+    if (alt_pressed || altgr_pressed) {
         event_queue[event_head].modifiers |= KEY_MOD_ALT;
     }
 
@@ -85,6 +233,204 @@ static void queue_navigation_event(unsigned char scancode) {
         queue_event(KEY_EVENT_INSERT, 0);
         return;
     }
+
+    if (scancode == 0x53 || scancode == 0x71) {
+        queue_event(KEY_EVENT_DELETE, 0);
+        return;
+    }
+
+    if (scancode == 0x47 || scancode == 0x6C) {
+        queue_event(KEY_EVENT_HOME, 0);
+        return;
+    }
+
+    if (scancode == 0x4F || scancode == 0x69) {
+        queue_event(KEY_EVENT_END, 0);
+        return;
+    }
+
+    if (scancode == 0x49 || scancode == 0x7D) {
+        queue_event(KEY_EVENT_PAGE_UP, 0);
+        return;
+    }
+
+    if (scancode == 0x51 || scancode == 0x7A) {
+        queue_event(KEY_EVENT_PAGE_DOWN, 0);
+        return;
+    }
+}
+
+static int queue_keypad_or_navigation_set1(unsigned char scancode) {
+    switch (scancode) {
+        case 0x47:
+            if (numlock_enabled) {
+                queue_char('7');
+            } else {
+                queue_event(KEY_EVENT_HOME, 0);
+            }
+            return 1;
+        case 0x48:
+            if (numlock_enabled) {
+                queue_char('8');
+            } else {
+                queue_event(KEY_EVENT_UP, 0);
+            }
+            return 1;
+        case 0x49:
+            if (numlock_enabled) {
+                queue_char('9');
+            } else {
+                queue_event(KEY_EVENT_PAGE_UP, 0);
+            }
+            return 1;
+        case 0x4B:
+            if (numlock_enabled) {
+                queue_char('4');
+            } else {
+                queue_event(KEY_EVENT_LEFT, 0);
+            }
+            return 1;
+        case 0x4C:
+            if (numlock_enabled) {
+                queue_char('5');
+            }
+            return 1;
+        case 0x4D:
+            if (numlock_enabled) {
+                queue_char('6');
+            } else {
+                queue_event(KEY_EVENT_RIGHT, 0);
+            }
+            return 1;
+        case 0x4F:
+            if (numlock_enabled) {
+                queue_char('1');
+            } else {
+                queue_event(KEY_EVENT_END, 0);
+            }
+            return 1;
+        case 0x50:
+            if (numlock_enabled) {
+                queue_char('2');
+            } else {
+                queue_event(KEY_EVENT_DOWN, 0);
+            }
+            return 1;
+        case 0x51:
+            if (numlock_enabled) {
+                queue_char('3');
+            } else {
+                queue_event(KEY_EVENT_PAGE_DOWN, 0);
+            }
+            return 1;
+        case 0x52:
+            if (numlock_enabled) {
+                queue_char('0');
+            } else {
+                queue_event(KEY_EVENT_INSERT, 0);
+            }
+            return 1;
+        case 0x53:
+            if (numlock_enabled) {
+                queue_char('.');
+            } else {
+                queue_event(KEY_EVENT_DELETE, 0);
+            }
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static int queue_keypad_or_navigation_set2(unsigned char scancode) {
+    switch (scancode) {
+        case 0x4A:
+            queue_char('/');
+            return 1;
+        case 0x6C:
+            if (numlock_enabled) {
+                queue_char('7');
+            } else {
+                queue_event(KEY_EVENT_HOME, 0);
+            }
+            return 1;
+        case 0x75:
+            if (numlock_enabled) {
+                queue_char('8');
+            } else {
+                queue_event(KEY_EVENT_UP, 0);
+            }
+            return 1;
+        case 0x7D:
+            if (numlock_enabled) {
+                queue_char('9');
+            } else {
+                queue_event(KEY_EVENT_PAGE_UP, 0);
+            }
+            return 1;
+        case 0x6B:
+            if (numlock_enabled) {
+                queue_char('4');
+            } else {
+                queue_event(KEY_EVENT_LEFT, 0);
+            }
+            return 1;
+        case 0x73:
+            if (numlock_enabled) {
+                queue_char('5');
+            }
+            return 1;
+        case 0x74:
+            if (numlock_enabled) {
+                queue_char('6');
+            } else {
+                queue_event(KEY_EVENT_RIGHT, 0);
+            }
+            return 1;
+        case 0x69:
+            if (numlock_enabled) {
+                queue_char('1');
+            } else {
+                queue_event(KEY_EVENT_END, 0);
+            }
+            return 1;
+        case 0x72:
+            if (numlock_enabled) {
+                queue_char('2');
+            } else {
+                queue_event(KEY_EVENT_DOWN, 0);
+            }
+            return 1;
+        case 0x7A:
+            if (numlock_enabled) {
+                queue_char('3');
+            } else {
+                queue_event(KEY_EVENT_PAGE_DOWN, 0);
+            }
+            return 1;
+        case 0x70:
+            if (numlock_enabled) {
+                queue_char('0');
+            } else {
+                queue_event(KEY_EVENT_INSERT, 0);
+            }
+            return 1;
+        case 0x71:
+            if (numlock_enabled) {
+                queue_char('.');
+            } else {
+                queue_event(KEY_EVENT_DELETE, 0);
+            }
+            return 1;
+        case 0x7B:
+            queue_char('-');
+            return 1;
+        case 0x79:
+            queue_char('+');
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 static char map_set1(unsigned char scancode) {
@@ -117,6 +463,7 @@ static char map_set1(unsigned char scancode) {
     };
 
     char c = shift_pressed ? keymap_shift[scancode] : keymap_normal[scancode];
+    c = translate_set1_layout(scancode, c);
     return apply_caps(c);
 }
 
@@ -175,13 +522,14 @@ static char map_set2(unsigned char scancode) {
         case 0x49: c = shift_pressed ? '>' : '.'; break;
         case 0x4A: c = shift_pressed ? '?' : '/'; break;
         case 0x29: c = ' '; break;
-        default: c = 0; break;
+        default:   c = 0; break;
     }
 
+    c = translate_set2_layout(scancode, c);
     return apply_caps(c);
 }
 
-static void update_modifier_make(unsigned char scancode) {
+static void update_modifier_make(unsigned char scancode, int extended) {
     if (scancode == 0x2A || scancode == 0x36) {
         shift_pressed = 1;
         return;
@@ -193,13 +541,17 @@ static void update_modifier_make(unsigned char scancode) {
     }
 
     if (scancode == 0x38 || scancode == 0x11) {
+        if (extended) {
+            altgr_pressed = 1;
+            return;
+        }
+
         alt_pressed = 1;
         return;
     }
-
 }
 
-static void update_modifier_break(unsigned char scancode) {
+static void update_modifier_break(unsigned char scancode, int extended) {
     if (scancode == 0x2A || scancode == 0x36) {
         shift_pressed = 0;
         return;
@@ -211,6 +563,11 @@ static void update_modifier_break(unsigned char scancode) {
     }
 
     if (scancode == 0x38 || scancode == 0x11) {
+        if (extended) {
+            altgr_pressed = 0;
+            return;
+        }
+
         alt_pressed = 0;
         return;
     }
@@ -231,7 +588,19 @@ void keyboard_handle_interrupt(void) {
     }
 
     if (set2_break_prefix) {
-        update_modifier_break(scancode);
+        if (scancode == 0x58) {
+            set2_break_prefix = 0;
+            extended_prefix = 0;
+            return;
+        }
+
+        if (scancode == 0x77) {
+            set2_break_prefix = 0;
+            extended_prefix = 0;
+            return;
+        }
+
+        update_modifier_break(scancode, extended_prefix);
         set2_break_prefix = 0;
         extended_prefix = 0;
         return;
@@ -239,29 +608,40 @@ void keyboard_handle_interrupt(void) {
 
     if (scancode & 0x80) {
         scancode_set = 1;
-        update_modifier_break((unsigned char)(scancode & 0x7F));
+
+        if ((unsigned char)(scancode & 0x7F) == 0x3A) {
+            extended_prefix = 0;
+            return;
+        }
+
+        update_modifier_break((unsigned char)(scancode & 0x7F), extended_prefix);
         extended_prefix = 0;
         return;
     }
 
-    update_modifier_make(scancode);
+    update_modifier_make(scancode, extended_prefix);
+
+    if (!extended_prefix) {
+        if ((scancode_set == 2 && scancode == 0x58) ||
+            (scancode_set != 2 && scancode == 0x3A)) {
+            capslock_enabled = !capslock_enabled;
+            return;
+        }
+    }
+
+    if (!extended_prefix) {
+        if ((scancode_set == 2 && scancode == 0x77) ||
+            (scancode_set != 2 && scancode == 0x45)) {
+            numlock_enabled = !numlock_enabled;
+            return;
+        }
+    }
 
     if (extended_prefix) {
-        switch (scancode) {
-            case 0x75:
-            case 0x72:
-            case 0x6B:
-            case 0x74:
-            case 0x52:
-            case 0x70:
-            case 0x48:
-            case 0x50:
-            case 0x4B:
-            case 0x4D:
-                queue_navigation_event(scancode);
-                break;
-            default:
-                break;
+        if (scancode == 0x35 || scancode == 0x4A) {
+            queue_char('/');
+        } else {
+            queue_navigation_event(scancode);
         }
 
         extended_prefix = 0;
@@ -269,8 +649,7 @@ void keyboard_handle_interrupt(void) {
     }
 
     if (scancode_set == 2) {
-        if (scancode == 0x75 || scancode == 0x72 || scancode == 0x6B || scancode == 0x74) {
-            queue_navigation_event(scancode);
+        if (queue_keypad_or_navigation_set2(scancode)) {
             return;
         }
 
@@ -316,11 +695,22 @@ void keyboard_handle_interrupt(void) {
         case 0x1C:
             queue_event(KEY_EVENT_ENTER, 0);
             return;
+        case 0x47:
         case 0x48:
-        case 0x50:
+        case 0x49:
+        case 0x4A:
         case 0x4B:
+        case 0x4C:
         case 0x4D:
-            queue_navigation_event(scancode);
+        case 0x4E:
+        case 0x4F:
+        case 0x50:
+        case 0x51:
+        case 0x52:
+        case 0x53:
+            if (queue_keypad_or_navigation_set1(scancode)) {
+                return;
+            }
             return;
         default:
             break;
@@ -352,4 +742,25 @@ int keyboard_poll_event(keyboard_event_t* event) {
     *event = event_queue[event_tail];
     event_tail = (event_tail + 1) % KEYBOARD_EVENT_QUEUE_SIZE;
     return 1;
+}
+
+void keyboard_set_layout(keyboard_layout_t layout) {
+    if (layout != KEYBOARD_LAYOUT_US && layout != KEYBOARD_LAYOUT_ES) {
+        return;
+    }
+
+    active_layout = layout;
+}
+
+keyboard_layout_t keyboard_get_layout(void) {
+    return active_layout;
+}
+
+const char* keyboard_layout_name(keyboard_layout_t layout) {
+    switch (layout) {
+        case KEYBOARD_LAYOUT_ES:
+            return "es";
+        default:
+            return "us";
+    }
 }

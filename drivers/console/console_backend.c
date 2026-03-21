@@ -1,5 +1,6 @@
 #include "console_backend.h"
 #include "fbconsole.h"
+#include "terminal.h"
 
 #define VGA_WIDTH 80
 #define VGA_HEIGHT 25
@@ -50,6 +51,8 @@ static void vga_put_cell(int row, int col, char c, unsigned char color) {
 
 static void vga_show_cursor(int row, int col, unsigned char color) {
     unsigned short pos;
+    unsigned char start_scanline;
+    unsigned char end_scanline;
 
     (void)color;
 
@@ -71,10 +74,22 @@ static void vga_show_cursor(int row, int col, unsigned char color) {
 
     pos = (unsigned short)(row * VGA_WIDTH + col);
 
+    if (terminal_overwrite_mode()) {
+        start_scanline = 0;
+        end_scanline = 15;
+    } else {
+        start_scanline = 13;
+        end_scanline = 15;
+    }
+
     outb(0x3D4, 0x0F);
     outb(0x3D5, (unsigned char)(pos & 0xFF));
     outb(0x3D4, 0x0E);
     outb(0x3D5, (unsigned char)((pos >> 8) & 0xFF));
+    outb(0x3D4, 0x0A);
+    outb(0x3D5, start_scanline);
+    outb(0x3D4, 0x0B);
+    outb(0x3D5, end_scanline);
 }
 
 static void fb_clear_with_color(unsigned char color) {

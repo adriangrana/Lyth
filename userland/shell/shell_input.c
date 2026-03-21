@@ -1,10 +1,13 @@
 #include "shell_input.h"
 #include "shell.h"
 #include "terminal.h"
-#include "keyboard.h"
+#include "input.h"
 #include "task.h"
+#include "fs.h"
+#include "string.h"
 
-#define PROMPT_TEXT "> "
+#define PROMPT_LABEL "lyth"
+#define PROMPT_SUFFIX "$ "
 
 #define INPUT_MAX 256
 #define HISTORY_MAX 16
@@ -22,12 +25,17 @@ static int selection_anchor = 0;
 
 static char clipboard[INPUT_MAX];
 static int clipboard_length = 0;
+static int overwrite_mode = 0;
 
 static char history[HISTORY_MAX][INPUT_MAX];
 static int history_count = 0;
 static int history_index = -1;
 static char draft_buffer[INPUT_MAX];
 static int browsing_history = 0;
+static unsigned char prompt_bracket_color = 0x08;
+static unsigned char prompt_label_color = 0x0B;
+static unsigned char prompt_suffix_color = 0x0A;
+static unsigned char selection_color = 0x70;
 
 static void shell_input_update_view(void);
 static void shell_input_reset_selection(void);
@@ -40,6 +48,8 @@ static void shell_input_insert_character(char c);
 static void shell_input_paste_clipboard(void);
 static void shell_input_move_cursor_left(int extend_selection);
 static void shell_input_move_cursor_right(int extend_selection);
+static void shell_input_move_cursor_home(int extend_selection);
+static void shell_input_move_cursor_end(int extend_selection);
 static void shell_input_clear_screen_keep_line(void);
 static void shell_input_kill_line(void);
 static void shell_input_select_all(void);
@@ -51,6 +61,64 @@ static int min_int(int a, int b) {
 
 static int max_int(int a, int b) {
     return a > b ? a : b;
+}
+
+static int shell_input_prompt_length(void) {
+    return 1 + (int)str_length(PROMPT_LABEL) + 1 + (int)str_length(PROMPT_SUFFIX);
+}
+
+static int shell_input_render_prompt(void) {
+    const char* label = PROMPT_LABEL;
+    const char* suffix = PROMPT_SUFFIX;
+    int length = 0;
+
+    terminal_put_char_with_color('[', prompt_bracket_color);
+    length++;
+
+    for (int i = 0; label[i] != '\0'; i++) {
+        terminal_put_char_with_color(label[i], prompt_label_color);
+        length++;
+    }
+
+    terminal_put_char_with_color(']', prompt_bracket_color);
+    length++;
+
+    for (int i = 0; suffix[i] != '\0'; i++) {
+        terminal_put_char_with_color(suffix[i], prompt_suffix_color);
+        length++;
+    }
+
+    return length;
+}
+
+static void shell_input_move_cursor_home(int extend_selection) {
+    if (extend_selection && !selection_active) {
+        selection_active = 1;
+        selection_anchor = cursor_pos;
+    }
+
+    cursor_pos = 0;
+
+    if (!extend_selection) {
+        shell_input_reset_selection();
+    }
+
+    shell_input_update_view();
+}
+
+static void shell_input_move_cursor_end(int extend_selection) {
+    if (extend_selection && !selection_active) {
+        selection_active = 1;
+        selection_anchor = cursor_pos;
+    }
+
+    cursor_pos = input_length;
+
+    if (!extend_selection) {
+        shell_input_reset_selection();
+    }
+
+    shell_input_update_view();
 }
 
 static void compute_cursor_position(int offset, int* row, int* col) {
@@ -74,7 +142,7 @@ static void shell_input_set_cursor_to_edit_pos(void) {
     int row = 0;
     int col = 0;
 
-    compute_cursor_position(2 + cursor_pos, &row, &col);
+    compute_cursor_position(shell_input_prompt_length() + cursor_pos, &row, &col);
     terminal_set_cursor(row, col);
 }
 
@@ -202,9 +270,10 @@ static void shell_input_draw_line(void) {
     int col;
     int selection_start;
     int selection_end;
+    int prompt_length;
 
     terminal_set_cursor(prompt_row, prompt_col);
-    terminal_print(PROMPT_TEXT);
+    prompt_length = shell_input_render_prompt();
 
     selection_start = -1;
     selection_end = -1;
@@ -216,7 +285,7 @@ static void shell_input_draw_line(void) {
 
     for (int i = 0; i < input_length; i++) {
         if (i >= selection_start && i < selection_end) {
-            terminal_put_char_with_color(input_buffer[i], 0x70);
+            terminal_put_char_with_color(input_buffer[i], selection_color);
         } else {
             terminal_put_char(input_buffer[i]);
         }
@@ -228,7 +297,7 @@ static void shell_input_draw_line(void) {
     }
 
     rendered_length = input_length;
-    compute_cursor_position(2 + cursor_pos, &row, &col);
+    compute_cursor_position(prompt_length + cursor_pos, &row, &col);
     terminal_set_cursor(row, col);
 }
 
@@ -238,7 +307,7 @@ static void shell_input_update_view(void) {
 
 static void shell_input_show_prompt(void) {
     shell_input_capture_prompt();
-    terminal_print(PROMPT_TEXT);
+    shell_input_render_prompt();
     rendered_length = 0;
     prompt_visible = 1;
 }
@@ -274,12 +343,20 @@ static void shell_input_replace_line(const char* text) {
 }
 
 static void shell_input_insert_character(char c) {
-    if (input_length >= INPUT_MAX - 1) {
+    if (selection_active && selection_anchor != cursor_pos) {
+        shell_input_delete_selection();
+    }
+
+    if (overwrite_mode && cursor_pos < input_length) {
+        input_buffer[cursor_pos] = c;
+        cursor_pos++;
+        shell_input_reset_selection();
+        shell_input_update_view();
         return;
     }
 
-    if (selection_active && selection_anchor != cursor_pos) {
-        shell_input_delete_selection();
+    if (input_length >= INPUT_MAX - 1) {
+        return;
     }
 
     for (int i = input_length; i > cursor_pos; i--) {
@@ -366,47 +443,82 @@ static void shell_input_select_all(void) {
 static void shell_input_try_tab_completion(void) {
     const char* matches[8];
     char prefix[INPUT_MAX];
+    int token_start;
+    int token_end;
     int prefix_length = 0;
     int match_count;
+    int first_token = 1;
+    int replace_end;
+    int completion_length;
 
-    for (int i = 0; i < input_length; i++) {
-        if (input_buffer[i] == ' ' || input_buffer[i] == '\t') {
-            return;
+    if (cursor_pos > input_length) {
+        cursor_pos = input_length;
+    }
+
+    token_start = cursor_pos;
+    while (token_start > 0 && input_buffer[token_start - 1] != ' ' && input_buffer[token_start - 1] != '\t') {
+        token_start--;
+    }
+
+    token_end = cursor_pos;
+    while (token_end < input_length && input_buffer[token_end] != ' ' && input_buffer[token_end] != '\t') {
+        token_end++;
+    }
+
+    for (int i = 0; i < token_start; i++) {
+        if (input_buffer[i] != ' ' && input_buffer[i] != '\t') {
+            first_token = 0;
+            break;
         }
     }
 
-    while (prefix_length < cursor_pos && prefix_length < INPUT_MAX - 1 && input_buffer[prefix_length] != ' ' && input_buffer[prefix_length] != '\t') {
-        prefix[prefix_length] = input_buffer[prefix_length];
+    while ((token_start + prefix_length) < cursor_pos && prefix_length < INPUT_MAX - 1) {
+        prefix[prefix_length] = input_buffer[token_start + prefix_length];
         prefix_length++;
     }
 
     prefix[prefix_length] = '\0';
 
     if (prefix_length == 0) {
-        return;
+        if (!first_token) {
+            prefix[0] = '\0';
+        } else {
+            return;
+        }
     }
 
-    match_count = shell_complete_command(prefix, matches, 8);
+    match_count = first_token ? shell_complete_command(prefix, matches, 8)
+                              : shell_complete_path(prefix, matches, 8);
     if (match_count == 0) {
         return;
     }
 
     if (match_count == 1) {
-        int match_index = 0;
+        int write_index = token_start;
         const char* completion = matches[0];
 
-        while (completion[match_index] != '\0' && match_index < INPUT_MAX - 1) {
-            input_buffer[match_index] = completion[match_index];
-            match_index++;
+        completion_length = (int)str_length(matches[0]);
+
+        while (completion[0] != '\0' && write_index < INPUT_MAX - 1) {
+            input_buffer[write_index] = completion[0];
+            write_index++;
+            completion++;
         }
 
-        if (match_index < INPUT_MAX - 1) {
-            input_buffer[match_index] = ' ';
-            match_index++;
+        replace_end = token_end;
+        while (replace_end < input_length) {
+            input_buffer[write_index] = input_buffer[replace_end];
+            write_index++;
+            replace_end++;
         }
 
-        input_buffer[match_index] = '\0';
-        input_length = match_index;
+        if (token_end == input_length && write_index < INPUT_MAX - 1) {
+            input_buffer[write_index] = ' ';
+            write_index++;
+        }
+
+        input_buffer[write_index] = '\0';
+        input_length = write_index;
         cursor_pos = input_length;
         shell_input_reset_selection();
         shell_input_update_view();
@@ -557,13 +669,30 @@ void shell_input_resume_prompt(void) {
     shell_input_update_view();
 }
 
-void shell_input_handle_event(const keyboard_event_t* event) {
+void shell_input_set_theme(unsigned char bracket_color, unsigned char label_color, unsigned char suffix_color, unsigned char new_selection_color) {
+    prompt_bracket_color = bracket_color;
+    prompt_label_color = label_color;
+    prompt_suffix_color = suffix_color;
+    selection_color = new_selection_color;
+}
+
+static void shell_input_toggle_overwrite_mode(void) {
+    overwrite_mode = !overwrite_mode;
+    terminal_set_overwrite_mode(overwrite_mode);
+    shell_input_update_view();
+}
+
+void shell_input_handle_event(const input_event_t* event) {
     if (event == 0) {
         return;
     }
 
+    if (event->device_type != INPUT_DEVICE_KEYBOARD) {
+        return;
+    }
+
     if (!prompt_visible) {
-        if (event->type == KEY_EVENT_CTRL_C && task_has_foreground_task()) {
+        if (event->type == INPUT_EVENT_CTRL_C && task_has_foreground_task()) {
             return;
         }
 
@@ -571,7 +700,7 @@ void shell_input_handle_event(const keyboard_event_t* event) {
     }
 
     switch (event->type) {
-        case KEY_EVENT_CTRL_C:
+        case INPUT_EVENT_CTRL_C:
             terminal_print_line("^C");
             input_length = 0;
             cursor_pos = 0;
@@ -582,11 +711,11 @@ void shell_input_handle_event(const keyboard_event_t* event) {
             shell_input_update_view();
             return;
 
-        case KEY_EVENT_ENTER:
+        case INPUT_EVENT_ENTER:
             shell_input_submit();
             return;
 
-        case KEY_EVENT_BACKSPACE:
+        case INPUT_EVENT_BACKSPACE:
             if (selection_active && selection_anchor != cursor_pos) {
                 shell_input_delete_selection();
             } else if (cursor_pos > 0 && input_length > 0) {
@@ -602,25 +731,58 @@ void shell_input_handle_event(const keyboard_event_t* event) {
             history_end_browse();
             return;
 
-        case KEY_EVENT_UP:
+        case INPUT_EVENT_DELETE:
+            if (selection_active && selection_anchor != cursor_pos) {
+                shell_input_delete_selection();
+            } else if (cursor_pos < input_length && input_length > 0) {
+                for (int i = cursor_pos; i < input_length - 1; i++) {
+                    input_buffer[i] = input_buffer[i + 1];
+                }
+                input_length--;
+                input_buffer[input_length] = '\0';
+                shell_input_reset_selection();
+                shell_input_update_view();
+            }
+            history_end_browse();
+            return;
+
+        case INPUT_EVENT_UP:
             history_move_up();
             return;
 
-        case KEY_EVENT_DOWN:
+        case INPUT_EVENT_DOWN:
             history_move_down();
             return;
 
-        case KEY_EVENT_LEFT:
+        case INPUT_EVENT_LEFT:
             shell_input_move_cursor_left((event->modifiers & KEY_MOD_SHIFT) != 0);
             history_end_browse();
             return;
 
-        case KEY_EVENT_RIGHT:
+        case INPUT_EVENT_RIGHT:
             shell_input_move_cursor_right((event->modifiers & KEY_MOD_SHIFT) != 0);
             history_end_browse();
             return;
 
-        case KEY_EVENT_INSERT:
+        case INPUT_EVENT_HOME:
+            shell_input_move_cursor_home((event->modifiers & KEY_MOD_SHIFT) != 0);
+            history_end_browse();
+            return;
+
+        case INPUT_EVENT_END:
+            shell_input_move_cursor_end((event->modifiers & KEY_MOD_SHIFT) != 0);
+            history_end_browse();
+            return;
+
+        case INPUT_EVENT_PAGE_UP:
+            history_move_up();
+            return;
+
+        case INPUT_EVENT_PAGE_DOWN:
+            history_move_down();
+            return;
+
+        case INPUT_EVENT_INSERT:
             if (event->modifiers & KEY_MOD_SHIFT) {
                 shell_input_paste_clipboard();
                 shell_input_update_view();
@@ -636,13 +798,14 @@ void shell_input_handle_event(const keyboard_event_t* event) {
                 return;
             }
 
+            shell_input_toggle_overwrite_mode();
             return;
 
-        case KEY_EVENT_TAB:
+        case INPUT_EVENT_TAB:
             shell_input_try_tab_completion();
             return;
 
-        case KEY_EVENT_CHAR:
+        case INPUT_EVENT_CHAR:
             if (event->modifiers & KEY_MOD_CTRL) {
                 if (event->character == 'l' || event->character == 'L') {
                     shell_input_clear_screen_keep_line();

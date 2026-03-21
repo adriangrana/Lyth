@@ -198,6 +198,65 @@ void physmem_free_frame(uint32_t physical_address) {
     mark_frame(frame, 0);
 }
 
+uint32_t physmem_alloc_region(uint32_t size, uint32_t alignment) {
+    uint32_t aligned_size;
+    uint32_t aligned_start;
+    uint32_t end_frame;
+    uint32_t start_frame;
+    uint32_t frame_count;
+
+    if (size == 0) {
+        return 0;
+    }
+
+    if (alignment < PHYSMEM_FRAME_SIZE) {
+        alignment = PHYSMEM_FRAME_SIZE;
+    }
+
+    aligned_size = align_up(size, PHYSMEM_FRAME_SIZE);
+    frame_count = aligned_size / PHYSMEM_FRAME_SIZE;
+
+    for (start_frame = 0; start_frame + frame_count <= total_frames; start_frame++) {
+        uint32_t start = start_frame * PHYSMEM_FRAME_SIZE;
+        int free = 1;
+
+        aligned_start = align_up(start, alignment);
+        if (aligned_start != start) {
+            continue;
+        }
+
+        if (start < 0x00100000U) {
+            continue;
+        }
+
+        end_frame = start_frame + frame_count;
+        for (uint32_t frame = start_frame; frame < end_frame; frame++) {
+            if (frame_is_marked(frame)) {
+                free = 0;
+                start_frame = frame;
+                break;
+            }
+        }
+
+        if (!free) {
+            continue;
+        }
+
+        mark_range(start, aligned_size, 1);
+        return start;
+    }
+
+    return 0;
+}
+
+void physmem_free_region(uint32_t start, uint32_t length) {
+    mark_range(start, length, 0);
+}
+
+void physmem_reserve_region(uint32_t start, uint32_t length) {
+    mark_range(start, length, 1);
+}
+
 uint32_t physmem_total_bytes(void) {
     return total_frames * PHYSMEM_FRAME_SIZE;
 }

@@ -4,6 +4,157 @@
 #include "task.h"
 #include "heap.h"
 #include "fs.h"
+#include "paging.h"
+#include "string.h"
+
+#define SYSCALL_MAX_TEXT_LENGTH 1024U
+#define SYSCALL_MAX_PATH_LENGTH 256U
+#define USER_HEAP_ALIGNMENT 8U
+
+typedef struct user_heap_block {
+    unsigned int size;
+    unsigned int free;
+    unsigned int next;
+} user_heap_block_t;
+
+static unsigned int syscall_align_up(unsigned int size, unsigned int alignment) {
+    return (size + alignment - 1U) & ~(alignment - 1U);
+}
+
+static int syscall_from_user_mode(void) {
+    return task_is_running() && task_current_is_user_mode();
+}
+
+static int syscall_validate_user_string(const char* text, unsigned int max_length) {
+    if (!syscall_from_user_mode()) {
+        return text != 0;
+    }
+
+    return paging_user_string_is_accessible(text, max_length);
+}
+
+static int syscall_validate_user_buffer(const void* buffer, unsigned int size) {
+    if (!syscall_from_user_mode()) {
+        return buffer != 0;
+    }
+
+    return paging_user_buffer_is_accessible(buffer, size);
+}
+
+static int syscall_copy_string_to_buffer(const char* source, char* destination, unsigned int buffer_size) {
+    unsigned int length;
+
+    if (source == 0 || destination == 0 || buffer_size == 0) {
+        return -1;
+    }
+
+    length = str_length(source);
+    if (length >= buffer_size) {
+        length = buffer_size - 1;
+    }
+
+    for (unsigned int i = 0; i < length; i++) {
+        destination[i] = source[i];
+    }
+
+    destination[length] = '\0';
+    return (int)length;
+}
+
+static user_heap_block_t* user_heap_head(void) {
+    uint32_t heap_base = task_current_user_heap_base();
+    uint32_t heap_size = task_current_user_heap_size();
+    user_heap_block_t* head;
+
+    if (heap_base == 0 || heap_size <= sizeof(user_heap_block_t)) {
+        return 0;
+    }
+
+    head = (user_heap_block_t*)(uintptr_t)heap_base;
+    if (head->size == 0 && head->free == 0 && head->next == 0) {
+        head->size = heap_size - sizeof(user_heap_block_t);
+        head->free = 1;
+        head->next = 0;
+    }
+
+    return head;
+}
+
+static void user_heap_split_block(user_heap_block_t* block, unsigned int size) {
+    user_heap_block_t* next_block;
+    unsigned int remaining;
+
+    if (block == 0 || block->size <= size + sizeof(user_heap_block_t) + USER_HEAP_ALIGNMENT) {
+        return;
+    }
+
+    remaining = block->size - size - sizeof(user_heap_block_t);
+    next_block = (user_heap_block_t*)((unsigned char*)(block + 1) + size);
+    next_block->size = remaining;
+    next_block->free = 1;
+    next_block->next = block->next;
+
+    block->size = size;
+    block->next = (unsigned int)(uintptr_t)next_block;
+}
+
+static void user_heap_coalesce(void) {
+    user_heap_block_t* block = user_heap_head();
+
+    while (block != 0 && block->next != 0) {
+        user_heap_block_t* next_block = (user_heap_block_t*)(uintptr_t)block->next;
+
+        if (block->free && next_block->free) {
+            block->size += sizeof(user_heap_block_t) + next_block->size;
+            block->next = next_block->next;
+            continue;
+        }
+
+        block = next_block;
+    }
+}
+
+static void* user_heap_alloc(unsigned int size) {
+    user_heap_block_t* block;
+
+    if (size == 0) {
+        return 0;
+    }
+
+    block = user_heap_head();
+    if (block == 0) {
+        return 0;
+    }
+
+    size = syscall_align_up(size, USER_HEAP_ALIGNMENT);
+    while (block != 0) {
+        if (block->free && block->size >= size) {
+            user_heap_split_block(block, size);
+            block->free = 0;
+            return (void*)(block + 1);
+        }
+
+        block = block->next != 0 ? (user_heap_block_t*)(uintptr_t)block->next : 0;
+    }
+
+    return 0;
+}
+
+static void user_heap_free(void* ptr) {
+    user_heap_block_t* block;
+
+    if (ptr == 0 || !paging_user_buffer_is_accessible(ptr, 1)) {
+        return;
+    }
+
+    block = ((user_heap_block_t*)ptr) - 1;
+    if (!paging_user_buffer_is_accessible(block, sizeof(user_heap_block_t))) {
+        return;
+    }
+
+    block->free = 1;
+    user_heap_coalesce();
+}
 
 unsigned int syscall_callback(unsigned int number,
                               unsigned int arg0,
@@ -14,6 +165,9 @@ unsigned int syscall_callback(unsigned int number,
 
     switch (number) {
         case SYSCALL_WRITE:
+            if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_TEXT_LENGTH)) {
+                return (unsigned int)-1;
+            }
             terminal_print((const char*)arg0);
             return 0;
 
@@ -29,22 +183,53 @@ unsigned int syscall_callback(unsigned int number,
             return 0;
 
         case SYSCALL_ALLOC:
+            if (syscall_from_user_mode()) {
+                return (unsigned int)user_heap_alloc(arg0);
+            }
             return (unsigned int)kmalloc(arg0);
 
         case SYSCALL_FREE:
+            if (syscall_from_user_mode()) {
+                user_heap_free((void*)arg0);
+                return 0;
+            }
             kfree((void*)arg0);
+            return 0;
+
+        case SYSCALL_EXIT:
+            task_exit((int)arg0);
             return 0;
 
         case SYSCALL_FS_COUNT:
             return (unsigned int)fs_count();
 
         case SYSCALL_FS_NAME_AT:
+            if (syscall_from_user_mode()) {
+                return 0;
+            }
             return (unsigned int)fs_name_at((int)arg0);
 
+        case SYSCALL_FS_NAME_COPY: {
+            const char* name = fs_name_at((int)arg0);
+
+            if (!syscall_validate_user_buffer((const void*)arg1, arg2)) {
+                return (unsigned int)-1;
+            }
+
+            return (unsigned int)syscall_copy_string_to_buffer(name, (char*)arg1, arg2);
+        }
+
         case SYSCALL_FS_READ:
+            if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH) ||
+                !syscall_validate_user_buffer((const void*)arg1, arg2)) {
+                return (unsigned int)-1;
+            }
             return (unsigned int)fs_read((const char*)arg0, (char*)arg1, arg2);
 
         case SYSCALL_FS_SIZE:
+            if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH)) {
+                return 0;
+            }
             return fs_size((const char*)arg0);
 
         default:
@@ -93,12 +278,20 @@ void syscall_free(void* ptr) {
     syscall_invoke(SYSCALL_FREE, (unsigned int)ptr, 0, 0, 0);
 }
 
+void syscall_exit(int exit_code) {
+    syscall_invoke(SYSCALL_EXIT, (unsigned int)exit_code, 0, 0, 0);
+}
+
 int syscall_fs_count(void) {
     return (int)syscall_invoke(SYSCALL_FS_COUNT, 0, 0, 0, 0);
 }
 
-const char* syscall_fs_name_at(int index) {
-    return (const char*)syscall_invoke(SYSCALL_FS_NAME_AT, (unsigned int)index, 0, 0, 0);
+int syscall_fs_name(int index, char* buffer, unsigned int buffer_size) {
+    return (int)syscall_invoke(SYSCALL_FS_NAME_COPY,
+                               (unsigned int)index,
+                               (unsigned int)buffer,
+                               buffer_size,
+                               0);
 }
 
 int syscall_fs_read(const char* name, char* buffer, unsigned int buffer_size) {

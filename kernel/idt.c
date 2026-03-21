@@ -26,6 +26,10 @@ void idt_set_gate(unsigned char num, unsigned int base, unsigned short sel, unsi
     idt[num].flags = flags;
 }
 
+void idt_load_table(void) {
+    idt_load((unsigned int)&idtp);
+}
+
 void idt_init(void) {
     idtp.limit = (unsigned short)((sizeof(struct idt_entry) * 256) - 1);
     idtp.base = (unsigned int)&idt;
@@ -33,6 +37,4 @@ void idt_init(void) {
     for (int i = 0; i < 256; i++) {
         idt_set_gate(i, 0, 0, 0);
     }
-
-    idt_load((unsigned int)&idtp);
 }

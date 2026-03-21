@@ -6,15 +6,25 @@
 #define KEY_MOD_ALT   0x04
 
 typedef enum {
+	KEYBOARD_LAYOUT_US = 0,
+	KEYBOARD_LAYOUT_ES = 1
+} keyboard_layout_t;
+
+typedef enum {
 	KEY_EVENT_NONE = 0,
 	KEY_EVENT_CHAR,
 	KEY_EVENT_ENTER,
 	KEY_EVENT_BACKSPACE,
+	KEY_EVENT_DELETE,
 	KEY_EVENT_TAB,
 	KEY_EVENT_UP,
 	KEY_EVENT_DOWN,
 	KEY_EVENT_LEFT,
 	KEY_EVENT_RIGHT,
+	KEY_EVENT_HOME,
+	KEY_EVENT_END,
+	KEY_EVENT_PAGE_UP,
+	KEY_EVENT_PAGE_DOWN,
 	KEY_EVENT_INSERT,
 	KEY_EVENT_CTRL_C
 } keyboard_event_type_t;
@@ -27,5 +37,8 @@ typedef struct {
 
 void keyboard_handle_interrupt(void);
 int keyboard_poll_event(keyboard_event_t* event);
+void keyboard_set_layout(keyboard_layout_t layout);
+keyboard_layout_t keyboard_get_layout(void);
+const char* keyboard_layout_name(keyboard_layout_t layout);
 
 #endif

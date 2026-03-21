@@ -1,15 +1,18 @@
 #include <stdint.h>
 #include "multiboot.h"
 #include "fbconsole.h"
+#include "gdt.h"
 #include "terminal.h"
 #include "shell_input.h"
 #include "interrupts.h"
-#include "keyboard.h"
+#include "input.h"
+#include "mouse.h"
 #include "heap.h"
 #include "fs.h"
 #include "task.h"
 #include "physmem.h"
 #include "paging.h"
+#include "klog.h"
 
 static void terminal_write_uint(uint32_t value) {
     char buffer[16];
@@ -85,10 +88,17 @@ static void print_memory_info(void) {
 void kernel_main(unsigned long mbi_ptr) {
     /* mbi_ptr: Multiboot info pointer passed in EBX by GRUB */
     multiboot_info_t* mbi = (multiboot_info_t*)(uintptr_t)mbi_ptr;
+    mouse_state_t mouse_state;
 
+    gdt_init();
+    klog_clear();
+    klog_write(KLOG_LEVEL_INFO, "boot", "GDT inicializada");
     terminal_init();
     if (fb_init(mbi)) {
         terminal_clear();
+        klog_write(KLOG_LEVEL_INFO, "video", "Framebuffer activado");
+    } else {
+        klog_write(KLOG_LEVEL_WARN, "video", "Framebuffer no disponible");
     }
 
     physmem_init(mbi);
@@ -96,18 +106,36 @@ void kernel_main(unsigned long mbi_ptr) {
     heap_init();
     fs_init();
     task_system_init();
+    klog_write(KLOG_LEVEL_INFO, "mem", "Heap, physmem y paging inicializados");
+    klog_write(KLOG_LEVEL_INFO, "fs", "FS en memoria listo");
+    klog_write(KLOG_LEVEL_INFO, "task", "Scheduler listo");
 
     print_framebuffer_info();
     print_memory_info();
 
+    mouse_init();
+    if (fb_active() && mouse_is_enabled()) {
+        mouse_get_state(&mouse_state);
+        fb_move_mouse_cursor(mouse_state.x, mouse_state.y);
+        klog_write(KLOG_LEVEL_INFO, "mouse", "Ratón PS/2 activado");
+    } else {
+        klog_write(KLOG_LEVEL_WARN, "mouse", "Ratón PS/2 no disponible");
+    }
     shell_input_init();
+    klog_write(KLOG_LEVEL_INFO, "shell", "Shell interactiva lista");
 
     interrupts_init();
+    klog_write(KLOG_LEVEL_INFO, "irq", "IDT/PIC/PIT inicializados");
 
     while (1) {
-        keyboard_event_t event;
+        input_event_t event;
 
-        while (keyboard_poll_event(&event)) {
+        while (input_poll_event(&event)) {
+            if (event.device_type == INPUT_DEVICE_MOUSE && fb_active()) {
+                mouse_get_state(&mouse_state);
+                fb_move_mouse_cursor(mouse_state.x, mouse_state.y);
+            }
+
             shell_input_handle_event(&event);
         }
 

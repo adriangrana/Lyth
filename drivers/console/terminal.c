@@ -12,6 +12,11 @@ typedef struct {
 } terminal_cell_t;
 
 static unsigned char terminal_color = 0x0F;
+static int terminal_overwrite_cursor = 0;
+static char* terminal_capture_buffer = 0;
+static unsigned int terminal_capture_size = 0;
+static unsigned int terminal_capture_length = 0;
+static int terminal_capture_active = 0;
 
 static terminal_cell_t terminal_cells[TERMINAL_MAX_ROWS][TERMINAL_MAX_COLUMNS];
 static int terminal_cols = 80;
@@ -61,6 +66,20 @@ static void render_cell(int row, int col) {
         terminal_cells[row][col].ch,
         terminal_cells[row][col].color
     );
+}
+
+static void terminal_capture_put_char(char c) {
+    if (!terminal_capture_active || terminal_capture_buffer == 0 || terminal_capture_size == 0) {
+        return;
+    }
+
+    if (terminal_capture_length >= terminal_capture_size - 1) {
+        terminal_capture_buffer[terminal_capture_size - 1] = '\0';
+        return;
+    }
+
+    terminal_capture_buffer[terminal_capture_length++] = c;
+    terminal_capture_buffer[terminal_capture_length] = '\0';
 }
 
 static void hide_cursor(void) {
@@ -148,6 +167,41 @@ void terminal_set_color(unsigned char color) {
     terminal_color = color;
 }
 
+void terminal_set_overwrite_mode(int enabled) {
+    terminal_overwrite_cursor = enabled ? 1 : 0;
+
+    if (cursor_visible) {
+        cursor_visible = 0;
+        show_cursor();
+    }
+}
+
+int terminal_overwrite_mode(void) {
+    return terminal_overwrite_cursor;
+}
+
+void terminal_capture_begin(char* buffer, unsigned int buffer_size) {
+    terminal_capture_buffer = buffer;
+    terminal_capture_size = buffer_size;
+    terminal_capture_length = 0;
+    terminal_capture_active = (buffer != 0 && buffer_size > 0) ? 1 : 0;
+
+    if (terminal_capture_active) {
+        terminal_capture_buffer[0] = '\0';
+    }
+}
+
+unsigned int terminal_capture_end(void) {
+    unsigned int length = terminal_capture_length;
+
+    terminal_capture_buffer = 0;
+    terminal_capture_size = 0;
+    terminal_capture_length = 0;
+    terminal_capture_active = 0;
+
+    return length;
+}
+
 void terminal_get_cursor(int* row, int* col) {
     if (row != 0) {
         *row = cursor_row;
@@ -210,6 +264,12 @@ void terminal_clear(void) {
 
 void terminal_put_char(char c) {
     sync_terminal_geometry();
+
+    if (terminal_capture_active) {
+        terminal_capture_put_char(c);
+        return;
+    }
+
     hide_cursor();
 
     if (c == '\n') {
@@ -239,6 +299,15 @@ void terminal_put_char(char c) {
 
 void terminal_backspace(void) {
     sync_terminal_geometry();
+
+    if (terminal_capture_active) {
+        if (terminal_capture_length > 0) {
+            terminal_capture_length--;
+            terminal_capture_buffer[terminal_capture_length] = '\0';
+        }
+        return;
+    }
+
     hide_cursor();
 
     if (cursor_col > 0) {
@@ -283,6 +352,16 @@ void terminal_print_uint(unsigned int value) {
     while (length > 0) {
         length--;
         terminal_put_char(digits[length]);
+    }
+}
+
+void terminal_print_hex(unsigned int value) {
+    static const char hex_digits[] = "0123456789ABCDEF";
+
+    terminal_print("0x");
+
+    for (int shift = 28; shift >= 0; shift -= 4) {
+        terminal_put_char(hex_digits[(value >> shift) & 0x0F]);
     }
 }
 
