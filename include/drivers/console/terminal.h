@@ -22,5 +22,9 @@ void terminal_set_cursor(int row, int col);
 void terminal_update_cursor(void);
 int terminal_rows(void);
 int terminal_columns(void);
+int terminal_switch_vc(int index);
+int terminal_active_vc(void);
+int terminal_vc_count(void);
+void terminal_set_output_vc(int vc_index);
 
 #endif

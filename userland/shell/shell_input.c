@@ -11,6 +11,15 @@
 
 #define INPUT_MAX 256
 #define HISTORY_MAX 16
+#define SHELL_INPUT_MAX_VC 4
+
+typedef struct {
+    int initialized;
+    int prompt_row;
+    int prompt_col;
+    int rendered_length;
+    int prompt_visible;
+} shell_input_vc_state_t;
 
 static char input_buffer[INPUT_MAX];
 static int input_length = 0;
@@ -45,6 +54,7 @@ static char tab_match_store[TAB_MAX_MATCHES][TAB_MATCH_LEN];
 static int  tab_match_count = 0;
 static int  tab_active = 0;
 static int  tab_suggest_row_stored = -1;
+static shell_input_vc_state_t shell_input_vc_states[SHELL_INPUT_MAX_VC];
 
 static void shell_input_update_view(void);
 static void shell_input_reset_selection(void);
@@ -66,6 +76,38 @@ static void shell_input_try_tab_completion(void);
 static void shell_input_clear_suggestions(void);
 static void shell_input_refresh_suggestions(void);
 static void shell_input_get_current_prefix(char* out, int* first_token_out);
+
+static int shell_input_current_vc_slot(void) {
+    int slot = terminal_active_vc();
+
+    if (slot < 0 || slot >= SHELL_INPUT_MAX_VC) {
+        return 0;
+    }
+
+    return slot;
+}
+
+static void shell_input_store_current_vc_state(void) {
+    int slot = shell_input_current_vc_slot();
+
+    shell_input_vc_states[slot].initialized = 1;
+    shell_input_vc_states[slot].prompt_row = prompt_row;
+    shell_input_vc_states[slot].prompt_col = prompt_col;
+    shell_input_vc_states[slot].rendered_length = rendered_length;
+    shell_input_vc_states[slot].prompt_visible = prompt_visible;
+}
+
+static int shell_input_load_vc_state(int slot) {
+    if (slot < 0 || slot >= SHELL_INPUT_MAX_VC || !shell_input_vc_states[slot].initialized) {
+        return 0;
+    }
+
+    prompt_row = shell_input_vc_states[slot].prompt_row;
+    prompt_col = shell_input_vc_states[slot].prompt_col;
+    rendered_length = shell_input_vc_states[slot].rendered_length;
+    prompt_visible = shell_input_vc_states[slot].prompt_visible;
+    return 1;
+}
 
 static int min_int(int a, int b) {
     return a < b ? a : b;
@@ -169,6 +211,7 @@ static void compute_cursor_position(int offset, int* row, int* col) {
 
 static void shell_input_capture_prompt(void) {
     terminal_get_cursor(&prompt_row, &prompt_col);
+    shell_input_store_current_vc_state();
 }
 
 static void shell_input_set_cursor_to_edit_pos(void) {
@@ -330,6 +373,7 @@ static void shell_input_draw_line(void) {
     }
 
     rendered_length = input_length;
+    shell_input_store_current_vc_state();
     compute_cursor_position(prompt_length + cursor_pos, &row, &col);
     terminal_set_cursor(row, col);
 }
@@ -349,13 +393,16 @@ static void shell_input_show_prompt(void) {
     shell_input_render_prompt();
     rendered_length = 0;
     prompt_visible = 1;
+    shell_input_store_current_vc_state();
 }
 
 static void shell_input_on_foreground_complete(int id, const char* name, int cancelled) {
     (void)id;
     (void)name;
     (void)cancelled;
-    shell_input_resume_prompt();
+    prompt_visible = 0;
+    shell_input_show_prompt();
+    shell_input_update_view();
 }
 
 static void shell_input_clear_line(void) {
@@ -788,6 +835,13 @@ void shell_input_init(void) {
     selection_anchor = 0;
     clipboard_length = 0;
     prompt_visible = 0;
+    for (int i = 0; i < SHELL_INPUT_MAX_VC; i++) {
+        shell_input_vc_states[i].initialized = 0;
+        shell_input_vc_states[i].prompt_row = 0;
+        shell_input_vc_states[i].prompt_col = 0;
+        shell_input_vc_states[i].rendered_length = 0;
+        shell_input_vc_states[i].prompt_visible = 0;
+    }
 
     shell_init();
     task_set_foreground_complete_handler(shell_input_on_foreground_complete);
@@ -816,6 +870,53 @@ static void shell_input_toggle_overwrite_mode(void) {
     shell_input_update_view();
 }
 
+static int shell_input_try_switch_virtual_console(const input_event_t* event) {
+    int target_vc = -1;
+    int current_vc;
+    int had_state;
+
+    if (event == 0 || event->device_type != INPUT_DEVICE_KEYBOARD || (event->modifiers & KEY_MOD_CTRL) == 0) {
+        return 0;
+    }
+
+    switch (event->type) {
+        case INPUT_EVENT_F1:
+            target_vc = 0;
+            break;
+        case INPUT_EVENT_F2:
+            target_vc = 1;
+            break;
+        case INPUT_EVENT_F3:
+            target_vc = 2;
+            break;
+        case INPUT_EVENT_F4:
+            target_vc = 3;
+            break;
+        default:
+            return 0;
+    }
+
+    current_vc = shell_input_current_vc_slot();
+    shell_input_clear_suggestions();
+    shell_input_store_current_vc_state();
+
+    if (!terminal_switch_vc(target_vc)) {
+        return 0;
+    }
+
+    had_state = shell_input_load_vc_state(target_vc);
+    if (!had_state) {
+        /* First visit to this VC — draw a fresh prompt */
+        shell_input_show_prompt();
+        shell_input_update_view();
+    } else if (prompt_visible) {
+        shell_input_update_view();
+    }
+
+    (void)current_vc;
+    return 1;
+}
+
 void shell_input_handle_event(const input_event_t* event) {
     if (event == 0) {
         return;
@@ -825,11 +926,18 @@ void shell_input_handle_event(const input_event_t* event) {
         return;
     }
 
-    if (!prompt_visible) {
-        if (event->type == INPUT_EVENT_CTRL_C && task_has_foreground_task()) {
-            return;
-        }
+    if (shell_input_try_switch_virtual_console(event)) {
+        return;
+    }
 
+    if (task_has_foreground_task()) {
+        if (event->type == INPUT_EVENT_CTRL_C) {
+            task_request_foreground_cancel();
+        }
+        return;
+    }
+
+    if (!prompt_visible) {
         return;
     }
 

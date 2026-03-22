@@ -65,7 +65,8 @@ static void init_step(void) {
 void init_start(void) {
     init_task_pid = task_spawn("init", init_step, 0, 0, 0);
     if (init_task_pid > 0) {
-        task_set_priority(init_task_pid, TASK_PRIORITY_HIGH);
+        task_set_priority(init_task_pid, TASK_PRIORITY_NORMAL);
+        task_set_output_vc(init_task_pid, -1);  /* init follows active VC */
         task_set_init_pid(init_task_pid);  /* let the task subsystem know who init is */
     }
 }

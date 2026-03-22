@@ -8,13 +8,22 @@
 
 #define TERMINAL_MAX_COLUMNS 240
 #define TERMINAL_MAX_ROWS 80
+#define TERMINAL_VC_COUNT 4
 
 typedef struct {
     unsigned int glyph;  /* CP437 font glyph index */
     unsigned char color;
 } terminal_cell_t;
 
-static unsigned char terminal_color = 0x0F;
+typedef struct {
+    terminal_cell_t cells[TERMINAL_MAX_ROWS][TERMINAL_MAX_COLUMNS];
+    unsigned char color;
+    int cursor_row;
+    int cursor_col;
+    uint32_t utf8_accum;
+    int utf8_remain;
+} terminal_vc_state_t;
+
 static int terminal_overwrite_cursor = 0;
 static char* terminal_capture_buffer = 0;
 static unsigned int terminal_capture_size = 0;
@@ -22,19 +31,14 @@ static unsigned int terminal_capture_length = 0;
 static int terminal_capture_active = 0;
 static int terminal_capture_dynamic = 0;
 
-static terminal_cell_t terminal_cells[TERMINAL_MAX_ROWS][TERMINAL_MAX_COLUMNS];
+static terminal_vc_state_t terminal_vcs[TERMINAL_VC_COUNT];
+static int terminal_active_console = 0;
+static int terminal_output_vc_override = -1;
 static int terminal_cols = 80;
 static int terminal_rows_count = 25;
 
-static int cursor_row = 0;
-static int cursor_col = 0;
-
 static int cursor_visible = 0;
 static uint32_t last_blink = 0;
-
-/* UTF-8 multi-byte state machine */
-static uint32_t utf8_accum   = 0;  /* accumulated codepoint bits */
-static int      utf8_remain  = 0;  /* continuation bytes still needed */
 
 static int clamp_positive(int value, int fallback) {
     return value > 0 ? value : fallback;
@@ -42,6 +46,28 @@ static int clamp_positive(int value, int fallback) {
 
 static const console_backend_t* terminal_backend(void) {
     return console_backend_current();
+}
+
+static terminal_vc_state_t* active_vc(void) {
+    return &terminal_vcs[terminal_active_console];
+}
+
+static const terminal_vc_state_t* active_vc_const(void) {
+    return &terminal_vcs[terminal_active_console];
+}
+
+static int output_vc_index(void) {
+    if (terminal_output_vc_override >= 0 && terminal_output_vc_override < TERMINAL_VC_COUNT)
+        return terminal_output_vc_override;
+    return terminal_active_console;
+}
+
+static terminal_vc_state_t* output_vc(void) {
+    return &terminal_vcs[output_vc_index()];
+}
+
+static int output_is_visible(void) {
+    return output_vc_index() == terminal_active_console;
 }
 
 static void sync_terminal_geometry(void) {
@@ -63,6 +89,7 @@ static void sync_terminal_geometry(void) {
 
 static void render_cell(int row, int col) {
     const console_backend_t* backend = terminal_backend();
+    const terminal_vc_state_t* vc = active_vc_const();
 
     if (row < 0 || row >= terminal_rows_count || col < 0 || col >= terminal_cols) {
         return;
@@ -71,9 +98,20 @@ static void render_cell(int row, int col) {
     backend->put_cell(
         row,
         col,
-        terminal_cells[row][col].glyph,
-        terminal_cells[row][col].color
+        vc->cells[row][col].glyph,
+        vc->cells[row][col].color
     );
+}
+
+static void render_active_console(void) {
+    const console_backend_t* backend = terminal_backend();
+
+    backend->clear(active_vc()->color);
+    for (int row = 0; row < terminal_rows_count; row++) {
+        for (int col = 0; col < terminal_cols; col++) {
+            render_cell(row, col);
+        }
+    }
 }
 
 static void terminal_capture_put_char(char c) {
@@ -115,19 +153,21 @@ static void terminal_capture_put_char(char c) {
 
 static void hide_cursor(void) {
     const console_backend_t* backend = terminal_backend();
+    const terminal_vc_state_t* vc = active_vc_const();
 
     if (!backend->software_cursor || !cursor_visible) {
         return;
     }
 
-    render_cell(cursor_row, cursor_col);
+    render_cell(vc->cursor_row, vc->cursor_col);
     cursor_visible = 0;
 }
 
 static void show_cursor(void) {
     const console_backend_t* backend = terminal_backend();
+    const terminal_vc_state_t* vc = active_vc_const();
 
-    backend->show_cursor(cursor_row, cursor_col, terminal_color);
+    backend->show_cursor(vc->cursor_row, vc->cursor_col, vc->color);
 
     if (backend->software_cursor) {
         cursor_visible = 1;
@@ -157,45 +197,49 @@ void terminal_update_cursor(void) {
     }
 }
 
-static void reset_screen_buffer(void) {
+static void reset_screen_buffer(terminal_vc_state_t* vc) {
     for (int row = 0; row < terminal_rows_count; row++) {
         for (int col = 0; col < terminal_cols; col++) {
-            terminal_cells[row][col].glyph = ' ';
-            terminal_cells[row][col].color = terminal_color;
+            vc->cells[row][col].glyph = ' ';
+            vc->cells[row][col].color = vc->color;
         }
     }
 }
 
 static void scroll_if_needed(void) {
     const console_backend_t* backend = terminal_backend();
+    terminal_vc_state_t* vc = output_vc();
+    int visible = output_is_visible();
 
-    if (cursor_row < terminal_rows_count) {
+    if (vc->cursor_row < terminal_rows_count) {
         return;
     }
 
     for (int row = 1; row < terminal_rows_count; row++) {
         for (int col = 0; col < terminal_cols; col++) {
-            terminal_cells[row - 1][col] = terminal_cells[row][col];
+            vc->cells[row - 1][col] = vc->cells[row][col];
         }
     }
 
     for (int col = 0; col < terminal_cols; col++) {
-        terminal_cells[terminal_rows_count - 1][col].glyph = ' ';
-        terminal_cells[terminal_rows_count - 1][col].color = terminal_color;
+        vc->cells[terminal_rows_count - 1][col].glyph = ' ';
+        vc->cells[terminal_rows_count - 1][col].color = vc->color;
     }
 
-    backend->scroll(terminal_color);
+    if (visible) {
+        backend->scroll(vc->color);
 
-    for (int col = 0; col < terminal_cols; col++) {
-        render_cell(terminal_rows_count - 1, col);
+        for (int col = 0; col < terminal_cols; col++) {
+            render_cell(terminal_rows_count - 1, col);
+        }
     }
 
-    cursor_row = terminal_rows_count - 1;
-    cursor_col = 0;
+    vc->cursor_row = terminal_rows_count - 1;
+    vc->cursor_col = 0;
 }
 
 void terminal_set_color(unsigned char color) {
-    terminal_color = color;
+    output_vc()->color = color;
 }
 
 void terminal_set_overwrite_mode(int enabled) {
@@ -275,16 +319,21 @@ char* terminal_capture_end_dynamic(unsigned int* length) {
 }
 
 void terminal_get_cursor(int* row, int* col) {
+    const terminal_vc_state_t* vc = output_vc();
+
     if (row != 0) {
-        *row = cursor_row;
+        *row = vc->cursor_row;
     }
 
     if (col != 0) {
-        *col = cursor_col;
+        *col = vc->cursor_col;
     }
 }
 
 void terminal_set_cursor(int row, int col) {
+    terminal_vc_state_t* vc = output_vc();
+    int visible = output_is_visible();
+
     sync_terminal_geometry();
 
     if (row < 0) {
@@ -303,38 +352,51 @@ void terminal_set_cursor(int row, int col) {
         col = terminal_cols - 1;
     }
 
-    hide_cursor();
+    if (visible) hide_cursor();
 
-    cursor_row = row;
-    cursor_col = col;
-    show_cursor();
-    last_blink = timer_get_ticks();
+    vc->cursor_row = row;
+    vc->cursor_col = col;
+    if (visible) {
+        show_cursor();
+        last_blink = timer_get_ticks();
+    }
 }
 
 void terminal_put_char_with_color(char c, unsigned char color) {
-    unsigned char previous_color = terminal_color;
+    terminal_vc_state_t* vc = output_vc();
+    unsigned char previous_color = vc->color;
 
-    terminal_color = color;
+    vc->color = color;
     terminal_put_char(c);
-    terminal_color = previous_color;
+    vc->color = previous_color;
 }
 
 void terminal_clear(void) {
     const console_backend_t* backend;
+    terminal_vc_state_t* vc = output_vc();
+    int visible = output_is_visible();
 
     sync_terminal_geometry();
     backend = terminal_backend();
-    backend->clear(terminal_color);
-    reset_screen_buffer();
+    if (visible) {
+        backend->clear(vc->color);
+    }
+    reset_screen_buffer(vc);
 
-    cursor_row = 0;
-    cursor_col = 0;
-    cursor_visible = 0;
-    last_blink = timer_get_ticks();
-    show_cursor();
+    vc->cursor_row = 0;
+    vc->cursor_col = 0;
+    vc->utf8_accum = 0;
+    vc->utf8_remain = 0;
+    if (visible) {
+        cursor_visible = 0;
+        last_blink = timer_get_ticks();
+        show_cursor();
+    }
 }
 
 void terminal_put_char(char c) {
+    terminal_vc_state_t* vc = output_vc();
+    int visible = output_is_visible();
     unsigned char b = (unsigned char)c;
     uint32_t cp;
     unsigned int glyph;
@@ -354,62 +416,69 @@ void terminal_put_char(char c) {
     /* ---- UTF-8 state machine ---- */
     if (b < 0x80) {
         /* ASCII — always resets any pending sequence */
-        utf8_remain = 0;
+        vc->utf8_remain = 0;
         cp = b;
     } else if (b >= 0xC0 && b <= 0xDF) {
-        utf8_accum  = (uint32_t)(b & 0x1F);
-        utf8_remain = 1;
+        vc->utf8_accum  = (uint32_t)(b & 0x1F);
+        vc->utf8_remain = 1;
         return;
     } else if (b >= 0xE0 && b <= 0xEF) {
-        utf8_accum  = (uint32_t)(b & 0x0F);
-        utf8_remain = 2;
+        vc->utf8_accum  = (uint32_t)(b & 0x0F);
+        vc->utf8_remain = 2;
         return;
     } else if (b >= 0xF0 && b <= 0xF7) {
-        utf8_accum  = (uint32_t)(b & 0x07);
-        utf8_remain = 3;
+        vc->utf8_accum  = (uint32_t)(b & 0x07);
+        vc->utf8_remain = 3;
         return;
-    } else if (b >= 0x80 && b <= 0xBF && utf8_remain > 0) {
-        utf8_accum = (utf8_accum << 6) | (uint32_t)(b & 0x3F);
-        utf8_remain--;
-        if (utf8_remain > 0) return;   /* more bytes needed */
-        cp = utf8_accum;
-        utf8_accum = 0;
+    } else if (b >= 0x80 && b <= 0xBF && vc->utf8_remain > 0) {
+        vc->utf8_accum = (vc->utf8_accum << 6) | (uint32_t)(b & 0x3F);
+        vc->utf8_remain--;
+        if (vc->utf8_remain > 0) return;   /* more bytes needed */
+        cp = vc->utf8_accum;
+        vc->utf8_accum = 0;
     } else {
         /* Invalid byte — emit replacement and reset */
-        utf8_remain = 0;
+        vc->utf8_remain = 0;
         cp = '?';
     }
 
     glyph = unicode_to_cp437(cp);
 
-    hide_cursor();
+    if (visible) hide_cursor();
 
     if (cp == '\n') {
-        cursor_row++;
-        cursor_col = 0;
+        vc->cursor_row++;
+        vc->cursor_col = 0;
         scroll_if_needed();
-        show_cursor();
-        last_blink = timer_get_ticks();
+        if (visible) {
+            show_cursor();
+            last_blink = timer_get_ticks();
+        }
         return;
     }
 
-    terminal_cells[cursor_row][cursor_col].glyph = glyph;
-    terminal_cells[cursor_row][cursor_col].color = terminal_color;
-    render_cell(cursor_row, cursor_col);
+    vc->cells[vc->cursor_row][vc->cursor_col].glyph = glyph;
+    vc->cells[vc->cursor_row][vc->cursor_col].color = vc->color;
+    if (visible) render_cell(vc->cursor_row, vc->cursor_col);
 
-    cursor_col++;
+    vc->cursor_col++;
 
-    if (cursor_col >= terminal_cols) {
-        cursor_col = 0;
-        cursor_row++;
+    if (vc->cursor_col >= terminal_cols) {
+        vc->cursor_col = 0;
+        vc->cursor_row++;
         scroll_if_needed();
     }
 
-    show_cursor();
-    last_blink = timer_get_ticks();
+    if (visible) {
+        show_cursor();
+        last_blink = timer_get_ticks();
+    }
 }
 
 void terminal_backspace(void) {
+    terminal_vc_state_t* vc = output_vc();
+    int visible = output_is_visible();
+
     sync_terminal_geometry();
 
     if (terminal_capture_active) {
@@ -420,17 +489,19 @@ void terminal_backspace(void) {
         return;
     }
 
-    hide_cursor();
+    if (visible) hide_cursor();
 
-    if (cursor_col > 0) {
-        cursor_col--;
-        terminal_cells[cursor_row][cursor_col].glyph = ' ';
-        terminal_cells[cursor_row][cursor_col].color = terminal_color;
-        render_cell(cursor_row, cursor_col);
+    if (vc->cursor_col > 0) {
+        vc->cursor_col--;
+        vc->cells[vc->cursor_row][vc->cursor_col].glyph = ' ';
+        vc->cells[vc->cursor_row][vc->cursor_col].color = vc->color;
+        if (visible) render_cell(vc->cursor_row, vc->cursor_col);
     }
 
-    show_cursor();
-    last_blink = timer_get_ticks();
+    if (visible) {
+        show_cursor();
+        last_blink = timer_get_ticks();
+    }
 }
 
 void terminal_print(const char* str) {
@@ -479,6 +550,17 @@ void terminal_print_hex(unsigned int value) {
 
 void terminal_init(void) {
     sync_terminal_geometry();
+
+    for (int index = 0; index < TERMINAL_VC_COUNT; index++) {
+        terminal_vcs[index].color = 0x0F;
+        terminal_vcs[index].cursor_row = 0;
+        terminal_vcs[index].cursor_col = 0;
+        terminal_vcs[index].utf8_accum = 0;
+        terminal_vcs[index].utf8_remain = 0;
+        reset_screen_buffer(&terminal_vcs[index]);
+    }
+
+    terminal_active_console = 0;
     terminal_clear();
 }
 
@@ -490,4 +572,42 @@ int terminal_rows(void) {
 int terminal_columns(void) {
     sync_terminal_geometry();
     return terminal_cols;
+}
+
+int terminal_switch_vc(int index) {
+    terminal_vc_state_t* vc;
+
+    if (index < 0 || index >= TERMINAL_VC_COUNT || index == terminal_active_console) {
+        return (index == terminal_active_console) ? 1 : 0;
+    }
+
+    sync_terminal_geometry();
+    hide_cursor();
+    terminal_active_console = index;
+    vc = active_vc();
+
+    if (vc->cursor_row >= terminal_rows_count) {
+        vc->cursor_row = terminal_rows_count - 1;
+    }
+    if (vc->cursor_col >= terminal_cols) {
+        vc->cursor_col = terminal_cols - 1;
+    }
+
+    render_active_console();
+    cursor_visible = 0;
+    show_cursor();
+    last_blink = timer_get_ticks();
+    return 1;
+}
+
+int terminal_active_vc(void) {
+    return terminal_active_console;
+}
+
+int terminal_vc_count(void) {
+    return TERMINAL_VC_COUNT;
+}
+
+void terminal_set_output_vc(int vc_index) {
+    terminal_output_vc_override = vc_index;
 }

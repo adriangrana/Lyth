@@ -26,6 +26,10 @@ typedef enum {
 	KEY_EVENT_PAGE_UP,
 	KEY_EVENT_PAGE_DOWN,
 	KEY_EVENT_INSERT,
+	KEY_EVENT_F1,
+	KEY_EVENT_F2,
+	KEY_EVENT_F3,
+	KEY_EVENT_F4,
 	KEY_EVENT_CTRL_C
 } keyboard_event_type_t;
 

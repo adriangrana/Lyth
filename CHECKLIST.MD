@@ -12,7 +12,7 @@
 - [x] VGA + framebuffer
 - [x] Consola desacoplada
 - [x] UTF-8 básico
-- [ ] Consolas virtuales
+- [x] Consolas virtuales
 
 ## 3. Interrupciones y tiempo
 - [x] IDT / PIC

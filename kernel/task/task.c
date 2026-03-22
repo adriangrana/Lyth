@@ -93,6 +93,7 @@ typedef struct {
     /* alarm()/setitimer() state */
     unsigned int alarm_tick;             /* tick at which SIGALRM fires (0 = not armed) */
     unsigned int itimer_interval_ticks; /* ITIMER_REAL reload interval (0 = one-shot) */
+    int output_vc;                      /* VC index for terminal output (-1 = follow active) */
 } task_entry_t;
 
 /* ── Per-priority ready queues ────────────────────────────────────────────
@@ -784,6 +785,8 @@ static unsigned int schedule_from_idle(unsigned int current_esp) {
     tasks[selected].state = TASK_STATE_RUNNING;
     ctx_switch_count++;
 
+    terminal_set_output_vc(tasks[selected].output_vc);
+
     if (tasks[selected].page_directory != 0) {
         paging_switch_directory(tasks[selected].page_directory);
     } else {
@@ -802,6 +805,8 @@ static unsigned int schedule_back_to_idle(unsigned int current_esp) {
 
     task = &tasks[current_task_index];
     task->saved_esp = current_esp;
+
+    terminal_set_output_vc(-1);
 
     paging_switch_directory(paging_kernel_directory());
 
@@ -1033,6 +1038,7 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
     tasks[slot].data = 0;
     tasks[slot].data_size = data_size;
     tasks[slot].exit_code = 0;
+    tasks[slot].output_vc = terminal_active_vc();
     tasks[slot].saved_esp = 0;
     tasks[slot].stack = 0;
     tasks[slot].user_stack = 0;
@@ -1144,6 +1150,7 @@ static int task_spawn_user_common(const char* name,
     tasks[slot].data = 0;
     tasks[slot].data_size = 0;
     tasks[slot].exit_code = 0;
+    tasks[slot].output_vc = terminal_active_vc();
     tasks[slot].saved_esp = 0;
     tasks[slot].stack = (unsigned char*)kmalloc(TASK_STACK_SIZE);
     tasks[slot].user_stack = 0;
@@ -1393,7 +1400,9 @@ void task_yield(void) {
         return;
     }
 
-    tasks[current_task_index].state = TASK_STATE_READY;
+    if (tasks[current_task_index].state == TASK_STATE_RUNNING) {
+        tasks[current_task_index].state = TASK_STATE_READY;
+    }
 }
 
 void task_exit(int exit_code) {
@@ -1410,10 +1419,28 @@ void task_request_cancel(void) {
 
     if (current_task_index >= 0) {
         task = &tasks[current_task_index];
-    } else if (foreground_task_id != -1) {
-        task = find_task_by_id(foreground_task_id);
     }
 
+    if (task == 0) {
+        return;
+    }
+
+    task->cancel_requested = 1;
+    if (task->state == TASK_STATE_SLEEPING || task->state == TASK_STATE_BLOCKED) {
+        task->blocked_event_id = -1;
+        task->state = TASK_STATE_READY;
+        sched_enqueue_ready(task_slot_index(task));
+    }
+}
+
+void task_request_foreground_cancel(void) {
+    task_entry_t* task;
+
+    if (foreground_task_id == -1) {
+        return;
+    }
+
+    task = find_task_by_id(foreground_task_id);
     if (task == 0) {
         return;
     }
@@ -1575,6 +1602,13 @@ int task_set_priority(int id, task_priority_t priority) {
 
     interrupt_restore(flags);
     return 1;
+}
+
+void task_set_output_vc(int id, int vc_index) {
+    task_entry_t* task = find_task_by_id(id);
+    if (task != 0) {
+        task->output_vc = vc_index;
+    }
 }
 
 const char* task_priority_name(task_priority_t priority) {
@@ -2425,6 +2459,7 @@ int task_fork_from_frame(unsigned int frame_esp) {
     tasks[slot].data             = 0;
     tasks[slot].data_size        = 0;
     tasks[slot].exit_code        = 0;
+    tasks[slot].output_vc        = parent->output_vc;
     tasks[slot].stack            = child_kstack;
     tasks[slot].user_stack       = parent->user_stack;
     tasks[slot].user_entry       = parent->user_entry;

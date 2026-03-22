@@ -112,6 +112,7 @@ static int cmd_unset(int argc, const char* argv[], int background);
 static int cmd_keymap(int argc, const char* argv[], int background);
 static int cmd_color(int argc, const char* argv[], int background);
 static int cmd_theme(int argc, const char* argv[], int background);
+static int cmd_vc(int argc, const char* argv[], int background);
 static int cmd_history(int argc, const char* argv[], int background);
 static int cmd_count(int argc, const char* argv[], int background);
 static int cmd_sleep(int argc, const char* argv[], int background);
@@ -215,6 +216,7 @@ static command_t commands[] = {
     {"keymap",  cmd_keymap,  "muestra/cambia layout: keymap [us|es]"},
     {"color",   cmd_color,   "cambia color: color green|red|white|blue"},
     {"theme",   cmd_theme,   "aplica tema visual: theme [default|matrix|amber|ice]"},
+    {"vc",      cmd_vc,      "consolas virtuales: vc [list|N] (atajo Ctrl+F1..F4)"},
     {"history", cmd_history, "historial gestionado por la capa de entrada"},
     {"count",   cmd_count,   "demo programada; soporta '&' y Ctrl+C"},
     {"sleep",   cmd_sleep,   "duerme en ms; soporta '&'"},
@@ -1865,13 +1867,60 @@ static int cmd_help(int argc, const char* argv[], int background) {
     (void)argc;
     (void)argv;
     (void)background;
-
     terminal_print_line("Comandos disponibles:");
     for (int i = 0; i < command_count; i++) {
         terminal_print("  ");
         terminal_print(commands[i].name);
         terminal_print(" - ");
         terminal_print_line(commands[i].help);
+    }
+
+    return 1;
+}
+
+static int cmd_vc(int argc, const char* argv[], int background) {
+    int active_vc = terminal_active_vc();
+    int total_vcs = terminal_vc_count();
+
+    (void)background;
+
+    if (argc < 2) {
+        terminal_print("VC activa: ");
+        terminal_print_uint((unsigned int)(active_vc + 1));
+        terminal_print(" / ");
+        terminal_print_uint((unsigned int)total_vcs);
+        terminal_put_char('\n');
+        return 1;
+    }
+
+    if (str_equals(argv[1], "list")) {
+        terminal_print_line("Consolas virtuales:");
+        for (int index = 0; index < total_vcs; index++) {
+            terminal_print(index == active_vc ? "* vc " : "  vc ");
+            terminal_print_uint((unsigned int)(index + 1));
+            terminal_put_char('\n');
+        }
+        return 1;
+    }
+
+    {
+        int requested_vc = (int)parse_positive_or_default(argv[1], 0U);
+
+        if (requested_vc <= 0 || requested_vc > total_vcs) {
+            terminal_print("uso: vc [list|1..");
+            terminal_print_uint((unsigned int)total_vcs);
+            terminal_print_line("]");
+            return 1;
+        }
+
+        if (!terminal_switch_vc(requested_vc - 1)) {
+            terminal_print_line("[error] no se pudo cambiar de consola virtual");
+            return 1;
+        }
+
+        terminal_print("VC activa: ");
+        terminal_print_uint((unsigned int)requested_vc);
+        terminal_put_char('\n');
     }
 
     return 1;
@@ -5639,6 +5688,7 @@ static int shell_print_more_text(const char* text) {
                     terminal_put_char('\r');
                 }
                 line = 0;
+                terminal_put_char('\n');
             }
         }
         i++;

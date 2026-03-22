@@ -1,5 +1,4 @@
 #include "keyboard.h"
-#include "task.h"
 
 static inline unsigned char inb(unsigned short port) {
     unsigned char result;
@@ -206,6 +205,44 @@ static int event_is_available(void) {
 
 static void queue_char(char c) {
     queue_event(KEY_EVENT_CHAR, c);
+}
+
+static int queue_function_event_set1(unsigned char scancode) {
+    switch (scancode) {
+        case 0x3B:
+            queue_event(KEY_EVENT_F1, 0);
+            return 1;
+        case 0x3C:
+            queue_event(KEY_EVENT_F2, 0);
+            return 1;
+        case 0x3D:
+            queue_event(KEY_EVENT_F3, 0);
+            return 1;
+        case 0x3E:
+            queue_event(KEY_EVENT_F4, 0);
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static int queue_function_event_set2(unsigned char scancode) {
+    switch (scancode) {
+        case 0x05:
+            queue_event(KEY_EVENT_F1, 0);
+            return 1;
+        case 0x06:
+            queue_event(KEY_EVENT_F2, 0);
+            return 1;
+        case 0x04:
+            queue_event(KEY_EVENT_F3, 0);
+            return 1;
+        case 0x0C:
+            queue_event(KEY_EVENT_F4, 0);
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 static void queue_navigation_event(unsigned char scancode) {
@@ -649,6 +686,10 @@ void keyboard_handle_interrupt(void) {
     }
 
     if (scancode_set == 2) {
+        if (queue_function_event_set2(scancode)) {
+            return;
+        }
+
         if (queue_keypad_or_navigation_set2(scancode)) {
             return;
         }
@@ -671,10 +712,7 @@ void keyboard_handle_interrupt(void) {
             char c = map_set2(scancode);
             if (c != 0) {
                 if (ctrl_pressed && !shift_pressed && (c == 'c' || c == 'C')) {
-                    task_request_cancel();
-                    if (!task_is_running()) {
-                        queue_event(KEY_EVENT_CTRL_C, 0);
-                    }
+                    queue_event(KEY_EVENT_CTRL_C, 0);
                     return;
                 }
 
@@ -716,16 +754,15 @@ void keyboard_handle_interrupt(void) {
             break;
     }
 
+    if (queue_function_event_set1(scancode)) {
+        return;
+    }
+
     {
         char c = map_set1(scancode);
         if (c != 0) {
             if (ctrl_pressed && !shift_pressed && (c == 'c' || c == 'C')) {
-                task_request_cancel();
-
-                if (!task_is_running()) {
-                    queue_event(KEY_EVENT_CTRL_C, 0);
-                }
-
+                queue_event(KEY_EVENT_CTRL_C, 0);
                 return;
             }
 
