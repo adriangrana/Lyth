@@ -103,6 +103,10 @@ make debug
 # Depuración remota con GDB
 make gdb-wait       # Terminal 1: QEMU congelado, GDB stub en localhost:1234
 make gdb-connect    # Terminal 2: imprime el comando gdb a usar
+
+# Imagen de autotest headless
+make create-autotest-iso
+make harness-image
 ```
 
 ### Disco FAT para probar el driver ATA

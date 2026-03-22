@@ -30,6 +30,20 @@ static const unsigned char demo_script_text[] =
     "env\n"
     "ls\n";
 
+#if LYTH_AUTOTEST_ENABLED
+static const unsigned char bootrc_script_text[] =
+    "echo [AUTOTEST] begin\n"
+    "about | grep \"C + ASM\"\n"
+    "help | grep mkdir\n"
+    "echo uno dos tres cuatro | wc -w\n"
+    "help | grep stack | tail -1\n"
+    "stackok\n"
+    "sleep 300\n"
+    "stackbomb\n"
+    "sleep 300\n"
+    "echo [AUTOTEST] end\n";
+#endif
+
 static const unsigned char demo_elf[] = {
     0x7F, 0x45, 0x4C, 0x46, 0x01, 0x01, 0x01, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -71,6 +85,9 @@ typedef struct {
 static fs_entry_t files[] = {
     {"etc/motd",          motd_text,        sizeof(motd_text) - 1},
     {"etc/os-release",    version_text,     sizeof(version_text) - 1},
+#if LYTH_AUTOTEST_ENABLED
+    {"etc/bootrc.sh",     bootrc_script_text, sizeof(bootrc_script_text) - 1},
+#endif
     {"home/user/demo.sh", demo_script_text, sizeof(demo_script_text) - 1},
     {"home/user/demo",    demo_elf,         sizeof(demo_elf)},
 };

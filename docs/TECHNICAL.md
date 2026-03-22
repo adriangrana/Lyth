@@ -195,6 +195,8 @@ Ejemplos válidos:
 
 La implementación sigue siendo una tubería textual interna de shell, no un stream POSIX completo entre procesos separados, pero ya no trunca la salida simplemente por un buffer fijo de 4 KB en cada etapa.
 
+En builds con `AUTOTEST=1`, la ramfs inicial incluye `/etc/bootrc.sh` con una secuencia de validación automática de shell y guard pages. En ese modo, la salida del terminal se espeja también a COM1 para que el harness headless pueda validar el resultado desde el host.
+
 ---
 
 ## Procesos y señales
@@ -302,6 +304,7 @@ Capa de abstracción sobre ATA. Al registrar una unidad:
 |---|---|
 | `make compile` | Compila todos los `.c`/`.s` y enlaza `build/kernel.bin` |
 | `make create-iso` | Genera `dist/lyth.iso` con `grub-mkrescue` |
+| `make create-autotest-iso` | Genera `dist/lyth-autotest.iso` con `AUTOTEST=1` y script de prueba embebido |
 | `make execute` | Arranca la ISO en QEMU (SDL, cursor host oculto) |
 | `make run` | `clean` + `compile` + `create-iso` + `execute` |
 | `make debug` | Como `execute` pero con `-d int` en QEMU |
@@ -309,6 +312,7 @@ Capa de abstracción sobre ATA. Al registrar una unidad:
 | `make gdb-connect` | Imprime el comando `gdb` para conectarse |
 | `make disk-fat16` | Crea `disk.img` (32 MB) con partición FAT16 |
 | `make disk-fat32` | Crea `disk.img` con partición FAT32 y LFN |
+| `make harness-image` | Arranca la imagen de autotest headless y valida boot + shell + stack tests |
 | `make clean` | Borra `build/` y `dist/` |
 | `make test` | Compila, genera ISO y valida multiboot con `grub-file` |
 

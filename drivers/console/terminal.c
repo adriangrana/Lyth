@@ -2,6 +2,7 @@
 #include "console_backend.h"
 #include "timer.h"
 #include "heap.h"
+#include "serial.h"
 #include "utf8.h"
 #include <stdint.h>
 
@@ -343,6 +344,10 @@ void terminal_put_char(char c) {
         terminal_capture_put_char(c);
         return;
     }
+
+#if LYTH_AUTOTEST_ENABLED
+    serial_putc(c);
+#endif
 
     sync_terminal_geometry();
 

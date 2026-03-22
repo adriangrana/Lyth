@@ -196,7 +196,7 @@
 - [x] Documentación
 - [ ] Builds reproducibles
 - [ ] Versionado del kernel
-- [ ] Imagen de prueba automatizada
+- [x] Imagen de prueba automatizada
 - [ ] Toolchain cruzada documentada
 
 ## 18. Componentes avanzados

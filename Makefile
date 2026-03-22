@@ -12,10 +12,12 @@ GDB_PORT ?= 1234
 QEMU = qemu-system-i386
 QEMU_DISPLAY ?= sdl,show-cursor=off
 FB_MOUSE_CURSOR ?= 0
+AUTOTEST ?= 0
 QEMU_FLAGS = -boot d -cdrom $(ISO_IMAGE) -m 128 -no-reboot -no-shutdown -vga std -display $(QEMU_DISPLAY)
 DISK_IMG  ?= disk.img
+AUTOTEST_ISO_IMAGE = $(DIST_DIR)/lyth-autotest.iso
 
-.PHONY: help compile create-iso execute debug gdb-wait gdb-connect clean run disk-create disk-fat16 disk-fat32 harness-serial
+.PHONY: help compile create-iso create-autotest-iso execute debug gdb-wait gdb-connect clean run disk-create disk-fat16 disk-fat32 harness-serial harness-image
 
 BOOT_OBJ = $(BUILD_DIR)/boot.o
 GDT_ASM_OBJ = $(BUILD_DIR)/gdt_asm.o
@@ -65,6 +67,7 @@ RTC_OBJ        = $(BUILD_DIR)/rtc.o
 
 CFLAGS = -m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-frame-pointer -fno-optimize-sibling-calls \
 	-DFB_MOUSE_CURSOR_ENABLED=$(FB_MOUSE_CURSOR) \
+	-DLYTH_AUTOTEST_ENABLED=$(AUTOTEST) \
 	-Iinclude \
 	-Iinclude/kernel \
 	-Iinclude/kernel/mem \
@@ -157,6 +160,14 @@ create-iso: compile $(DIST_DIR) ## genera dist/lyth.iso lista para arrancar con 
 	cp $(GRUB_CFG) $(ISO_DIR)/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO_IMAGE) $(ISO_DIR)
 
+create-autotest-iso: AUTOTEST=1
+create-autotest-iso: compile $(DIST_DIR) ## genera dist/lyth-autotest.iso con autotest userland embebido
+	rm -rf $(ISO_DIR) $(AUTOTEST_ISO_IMAGE)
+	mkdir -p $(ISO_DIR)/boot/grub
+	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.bin
+	cp $(GRUB_CFG) $(ISO_DIR)/boot/grub/grub.cfg
+	grub-mkrescue -o $(AUTOTEST_ISO_IMAGE) $(ISO_DIR)
+
 execute: create-iso ## arranca la ISO actual en QEMU con cursor del host oculto
 	$(QEMU) $(QEMU_FLAGS) $(shell [ -f "$(DISK_IMG)" ] && echo "-hda $(DISK_IMG)")
 
@@ -215,3 +226,6 @@ disk-fat32: ## crea disk.img (64 MB) FAT32 con LFN de prueba (requiere dosfstool
 
 harness-serial: ## ejecuta mini harness por serie y valida boot tests
 	./tools/harness_serial.sh
+
+harness-image: ## ejecuta la imagen de autotest headless y valida boot + shell + stack tests
+	bash ./tools/harness_image.sh
