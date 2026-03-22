@@ -41,8 +41,9 @@ Lyth OS cubre los subsistemas clásicos de un kernel real: arranque, gestión de
 - Hasta 8 tareas simultáneas, cada una con su propio stack de kernel
 
 ### Memoria
-- Frame allocator físico por bitmap a partir del mapa Multiboot
+- Frame allocator físico por bitmap a partir del mapa Multiboot, con conteo de referencias por frame
 - Paginación con páginas grandes de 4 MiB, espacio virtual independiente por proceso
+- Copy-on-write en `fork`: las páginas de usuario se comparten como solo lectura y se copian bajo demanda al primer write (4 KB por fallo en vez de 4 MB por fork)
 - Ventana de memoria compartida por proceso con segmentos SHM respaldados por frames físicos
 - Heap del kernel (`kmalloc`/`kfree`), 256 KB
 
@@ -58,7 +59,7 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 - Particionado MBR y GPT automático (hasta 32 particiones)
 
 ### Procesos y señales
-- ELF32 loader, ring 3, `argv`/`envp` completos, `fork` con clonación de memoria y FDs
+- ELF32 loader, ring 3, `argv`/`envp` completos, `fork` con copy-on-write y herencia de FDs
 - Señales completas: entrega, handlers en userland, `SIGKILL` no bloqueable, `SIGCHLD` + `waitpid`
 - Shared memory con herencia de mapeos en `fork` y limpieza automática en `exec`/salida
 - Message passing con colas MQ kernel-globales y mensajes acotados

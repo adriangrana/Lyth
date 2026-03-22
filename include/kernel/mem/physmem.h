@@ -18,4 +18,9 @@ uint32_t physmem_used_bytes(void);
 uint32_t physmem_frame_count(void);
 uint32_t physmem_highest_address(void);
 
+/* COW reference counting */
+void physmem_ref_frame(uint32_t physical_address);
+void physmem_unref_frame(uint32_t physical_address);
+unsigned int physmem_frame_refcount(uint32_t physical_address);
+
 #endif

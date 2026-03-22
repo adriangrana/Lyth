@@ -47,7 +47,7 @@
 - [x] Espacio por proceso
 - [ ] Protección avanzada
 - [ ] Kernel heap robusto
-- [ ] Copy-on-write
+- [x] Copy-on-write
 - [ ] mmap / regiones mapeadas
 - [x] Guard pages para stacks
 

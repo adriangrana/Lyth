@@ -201,14 +201,24 @@ unsigned int exception_interrupt_handler(unsigned int current_esp) {
     int from_user_mode = (frame->cs & 0x03U) == 0x03U;
 
     if (from_user_mode && task_current_is_user_mode()) {
-        terminal_set_color(0x0C);
-        terminal_print_line("");
-        terminal_print("[user fault] ");
-        terminal_print(task_current_name() != 0 ? task_current_name() : "<unknown>");
-        terminal_print(": ");
-        terminal_print_line(vector < 32 ? exception_names[vector] : "Unknown");
         if (vector == 14) {
             unsigned int fault_addr = read_cr2();
+            unsigned int error_code = frame->error_code;
+
+            /* COW: write to present user page → attempt resolve */
+            if ((error_code & 0x07U) == 0x07U) {
+                uint32_t* dir = task_current_page_directory();
+                if (dir != 0 && paging_cow_resolve(dir, fault_addr)) {
+                    return current_esp;
+                }
+            }
+
+            terminal_set_color(0x0C);
+            terminal_print_line("");
+            terminal_print("[user fault] ");
+            terminal_print(task_current_name() != 0 ? task_current_name() : "<unknown>");
+            terminal_print(": ");
+            terminal_print_line(exception_names[14]);
             terminal_print("CR2: ");
             terminal_print_hex(fault_addr);
             terminal_put_char('\n');
@@ -216,8 +226,16 @@ unsigned int exception_interrupt_handler(unsigned int current_esp) {
                 fault_addr < PAGING_USER_STACK_BOTTOM) {
                 terminal_print_line("[user fault] stack guard page hit");
             }
+            terminal_set_color(0x0F);
+        } else {
+            terminal_set_color(0x0C);
+            terminal_print_line("");
+            terminal_print("[user fault] ");
+            terminal_print(task_current_name() != 0 ? task_current_name() : "<unknown>");
+            terminal_print(": ");
+            terminal_print_line(vector < 32 ? exception_names[vector] : "Unknown");
+            terminal_set_color(0x0F);
         }
-        terminal_set_color(0x0F);
 
         task_exit(128 + (int)vector);
         return task_schedule_on_syscall(current_esp);

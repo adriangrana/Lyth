@@ -411,11 +411,14 @@ static void clear_task(task_entry_t* task) {
 
     if (task->page_directory != 0) {
         shm_detach_all(task->page_directory, task->shm_mappings, SHM_MAX_MAPPINGS);
+        if (task->user_mode) {
+            if (task->user_physical_base != 0) {
+                physmem_free_region(task->user_physical_base, PAGING_USER_SIZE);
+            } else {
+                paging_release_user_pages(task->page_directory);
+            }
+        }
         paging_destroy_user_directory(task->page_directory);
-    }
-
-    if (task->user_mode && task->user_physical_base != 0) {
-        physmem_free_region(task->user_physical_base, PAGING_USER_SIZE);
     }
 
     task->used = 0;
@@ -492,13 +495,17 @@ static void zombify_task(task_entry_t* task) {
     }
     if (task->page_directory != 0) {
         shm_detach_all(task->page_directory, task->shm_mappings, SHM_MAX_MAPPINGS);
+        if (task->user_mode) {
+            if (task->user_physical_base != 0) {
+                physmem_free_region(task->user_physical_base, PAGING_USER_SIZE);
+            } else {
+                paging_release_user_pages(task->page_directory);
+            }
+        }
         paging_destroy_user_directory(task->page_directory);
         task->page_directory = 0;
     }
-    if (task->user_mode && task->user_physical_base != 0) {
-        physmem_free_region(task->user_physical_base, PAGING_USER_SIZE);
-        task->user_physical_base = 0;
-    }
+    task->user_physical_base = 0;
 
     task->state = TASK_STATE_ZOMBIE;
     /* Preserved: used, id, name, exit_code, parent_id */
@@ -1506,6 +1513,14 @@ int task_current_is_user_mode(void) {
     return tasks[current_task_index].user_mode;
 }
 
+uint32_t* task_current_page_directory(void) {
+    if (current_task_index < 0) {
+        return 0;
+    }
+
+    return tasks[current_task_index].page_directory;
+}
+
 uint32_t task_current_user_heap_base(void) {
     if (current_task_index < 0) {
         return 0;
@@ -2009,10 +2024,12 @@ int task_exec_current_user_from_frame(unsigned int frame_esp,
     if (old_page_directory != 0) {
         shm_detach_all(old_page_directory, task->shm_mappings, SHM_MAX_MAPPINGS);
         task_reset_shm_mappings(task);
+        if (old_user_physical_base != 0) {
+            physmem_free_region(old_user_physical_base, PAGING_USER_SIZE);
+        } else {
+            paging_release_user_pages(old_page_directory);
+        }
         paging_destroy_user_directory(old_page_directory);
-    }
-    if (old_user_physical_base != 0) {
-        physmem_free_region(old_user_physical_base, PAGING_USER_SIZE);
     }
 
     interrupt_restore(flags);
@@ -2405,16 +2422,12 @@ int task_set_fd_rlimit(unsigned int new_soft, unsigned int new_hard) {
 int task_fork_from_frame(unsigned int frame_esp) {
     task_user_stack_frame_t* parent_frame;
     task_entry_t* parent;
-    uint32_t child_phys;
     uint32_t* child_dir;
     unsigned char* child_kstack;
     task_user_stack_frame_t* child_frame;
     unsigned int child_stack_top;
     int slot;
     unsigned int flags;
-    uint32_t* src;
-    uint32_t* dst;
-    unsigned int words;
 
     if (current_task_index < 0) return -1;
 
@@ -2434,29 +2447,21 @@ int task_fork_from_frame(unsigned int frame_esp) {
     }
     if (slot < 0) { interrupt_restore(flags); return -1; }
 
-    /* Allocate 4 MB physical region for child user space */
-    child_phys = physmem_alloc_region(PAGING_USER_SIZE, PAGING_USER_SIZE);
-    if (child_phys == 0) { interrupt_restore(flags); return -1; }
-
-    /* Copy parent's user space (word-by-word for speed) */
-    src   = (uint32_t*)(uintptr_t)parent->user_physical_base;
-    dst   = (uint32_t*)(uintptr_t)child_phys;
-    words = PAGING_USER_SIZE / sizeof(uint32_t);
-    for (unsigned int i = 0; i < words; i++) dst[i] = src[i];
-
-    /* Create child page directory */
-    child_dir = paging_create_user_directory(child_phys);
+    /* COW: share parent pages read-only instead of copying 4 MB */
+    child_dir = paging_cow_clone_user_directory(parent->page_directory);
     if (child_dir == 0) {
-        physmem_free_region(child_phys, PAGING_USER_SIZE);
         interrupt_restore(flags);
         return -1;
     }
 
+    /* Parent loses contiguous-region ownership (pages now ref-counted) */
+    parent->user_physical_base = 0;
+
     /* Allocate child kernel stack */
     child_kstack = (unsigned char*)kmalloc(TASK_STACK_SIZE);
     if (child_kstack == 0) {
+        paging_release_user_pages(child_dir);
         paging_destroy_user_directory(child_dir);
-        physmem_free_region(child_phys, PAGING_USER_SIZE);
         interrupt_restore(flags);
         return -1;
     }
@@ -2480,7 +2485,7 @@ int task_fork_from_frame(unsigned int frame_esp) {
     tasks[slot].user_stack       = parent->user_stack;
     tasks[slot].user_entry       = parent->user_entry;
     tasks[slot].user_mode        = 1;
-    tasks[slot].user_physical_base = child_phys;
+    tasks[slot].user_physical_base = 0;
     tasks[slot].user_heap_base   = parent->user_heap_base;
     tasks[slot].user_heap_size   = parent->user_heap_size;
     tasks[slot].page_directory   = child_dir;
@@ -2508,8 +2513,8 @@ int task_fork_from_frame(unsigned int frame_esp) {
                             parent->shm_mappings,
                             SHM_MAX_MAPPINGS)) {
         kfree(child_kstack);
+        paging_release_user_pages(child_dir);
         paging_destroy_user_directory(child_dir);
-        physmem_free_region(child_phys, PAGING_USER_SIZE);
         tasks[slot].used = 0;
         interrupt_restore(flags);
         return -1;

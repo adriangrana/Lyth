@@ -16,6 +16,7 @@
 #define PAGING_USER_STACK_BOTTOM (PAGING_USER_BASE + PAGING_USER_SIZE - PAGING_USER_STACK_SIZE)
 #define PAGING_USER_STACK_TOP (PAGING_USER_BASE + PAGING_USER_SIZE)
 #define PAGING_USER_SIGNAL_TRAMPOLINE_SIZE 16U
+#define PAGING_PAGE_COW 0x200U
 
 void paging_init(multiboot_info_t* mbi);
 int paging_is_enabled(void);
@@ -34,5 +35,10 @@ int paging_unmap_user_page(uint32_t* directory, uint32_t virtual_address);
 uint32_t paging_lookup_user_page(uint32_t* directory, uint32_t virtual_address);
 void paging_destroy_user_directory(uint32_t* directory);
 void paging_switch_directory(uint32_t* directory);
+
+/* COW support */
+uint32_t* paging_cow_clone_user_directory(uint32_t* parent_directory);
+void paging_release_user_pages(uint32_t* directory);
+int paging_cow_resolve(uint32_t* directory, uint32_t fault_address);
 
 #endif

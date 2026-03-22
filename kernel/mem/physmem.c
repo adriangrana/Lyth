@@ -7,6 +7,7 @@ extern char __kernel_start;
 extern char __kernel_end;
 
 static uint8_t frame_bitmap[PHYSMEM_BITMAP_SIZE];
+static uint8_t frame_refcount[PHYSMEM_MAX_FRAMES];
 static uint32_t total_frames = 0;
 static uint32_t free_frames = 0;
 static uint32_t highest_address = 0;
@@ -132,6 +133,9 @@ void physmem_init(multiboot_info_t* mbi) {
     uint32_t framebuffer_start = 0;
 
     bitmap_fill(0xFF);
+    for (uint32_t i = 0; i < PHYSMEM_MAX_FRAMES; i++) {
+        frame_refcount[i] = 0;
+    }
     total_frames = PHYSMEM_MAX_FRAMES;
     free_frames = 0;
     highest_address = 0;
@@ -177,6 +181,7 @@ uint32_t physmem_alloc_frame(void) {
     for (uint32_t frame = 0; frame < total_frames; frame++) {
         if (!frame_is_marked(frame)) {
             mark_frame(frame, 1);
+            frame_refcount[frame] = 1;
             return frame * PHYSMEM_FRAME_SIZE;
         }
     }
@@ -195,6 +200,7 @@ void physmem_free_frame(uint32_t physical_address) {
         return;
     }
 
+    frame_refcount[frame] = 0;
     mark_frame(frame, 0);
 }
 
@@ -243,6 +249,9 @@ uint32_t physmem_alloc_region(uint32_t size, uint32_t alignment) {
         }
 
         mark_range(start, aligned_size, 1);
+        for (uint32_t frame = start_frame; frame < end_frame; frame++) {
+            frame_refcount[frame] = 1;
+        }
         return start;
     }
 
@@ -250,11 +259,78 @@ uint32_t physmem_alloc_region(uint32_t size, uint32_t alignment) {
 }
 
 void physmem_free_region(uint32_t start, uint32_t length) {
-    mark_range(start, length, 0);
+    uint32_t frame_start;
+    uint32_t frame_end;
+
+    if (length == 0) {
+        return;
+    }
+
+    frame_start = align_down(start, PHYSMEM_FRAME_SIZE) / PHYSMEM_FRAME_SIZE;
+    frame_end = align_up(start + length, PHYSMEM_FRAME_SIZE) / PHYSMEM_FRAME_SIZE;
+
+    if (frame_end > total_frames) {
+        frame_end = total_frames;
+    }
+
+    for (uint32_t frame = frame_start; frame < frame_end; frame++) {
+        physmem_unref_frame(frame * PHYSMEM_FRAME_SIZE);
+    }
 }
 
 void physmem_reserve_region(uint32_t start, uint32_t length) {
     mark_range(start, length, 1);
+}
+
+void physmem_ref_frame(uint32_t physical_address) {
+    uint32_t frame = physical_address / PHYSMEM_FRAME_SIZE;
+
+    if (physical_address == 0 || (physical_address % PHYSMEM_FRAME_SIZE) != 0) {
+        return;
+    }
+
+    if (frame >= total_frames) {
+        return;
+    }
+
+    if (frame_refcount[frame] < 255) {
+        frame_refcount[frame]++;
+    }
+}
+
+void physmem_unref_frame(uint32_t physical_address) {
+    uint32_t frame = physical_address / PHYSMEM_FRAME_SIZE;
+
+    if (physical_address == 0 || (physical_address % PHYSMEM_FRAME_SIZE) != 0) {
+        return;
+    }
+
+    if (frame >= total_frames || frame < (0x00100000U / PHYSMEM_FRAME_SIZE)) {
+        return;
+    }
+
+    if (frame_refcount[frame] == 0) {
+        return;
+    }
+
+    frame_refcount[frame]--;
+    if (frame_refcount[frame] == 0) {
+        mark_frame(frame, 0);
+    }
+}
+
+unsigned int physmem_frame_refcount(uint32_t physical_address) {
+    uint32_t frame = physical_address / PHYSMEM_FRAME_SIZE;
+
+    if (physical_address == 0 || (physical_address % PHYSMEM_FRAME_SIZE) != 0) {
+        return 0;
+    }
+
+    if (frame >= total_frames) {
+        return 0;
+    }
+
+    return frame_refcount[frame];
 }
 
 uint32_t physmem_total_bytes(void) {

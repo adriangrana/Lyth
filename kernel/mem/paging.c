@@ -8,6 +8,7 @@
 #define PAGE_WRITABLE 0x002U
 #define PAGE_USER 0x004U
 #define PAGE_PAGE_SIZE 0x080U
+#define PAGE_COW 0x200U
 
 extern char __kernel_end;
 
@@ -392,4 +393,159 @@ void paging_switch_directory(uint32_t* directory) {
 
     __asm__ volatile ("mov %0, %%cr3" : : "r"(directory) : "memory");
     current_directory = directory;
+}
+
+uint32_t* paging_cow_clone_user_directory(uint32_t* parent_directory) {
+    uint32_t directory_physical;
+    uint32_t table_physical;
+    uint32_t* directory;
+    uint32_t* child_table;
+    uint32_t* parent_table;
+
+    if (parent_directory == 0) {
+        return 0;
+    }
+
+    parent_table = paging_user_table(parent_directory);
+    if (parent_table == 0) {
+        return 0;
+    }
+
+    directory_physical = physmem_alloc_frame();
+    table_physical = physmem_alloc_frame();
+
+    if (directory_physical == 0 || table_physical == 0) {
+        if (directory_physical != 0) {
+            physmem_free_frame(directory_physical);
+        }
+        if (table_physical != 0) {
+            physmem_free_frame(table_physical);
+        }
+        return 0;
+    }
+
+    directory = (uint32_t*)(uintptr_t)directory_physical;
+    child_table = (uint32_t*)(uintptr_t)table_physical;
+
+    for (uint32_t i = 0; i < PAGE_DIRECTORY_ENTRIES; i++) {
+        directory[i] = page_directory[i];
+    }
+
+    directory[PAGING_USER_BASE / PAGE_SIZE_4MB] =
+        table_physical | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+
+    for (uint32_t page = 0; page < PAGE_TABLE_ENTRIES; page++) {
+        uint32_t va = PAGING_USER_BASE + (page * PAGING_PAGE_SIZE);
+        uint32_t parent_pte = parent_table[page];
+        uint32_t phys;
+        uint32_t cow_flags;
+
+        if ((parent_pte & PAGE_PRESENT) == 0) {
+            child_table[page] = 0;
+            continue;
+        }
+
+        if (va >= PAGING_USER_SHM_BASE && va < PAGING_USER_STACK_GUARD_BASE) {
+            child_table[page] = 0;
+            continue;
+        }
+
+        phys = parent_pte & 0xFFFFF000U;
+        cow_flags = phys | PAGE_PRESENT | PAGE_USER | PAGE_COW;
+
+        parent_table[page] = cow_flags;
+        child_table[page] = cow_flags;
+
+        physmem_ref_frame(phys);
+
+        if (current_directory == parent_directory) {
+            paging_invalidate_page(va);
+        }
+    }
+
+    return directory;
+}
+
+void paging_release_user_pages(uint32_t* directory) {
+    uint32_t* table;
+
+    if (directory == 0) {
+        return;
+    }
+
+    table = paging_user_table(directory);
+    if (table == 0) {
+        return;
+    }
+
+    for (uint32_t page = 0; page < PAGE_TABLE_ENTRIES; page++) {
+        uint32_t pte = table[page];
+        uint32_t phys;
+
+        if ((pte & PAGE_PRESENT) == 0) {
+            continue;
+        }
+
+        phys = pte & 0xFFFFF000U;
+        physmem_unref_frame(phys);
+        table[page] = 0;
+    }
+}
+
+int paging_cow_resolve(uint32_t* directory, uint32_t fault_address) {
+    uint32_t* table;
+    uint32_t page_addr;
+    uint32_t pte_index;
+    uint32_t pte;
+    uint32_t old_phys;
+    uint32_t new_phys;
+    uint32_t* src;
+    uint32_t* dst;
+
+    if (directory == 0) {
+        return 0;
+    }
+
+    page_addr = fault_address & 0xFFFFF000U;
+    if (page_addr < PAGING_USER_BASE ||
+        page_addr >= PAGING_USER_BASE + PAGING_USER_SIZE) {
+        return 0;
+    }
+
+    table = paging_user_table(directory);
+    if (table == 0) {
+        return 0;
+    }
+
+    pte_index = (page_addr >> 12) & 0x3FFU;
+    pte = table[pte_index];
+
+    if ((pte & PAGE_PRESENT) == 0 || (pte & PAGE_COW) == 0) {
+        return 0;
+    }
+
+    old_phys = pte & 0xFFFFF000U;
+
+    if (physmem_frame_refcount(old_phys) == 1) {
+        table[pte_index] = old_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+        paging_invalidate_page(page_addr);
+        return 1;
+    }
+
+    new_phys = physmem_alloc_frame();
+    if (new_phys == 0) {
+        return 0;
+    }
+
+    src = (uint32_t*)(uintptr_t)old_phys;
+    dst = (uint32_t*)(uintptr_t)new_phys;
+    for (unsigned int i = 0; i < PAGING_PAGE_SIZE / sizeof(uint32_t); i++) {
+        dst[i] = src[i];
+    }
+
+    physmem_unref_frame(old_phys);
+
+    table[pte_index] = new_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    paging_invalidate_page(page_addr);
+    return 1;
 }

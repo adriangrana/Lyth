@@ -79,6 +79,7 @@ int task_cancel_requested(void);
 void task_clear_cancel(void);
 int task_is_running(void);
 int task_current_is_user_mode(void);
+uint32_t* task_current_page_directory(void);
 uint32_t task_current_user_heap_base(void);
 uint32_t task_current_user_heap_size(void);
 const char* task_current_name(void);

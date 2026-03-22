@@ -67,7 +67,7 @@ El framebuffer se activa si el flag `MULTIBOOT_INFO_FRAMEBUFFER_INFO` está pres
 ## Memoria
 
 ### Memoria física
-`physmem.c` construye un bitmap de frames (4 KiB cada uno) a partir del mapa de memoria Multiboot. Permite reservar y liberar regiones físicas por alineación de frame.
+`physmem.c` construye un bitmap de frames (4 KiB cada uno) a partir del mapa de memoria Multiboot. Cada frame lleva un contador de referencias (`uint8_t`, máximo 255) que permite compartir páginas físicas entre procesos. `physmem_ref_frame` incrementa la cuenta, `physmem_unref_frame` la decrementa y libera el frame automáticamente cuando llega a cero.
 
 ### Paginación
 `paging.c` activa paginación con identity mapping inicial usando páginas grandes de 4 MiB (bit `PSE`). Expone:
@@ -80,6 +80,15 @@ Cada proceso de usuario tiene su propio directorio de páginas. El kernel usa id
 La región de usuario usa una page table de 4 KiB y deja una guard page no mapeada justo debajo del stack. Si un proceso toca esa página, provoca `Page fault` y el kernel lo reporta como `stack guard page hit`.
 
 Justo debajo de la guard page existe además una ventana fija de shared memory. Los segmentos SHM se respaldan con frames físicos propios del kernel y se remapean dentro de esa ventana en cada proceso que hace `attach`, de modo que varios procesos ven las mismas páginas físicas sin copiar contenido.
+
+### Copy-on-Write (COW)
+`fork` ya no copia los 4 MB del espacio de usuario. En su lugar, `paging_cow_clone_user_directory` comparte todas las páginas del padre con el hijo marcándolas como solo lectura con el bit COW (bit 9 del PTE, disponible para el OS). El refcount de cada frame compartido se incrementa.
+
+Cuando cualquiera de los dos procesos escribe en una página COW, la CPU genera un page fault (vector 14, error code `0x07`: write + user + present). El handler en `exception_interrupt_handler` detecta el bit COW y llama a `paging_cow_resolve`:
+- Si el refcount es 1 (último usuario), simplemente marca la página como escribible y elimina el bit COW.
+- Si el refcount es > 1, asigna un nuevo frame, copia los 4 KB, decrementa el refcount del frame original y mapea el nuevo frame como escribible.
+
+Esto reduce el coste de `fork` de ~1 millón de escrituras (4 MB) a un recorrido de 1024 PTEs, y el patrón `fork`+`exec` apenas copia páginas.
 
 ### Heap del kernel
 `heap.c` gestiona un array estático de 256 KB con un allocator first-fit. `kmalloc(size)` devuelve un puntero alineado; `kfree(ptr)` libera y coalesce bloques adyacentes libres.
@@ -105,7 +114,7 @@ Justo debajo de la guard page existe además una ventana fija de shared memory. 
 ### Ciclo de vida
 La IRQ0 llama al scheduler, que elige la tarea de mayor prioridad en estado `READY`. El context switch guarda/restaura registros de kernel en el stack de la tarea saliente/entrante.
 
-`task_fork()` clona la tarea activa: copia el stack de usuario, la tabla de FDs (con `ref_count` en VFS) y el directorio de páginas. No copia el heap del kernel.
+`task_fork()` clona la tarea activa usando copy-on-write: comparte las páginas de usuario como solo lectura, hereda la tabla de FDs (con `ref_count` en VFS) y crea un nuevo directorio de páginas. Las páginas se copian bajo demanda al primer write. No copia el heap del kernel.
 
 Cuando el proceso tiene SHM adjunta, `fork` hereda esos mapeos reinsertando las mismas páginas físicas en el hijo. `exec` y la salida del proceso hacen `detach_all`, decrementan referencias y liberan el segmento cuando ya no quedan adjuntos y además fue marcado con `shm_unlink`.
 
