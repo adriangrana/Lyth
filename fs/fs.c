@@ -14,26 +14,20 @@ typedef struct {
 
 static fs_writable_entry_t writable[FS_WRITE_MAX];
 
-static const unsigned char readme_text[] =
-    "Lyth FS\n"
-    "-------\n"
-    "Este es un filesystem en memoria de solo lectura.\n"
-    "Sirve para probar syscalls y cargar recursos simples.\n";
-
 static const unsigned char motd_text[] =
-    "Bienvenido a Lyth OS.\n"
-    "Ahora hay timer, jobs, heap, syscalls y un FS simple.\n";
+    "Bienvenido a Lyth OS v0.4.\n";
 
 static const unsigned char version_text[] =
-    "Lyth OS v0.4\n"
-    "Kernel hobby con scheduler preemptivo, paging y FS simple.\n";
+    "NAME=Lyth\n"
+    "VERSION=0.4\n"
+    "ID=lyth\n"
+    "PRETTY_NAME=Lyth OS 0.4\n"
+    "ARCH=i386\n";
 
 static const unsigned char demo_script_text[] =
-    "# Demo script for Lyth shell\n"
-    "echo Ejecutando script de ejemplo\n"
+    "# demo.sh - script de ejemplo para la shell de Lyth\n"
+    "echo Ejecutando script de ejemplo...\n"
     "env\n"
-    "set MSG Hola desde DEMO.SH\n"
-    "echo $MSG\n"
     "ls\n";
 
 static const unsigned char demo_elf[] = {
@@ -75,11 +69,10 @@ typedef struct {
 } fs_entry_t;
 
 static fs_entry_t files[] = {
-    {"README.TXT", readme_text, sizeof(readme_text) - 1},
-    {"MOTD.TXT", motd_text, sizeof(motd_text) - 1},
-    {"VERSION.TXT", version_text, sizeof(version_text) - 1},
-    {"DEMO.SH", demo_script_text, sizeof(demo_script_text) - 1},
-    {"DEMO.ELF", demo_elf, sizeof(demo_elf)},
+    {"etc/motd",          motd_text,        sizeof(motd_text) - 1},
+    {"etc/os-release",    version_text,     sizeof(version_text) - 1},
+    {"home/user/demo.sh", demo_script_text, sizeof(demo_script_text) - 1},
+    {"home/user/demo",    demo_elf,         sizeof(demo_elf)},
 };
 
 static const int file_count = sizeof(files) / sizeof(files[0]);

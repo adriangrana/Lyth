@@ -872,8 +872,19 @@ static int shell_execute_script_text(const char* text) {
 }
 
 static void shell_print_banner(void) {
+    int fd;
     shell_print_text_with_color("Lyth OS shell\n", current_theme_banner_color);
     shell_print_text_with_color("-------------\n", current_theme_banner_color);
+    fd = vfs_open_flags("/etc/motd", VFS_O_RDONLY);
+    if (fd >= 0) {
+        char buf[256];
+        int n;
+        while ((n = vfs_read(fd, (unsigned char*)buf, sizeof(buf) - 1)) > 0) {
+            buf[n] = '\0';
+            terminal_print(buf);
+        }
+        vfs_close(fd);
+    }
     shell_print_text_with_color("Escribe 'help' para ver comandos.\n", current_theme_hint_color);
     terminal_print_line("");
 }
