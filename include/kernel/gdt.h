@@ -15,4 +15,8 @@ uint16_t gdt_kernel_data_selector(void);
 uint16_t gdt_user_code_selector(void);
 uint16_t gdt_user_data_selector(void);
 
+/* Per-AP GDT/TSS setup: installs a fresh GDT copy with a unique TSS
+   pointing to the given kernel stack top.  Must be called on the AP itself. */
+void gdt_init_ap(uint32_t kernel_stack_top);
+
 #endif

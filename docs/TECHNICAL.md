@@ -17,6 +17,7 @@ Subsistemas principales y sus archivos:
 | GDT / TSS | `kernel/gdt.c`, `arch/x86/gdt.s` |
 | IDT / PIC / PIT | `kernel/idt.c`, `kernel/interrupts.c`, `arch/x86/interrupts.s` |
 | ACPI / APIC | `kernel/acpi.c`, `kernel/apic.c` |
+| SMP | `kernel/smp.c`, `arch/x86/boot/ap_trampoline.s`, `include/kernel/spinlock.h` |
 | Scheduler | `kernel/task/task.c`, `kernel/task/timer.c` |
 | Memoria física | `kernel/mem/physmem.c` |
 | Paginación | `kernel/mem/paging.c` |
@@ -49,9 +50,10 @@ Subsistemas principales y sus archivos:
 3. `ata_init()` detecta unidades ATA; `blkdev` escanea MBR/GPT; las particiones FAT16/FAT32 se montan automáticamente.
 4. `acpi_init()` busca el RSDP (EBDA + ROM BIOS), valida el RSDT y parsea la tabla MADT para obtener la dirección del Local APIC, las entradas IOAPIC y los Interrupt Source Overrides.
 5. `apic_init()` comprueba CPUID, mapea las regiones MMIO (LAPIC en 0xFEE00000, IOAPIC en 0xFEC00000) con `paging_map_mmio()`, deshabilita el PIC 8259A, inicializa el LAPIC (spurious vector 0xFF, TPR a 0) y el IOAPIC (enmascara todas las líneas).
-6. `interrupts_init()` instala la IDT, y rutea las IRQs 0, 1, 12 y 14 por el IOAPIC (si APIC está activo) o remapea el PIC 8259A como fallback. Configura el PIT a 100 Hz y habilita IRQs.
-5. El scheduler arranca la tarea `init` (PID 1), que inicializa la shell y entra en el bucle de eventos.
-6. El loop principal del kernel ejecuta `hlt`; toda la actividad ocurre desde interrupciones y la tarea init.
+6. `smp_init()` enumera CPUs de la MADT, copia el trampoline a 0x8000, y arranca cada AP con INIT/SIPI. Los APs cargan su GDT/TSS, IDT y LAPIC propios y entran en halt.
+7. `interrupts_init()` instala la IDT, y rutea las IRQs 0, 1, 12 y 14 por el IOAPIC (si APIC está activo) o remapea el PIC 8259A como fallback. Configura el PIT a 100 Hz y habilita IRQs.
+8. El scheduler arranca la tarea `init` (PID 1), que inicializa la shell y entra en el bucle de eventos.
+9. El loop principal del kernel ejecuta `hlt`; toda la actividad ocurre desde interrupciones y la tarea init.
 
 ---
 
@@ -84,6 +86,47 @@ A partir del RSDP, valida el RSDT (Root System Description Table) y recorre sus 
 
 ### EOI
 `send_eoi()` en `interrupts.c` y el handler de ATA usan `apic_eoi()` (write 0 al registro LAPIC EOI en `0xFEE000B0`) si el APIC está activo, o `pic_send_eoi()` como fallback.
+
+---
+
+## SMP (Multicore)
+
+El kernel detecta todos los procesadores lógicos y arranca los APs (Application Processors) a modo protegido con paging.
+
+### Enumeración de CPUs
+`acpi_init()` parsea las entradas Local APIC (tipo 0) de la MADT. Cada entrada contiene el ACPI processor ID, el LAPIC ID y un flag de habilitado. Solo se consideran procesadores con el flag enabled.
+
+### Trampoline de arranque
+`ap_trampoline.s` contiene código 16-bit que se copia a la dirección física `0x8000` en runtime. El BSP parchea los campos de datos (GDTR, stack, CR3, entry point) antes de enviar el SIPI.
+
+Flujo del trampoline:
+1. **Real mode**: `cli`, carga GDT parcheado, activa PE en CR0.
+2. **Protected mode**: carga segmentos de kernel, carga CR3 del BSP (misma tabla de páginas), activa PSE + PG.
+3. **Call**: salta a `ap_main()` en C.
+
+### Secuencia INIT/SIPI
+Para cada AP detectado:
+1. `apic_send_init()` — envía INIT IPI vía ICR (offset `0x300`/`0x310`).
+2. Espera 10 ms (PIT channel 2 one-shot).
+3. `apic_send_sipi()` — envía Startup IPI con vector `0x08` (página `0x8000`).
+4. Si no responde en 200 μs, reintenta un segundo SIPI.
+5. Espera hasta 100 ms a que el AP señalice `ap_ready`.
+
+### Estado per-CPU
+Cada AP recibe:
+- **GDT propia** con TSS único (`gdt_init_ap()`): kernel stack independiente, selectors idénticos al BSP.
+- **IDT compartida**: la IDT es global, cargada con `idt_load_table()`.
+- **LAPIC propio**: `apic_init_ap()` configura SIVR, TPR y ESR.
+- **Halt loop**: los APs entran en `hlt` tras la inicialización, sin participar aún en scheduling.
+
+### Spinlocks
+`spinlock.h` implementa spinlocks basados en `xchg` (test-and-set):
+- `spinlock_acquire()` / `spinlock_release()`: variante básica.
+- `spinlock_acquire_irqsave()` / `spinlock_release_irqrestore()`: variante que salva/restaura EFLAGS (deshabilita IRQs locales).
+
+Protecciones actuales:
+- **Heap** (`kmalloc`/`kfree`): protegido con spinlock IRQ-safe.
+- **Scheduler**: spinlock declarado (`sched_lock`), listo para cuando los APs participen en multitarea.
 
 ---
 

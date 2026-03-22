@@ -10,6 +10,13 @@
 
 #define ACPI_MAX_IOAPICS           4
 #define ACPI_MAX_ISO               24
+#define ACPI_MAX_LAPICS            16
+
+typedef struct {
+	uint8_t  acpi_id;
+	uint8_t  lapic_id;
+	uint32_t flags;          /* bit 0: processor enabled */
+} acpi_lapic_entry_t;
 
 typedef struct {
 	uint32_t ioapic_address;
@@ -27,6 +34,8 @@ typedef struct {
 typedef struct {
 	int      found;
 	uint32_t lapic_address;
+	int      lapic_count;
+	acpi_lapic_entry_t  lapics[ACPI_MAX_LAPICS];
 	int      ioapic_count;
 	acpi_ioapic_entry_t ioapics[ACPI_MAX_IOAPICS];
 	int      iso_count;

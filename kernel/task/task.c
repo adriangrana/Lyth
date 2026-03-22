@@ -8,6 +8,7 @@
 #include "shm.h"
 #include "mqueue.h"
 #include "assert.h"
+#include "spinlock.h"
 #include "rlimit.h"
 #include "terminal.h"
 #include "ugdb.h"
@@ -113,6 +114,7 @@ static int    idle_task_id    = -1;
 static unsigned int idle_tick_count  = 0;
 static unsigned int ctx_switch_count = 0;
 static unsigned int idle_context_esp = 0;
+static spinlock_t sched_lock = SPINLOCK_INIT;
 static unsigned short kernel_code_selector = 0x08;
 static unsigned short user_code_selector = GDT_USER_CODE_SELECTOR;
 static unsigned short user_data_selector = GDT_USER_DATA_SELECTOR;

@@ -13,6 +13,7 @@ Lyth OS cubre los subsistemas clásicos de un kernel real: arranque, gestión de
 ### Arranque y arquitectura
 - Arranque Multiboot con GRUB, solicita modo gráfico `1280×1024×32` con fallback a VGA
 - Kernel ELF32 enlazado a 1 MB con GDT propia, segmentos kernel/user y TSS
+- SMP: detección de CPUs vía MADT, boot de APs con INIT/SIPI, GDT/TSS per-CPU
 
 ### Consola y vídeo
 - Framebuffer con fuente PSF 8×16, márgenes y scroll propio

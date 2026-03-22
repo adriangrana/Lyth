@@ -10,6 +10,8 @@
 #define LAPIC_EOI         0x0B0
 #define LAPIC_SIVR        0x0F0
 #define LAPIC_ESR         0x280
+#define LAPIC_ICR_LOW     0x300
+#define LAPIC_ICR_HIGH    0x310
 #define LAPIC_TIMER_LVT   0x320
 #define LAPIC_TIMER_ICR   0x380
 #define LAPIC_TIMER_CCR   0x390
@@ -26,6 +28,14 @@
 int  apic_init(void);
 int  apic_is_enabled(void);
 void apic_eoi(void);
+uint8_t apic_get_id(void);
+
+/* IPI */
+void apic_send_init(uint8_t dest_lapic_id);
+void apic_send_sipi(uint8_t dest_lapic_id, uint8_t vector);
+
+/* AP-local LAPIC init (called from each AP) */
+void apic_init_ap(void);
 
 void ioapic_route_irq(uint8_t irq, uint8_t vector, int masked);
 void ioapic_mask_irq(uint8_t irq);

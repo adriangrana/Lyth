@@ -1,4 +1,5 @@
 #include "heap.h"
+#include "spinlock.h"
 
 #define HEAP_SIZE (256 * 1024)
 #define HEAP_ALIGNMENT 8
@@ -11,6 +12,7 @@ typedef struct heap_block {
 
 static unsigned char heap_area[HEAP_SIZE];
 static heap_block_t* heap_head = 0;
+static spinlock_t heap_lock = SPINLOCK_INIT;
 
 static unsigned int align_up(unsigned int size) {
     unsigned int mask = HEAP_ALIGNMENT - 1;
@@ -58,25 +60,30 @@ void heap_init(void) {
 
 void* kmalloc(unsigned int size) {
     heap_block_t* block;
+    void *result = 0;
 
     if (size == 0 || heap_head == 0) {
         return 0;
     }
 
     size = align_up(size);
+
+    uint32_t flags = spinlock_acquire_irqsave(&heap_lock);
     block = heap_head;
 
     while (block != 0) {
         if (block->free && block->size >= size) {
             split_block(block, size);
             block->free = 0;
-            return (void*)(block + 1);
+            result = (void*)(block + 1);
+            break;
         }
 
         block = block->next;
     }
+    spinlock_release_irqrestore(&heap_lock, flags);
 
-    return 0;
+    return result;
 }
 
 void kfree(void* ptr) {
@@ -86,9 +93,11 @@ void kfree(void* ptr) {
         return;
     }
 
+    uint32_t flags = spinlock_acquire_irqsave(&heap_lock);
     block = ((heap_block_t*)ptr) - 1;
     block->free = 1;
     coalesce_blocks();
+    spinlock_release_irqrestore(&heap_lock, flags);
 }
 
 void heap_get_stats(heap_stats_t* stats) {

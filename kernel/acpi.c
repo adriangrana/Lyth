@@ -41,6 +41,13 @@ typedef struct {
 
 typedef struct {
 	madt_entry_header_t hdr;
+	uint8_t  acpi_processor_id;
+	uint8_t  apic_id;
+	uint32_t flags;
+} __attribute__((packed)) madt_lapic_t;
+
+typedef struct {
+	madt_entry_header_t hdr;
 	uint8_t  ioapic_id;
 	uint8_t  reserved;
 	uint32_t ioapic_address;
@@ -128,6 +135,17 @@ static void parse_madt(const madt_header_t* madt) {
 		}
 
 		switch (entry->type) {
+		case ACPI_MADT_TYPE_LAPIC: {
+			const madt_lapic_t* la = (const madt_lapic_t*)entry;
+			if (madt_info.lapic_count < ACPI_MAX_LAPICS) {
+				acpi_lapic_entry_t* e =
+					&madt_info.lapics[madt_info.lapic_count++];
+				e->acpi_id  = la->acpi_processor_id;
+				e->lapic_id = la->apic_id;
+				e->flags    = la->flags;
+			}
+			break;
+		}
 		case ACPI_MADT_TYPE_IOAPIC: {
 			const madt_ioapic_t* io = (const madt_ioapic_t*)entry;
 			if (madt_info.ioapic_count < ACPI_MAX_IOAPICS) {
@@ -168,6 +186,7 @@ void acpi_init(void) {
 
 	madt_info.found = 0;
 	madt_info.lapic_address = 0;
+	madt_info.lapic_count = 0;
 	madt_info.ioapic_count = 0;
 	madt_info.iso_count = 0;
 

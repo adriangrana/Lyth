@@ -251,3 +251,38 @@ void ioapic_unmask_irq(uint8_t irq) {
 	lo = ioapic_read(reg_lo);
 	ioapic_write(reg_lo, lo & ~(1U << 16));
 }
+
+/* ── LAPIC ID + IPI ─────────────────────────────────────────────── */
+
+uint8_t apic_get_id(void) {
+	if (!apic_enabled) return 0;
+	return (uint8_t)(lapic_read(LAPIC_ID) >> 24);
+}
+
+static void lapic_wait_icr(void) {
+	/* Wait for delivery status bit (12) to clear */
+	while (lapic_read(LAPIC_ICR_LOW) & (1U << 12)) {
+		__asm__ volatile ("pause");
+	}
+}
+
+void apic_send_init(uint8_t dest_lapic_id) {
+	if (!apic_enabled) return;
+	lapic_write(LAPIC_ICR_HIGH, (uint32_t)dest_lapic_id << 24);
+	/* INIT IPI: delivery mode = 101 (INIT), level assert, edge */
+	lapic_write(LAPIC_ICR_LOW, 0x00004500);
+	lapic_wait_icr();
+}
+
+void apic_send_sipi(uint8_t dest_lapic_id, uint8_t vector) {
+	if (!apic_enabled) return;
+	lapic_write(LAPIC_ICR_HIGH, (uint32_t)dest_lapic_id << 24);
+	/* Startup IPI: delivery mode = 110 (SIPI), vector = page number */
+	lapic_write(LAPIC_ICR_LOW, 0x00004600 | (uint32_t)vector);
+	lapic_wait_icr();
+}
+
+void apic_init_ap(void) {
+	/* Each AP initialises its own LAPIC */
+	lapic_init();
+}

@@ -30,6 +30,7 @@
 #include "ugdb.h"
 #include "acpi.h"
 #include "apic.h"
+#include "smp.h"
 
 static void terminal_write_uint(uint32_t value) {
     char buffer[16];
@@ -148,6 +149,7 @@ void kernel_main(unsigned long mbi_ptr) {
     }
     acpi_init();
     apic_init();
+    smp_init();
     interrupts_init();
     rtc_init();
     klog_write(KLOG_LEVEL_INFO, "rtc",  "RTC CMOS inicializado");

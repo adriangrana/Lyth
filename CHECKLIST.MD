@@ -6,7 +6,7 @@
 - [x] Stack inicial
 - [ ] Soporte hardware real
 - [ ] UEFI
-- [ ] SMP (multicore)
+- [x] SMP (multicore)
 
 ## 2. Consola y salida
 - [x] VGA + framebuffer
