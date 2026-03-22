@@ -68,9 +68,15 @@ exception_common_stub:
     push %eax
     call exception_interrupt_handler
     add $4, %esp
+    mov %esp, %edx
+    cmp %edx, %eax
     mov %eax, %esp
+    jne 1f
     popa
     add $8, %esp
+    iret
+1:
+    popa
     iret
 
 ISR_NOERR 0

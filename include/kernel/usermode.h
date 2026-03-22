@@ -17,5 +17,8 @@ int usermode_exec_current_vfs_argv(const char* vfs_path,
                                    int argc, const char* const* argv,
                                    int envc, const char* const* envp,
                                    unsigned int frame_esp);
+/* Spawn a tiny synthetic user-mode task that intentionally touches the
+   unmapped stack guard page to validate overflow detection. */
+int usermode_spawn_stackbomb(int foreground);
 
 #endif
