@@ -173,6 +173,29 @@ Tabla interna de hasta 256 entradas (ruta → modo 9 bits). Modos por defecto: `
 
 ---
 
+## Shell interactiva
+
+La shell implementa un parser propio con soporte para comillas, expansión simple de variables, ejecución en background (`&`), redirección (`<`, `>`, `>>`) y un pipe simple `cmd1 | cmd2`.
+
+El pipe de la shell captura la salida textual del comando izquierdo en un buffer interno y la expone al comando derecho como entrada estándar lógica. Actualmente sólo se soporta un pipe por línea.
+
+Las utilidades que consumen esa entrada de pipe son:
+- `cat`
+- `grep`
+- `head`
+- `tail`
+- `more` / `less`
+- `wc`
+
+Ejemplos válidos:
+- `help | grep mkdir`
+- `help | tail -20`
+- `help | wc`
+
+La captura de texto usada por redirecciones y pipes del shell es de 4 KB. No es un stream POSIX completo: si la salida excede ese tamaño, se trunca al buffer disponible.
+
+---
+
 ## Procesos y señales
 
 ### ELF loader y user mode

@@ -28,6 +28,7 @@ Lyth OS cubre los subsistemas clásicos de un kernel real: arranque, gestión de
 ### Shell interactiva
 - Parser propio con comillas, `argv` completo, variables de entorno (`$VAR`)
 - Redirección `>`, `>>`, `<` integrada con VFS; pipes (`cmd1 | cmd2`)
+- Utilidades de texto preparadas para pipe: `grep`, `head`, `tail`, `more`/`less`, `wc`
 - Ejecución en background (`cmd &`)
 - Historial, autocompletado (`Tab`) con barra de sugerencias inline
 - Selección, clipboard, `Ctrl+C/L/U/A/X/V`
@@ -151,7 +152,7 @@ tools/              scripts auxiliares
 |---|---|
 | Sistema | `help`, `clear`, `about`, `uptime`, `date`, `dmesg`, `mem` |
 | Procesos | `ps`, `kill`, `nice`, `task`, `wait`, `signal`, `sleep`, `yield`, `getpid`, `exec` |
-| Archivos | `ls`, `cat`, `cd`, `pwd`, `touch`, `rm`, `mkdir`, `cp`, `mv`, `rename`, `stat`, `chmod`, `chown`, `grep` |
+| Archivos | `ls`, `cat`, `cd`, `pwd`, `touch`, `rm`, `mkdir`, `cp`, `mv`, `rename`, `stat`, `chmod`, `chown`, `grep`, `head`, `tail`, `more`, `less`, `wc`, `find`, `which`, `rmdir`, `cmp`, `diff`, `file`, `du`, `df`, `sync` |
 | Discos | `disk` (read / mount / fsck / gpt) |
 | Shell | `echo`, `env`, `set`, `unset`, `source`, `history`, `repeat` |
 | Entrada | `keymap`, `mouse` |
