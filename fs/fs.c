@@ -42,7 +42,6 @@ static const unsigned char bootrc_script_text[] =
     "help | grep stack | tail -1\n"
     "shmdemo 90\n"
     "stackok\n"
-    "sleep 300\n"
     "stackbomb\n"
     "sleep 300\n"
     "echo [AUTOTEST] end\n";
