@@ -4,6 +4,7 @@
 #include "tcp.h"
 #include "arp.h"
 #include "ethernet.h"
+#include "e1000.h"
 #include "endian.h"
 #include "string.h"
 #include "klog.h"
@@ -114,7 +115,9 @@ int ipv4_send(netif_t* iface, uint32_t dst_ip, uint8_t protocol,
 	if (arp_resolve(iface, next_hop, dst_mac) < 0) {
 		/* ARP request sent, retry a few times */
 		for (int retry = 0; retry < 3; retry++) {
-			for (volatile int d = 0; d < 500000; d++);
+			for (volatile int d = 0; d < 500000; d++) {
+				if ((d & 0xFFFF) == 0) e1000_poll_rx();
+			}
 			if (arp_resolve(iface, next_hop, dst_mac) == 0)
 				goto send;
 		}

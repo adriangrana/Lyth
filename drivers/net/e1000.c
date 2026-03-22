@@ -236,6 +236,13 @@ void e1000_irq_handler(void) {
 	uint32_t icr = e1000_read(E1000_ICR);
 	(void)icr; /* reading ICR clears the interrupt */
 
+	e1000_poll_rx();
+}
+
+void e1000_poll_rx(void) {
+	if (!e1000_present)
+		return;
+
 	/* Process all pending RX descriptors */
 	while (rx_descs[rx_cur].status & E1000_RXD_STAT_DD) {
 		uint16_t pkt_len = rx_descs[rx_cur].length;

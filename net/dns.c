@@ -1,6 +1,7 @@
 #include "dns.h"
 #include "udp.h"
 #include "netif.h"
+#include "e1000.h"
 #include "endian.h"
 #include "string.h"
 #include "timer.h"
@@ -84,7 +85,8 @@ uint32_t dns_resolve(const char* hostname) {
 
 	/* Wait for response */
 	uint32_t start = timer_get_ticks();
-	while (!pending_done && (timer_get_ticks() - start) < 300);
+	while (!pending_done && (timer_get_ticks() - start) < 300)
+		e1000_poll_rx();
 
 	if (pending_done && pending_result) {
 		/* Cache result */

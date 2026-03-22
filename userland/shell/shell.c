@@ -6806,6 +6806,7 @@ static int cmd_ping(int argc, const char* argv[], int background) {
 
         uint32_t start = timer_get_ticks();
         while (!ping_got_reply && (timer_get_ticks() - start) < 200) {
+            e1000_poll_rx();
             if (keyboard_poll_event(&ev) && ev.type == KEY_EVENT_CTRL_C) { i = count; break; }
         }
 
@@ -6925,7 +6926,8 @@ static int cmd_dhcpc(int argc, const char* argv[], int background) {
     /* Wait for DHCP response */
     uint32_t start = timer_get_ticks();
     const dhcp_result_t* res = dhcp_get_result();
-    while (!res->ok && (timer_get_ticks() - start) < 500);
+    while (!res->ok && (timer_get_ticks() - start) < 500)
+        e1000_poll_rx();
 
     res = dhcp_get_result();
     if (res->ok) {
