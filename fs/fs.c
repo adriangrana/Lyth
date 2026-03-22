@@ -40,6 +40,7 @@ static const unsigned char bootrc_script_text[] =
     "help | grep mkdir\n"
     "echo uno dos tres cuatro | wc -w\n"
     "help | grep stack | tail -1\n"
+    "mq demo\n"
     "shmdemo 90\n"
     "stackok\n"
     "stackbomb\n"

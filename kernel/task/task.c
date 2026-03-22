@@ -6,6 +6,7 @@
 #include "paging.h"
 #include "physmem.h"
 #include "shm.h"
+#include "mqueue.h"
 #include "assert.h"
 #include "rlimit.h"
 #include "terminal.h"
@@ -923,6 +924,7 @@ void task_system_init(void) {
     }
 
     shm_init();
+    mqueue_init();
 
     current_task_index = -1;
     next_task_id = 1;
@@ -2141,6 +2143,41 @@ int task_shm_unlink(int segment_id) {
 int task_shm_list(shm_segment_info_t* out, int max_segments) {
     unsigned int flags = interrupt_save();
     int count = shm_list(out, max_segments);
+    interrupt_restore(flags);
+    return count;
+}
+
+int task_mq_create(unsigned int max_messages, unsigned int msg_size) {
+    unsigned int flags = interrupt_save();
+    int rc = mqueue_create(max_messages, msg_size);
+    interrupt_restore(flags);
+    return rc;
+}
+
+int task_mq_send(int queue_id, const void* message, unsigned int size) {
+    unsigned int flags = interrupt_save();
+    int rc = mqueue_send(queue_id, message, size);
+    interrupt_restore(flags);
+    return rc;
+}
+
+int task_mq_receive(int queue_id, void* buffer, unsigned int buffer_size, unsigned int* received_size_out) {
+    unsigned int flags = interrupt_save();
+    int rc = mqueue_receive(queue_id, buffer, buffer_size, received_size_out);
+    interrupt_restore(flags);
+    return rc;
+}
+
+int task_mq_unlink(int queue_id) {
+    unsigned int flags = interrupt_save();
+    int rc = mqueue_unlink(queue_id);
+    interrupt_restore(flags);
+    return rc;
+}
+
+int task_mq_list(mqueue_info_t* out, int max_queues) {
+    unsigned int flags = interrupt_save();
+    int count = mqueue_list(out, max_queues);
     interrupt_restore(flags);
     return count;
 }

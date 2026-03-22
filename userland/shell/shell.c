@@ -100,6 +100,7 @@ static int cmd_stackbomb(int argc, const char* argv[], int background);
 static int cmd_stackok(int argc, const char* argv[], int background);
 static int cmd_shm(int argc, const char* argv[], int background);
 static int cmd_shmdemo(int argc, const char* argv[], int background);
+static int cmd_mq(int argc, const char* argv[], int background);
 static int cmd_task(int argc, const char* argv[], int background);
 static int cmd_mem(int argc, const char* argv[], int background);
 static int cmd_wait(int argc, const char* argv[], int background);
@@ -202,6 +203,7 @@ static command_t commands[] = {
     {"stackok", cmd_stackok, "prueba acceso valido al stack userland"},
     {"shm",     cmd_shm,     "memoria compartida: shm [list|create <bytes>|unlink <id>]"},
     {"shmdemo", cmd_shmdemo, "valida SHM con writer/reader userland: shmdemo [byte]"},
+    {"mq",      cmd_mq,      "message passing: mq [list|create|send|recv|unlink|demo]"},
     {"task",    cmd_task,    "muestra la tarea actual y foreground"},
     {"mem",     cmd_mem,     "estadisticas de heap, memoria fisica y paging"},
     {"wait",    cmd_wait,    "bloquea una tarea en evento: wait <id> [&]"},
@@ -2418,6 +2420,173 @@ static int cmd_shmdemo(int argc, const char* argv[], int background) {
     }
 
     terminal_print_line("shmdemo: segmento liberado");
+    return 1;
+}
+
+/* ---- cmd_mq ---- */
+static int cmd_mq(int argc, const char* argv[], int background) {
+    mqueue_info_t infos[MQ_MAX_QUEUES];
+    int count;
+    (void)background;
+
+    if (argc < 2 || str_equals(argv[1], "list")) {
+        count = task_mq_list(infos, MQ_MAX_QUEUES);
+        if (count <= 0) {
+            terminal_print_line("No hay colas MQ");
+            return 1;
+        }
+
+        terminal_print_line("ID   DEPTH   MSGSZ   COUNT");
+        for (int i = 0; i < count; i++) {
+            terminal_print_uint((unsigned int)infos[i].id);
+            terminal_print("   ");
+            terminal_print_uint(infos[i].max_messages);
+            terminal_print("   ");
+            terminal_print_uint(infos[i].msg_size);
+            terminal_print("   ");
+            terminal_print_uint(infos[i].count);
+            terminal_put_char('\n');
+        }
+        return 1;
+    }
+
+    if (str_equals(argv[1], "create")) {
+        unsigned int depth;
+        unsigned int msg_size;
+        int queue_id;
+
+        if (argc < 4) {
+            terminal_print_line("uso: mq create <depth> <msg_size>");
+            return 1;
+        }
+
+        depth = parse_positive_or_default(argv[2], 0U);
+        msg_size = parse_positive_or_default(argv[3], 0U);
+        queue_id = task_mq_create(depth, msg_size);
+        if (queue_id < 0) {
+            terminal_print_line("[error] no se pudo crear la cola MQ");
+            return 1;
+        }
+
+        terminal_print("MQ creada: id=");
+        terminal_print_uint((unsigned int)queue_id);
+        terminal_put_char('\n');
+        return 1;
+    }
+
+    if (str_equals(argv[1], "send")) {
+        int queue_id;
+        char payload[SHELL_PIPE_MAX];
+        int rc;
+
+        if (argc < 4) {
+            terminal_print_line("uso: mq send <id> <texto>");
+            return 1;
+        }
+
+        queue_id = (int)parse_positive_or_default(argv[2], 0U);
+        shell_join_args_to_buffer(argc, argv, 3, payload, sizeof(payload));
+        rc = task_mq_send(queue_id, payload, str_length(payload) + 1U);
+        if (rc == MQ_E_FULL) {
+            terminal_print_line("[error] cola MQ llena");
+            return 1;
+        }
+        if (rc != 0) {
+            terminal_print_line("[error] no se pudo enviar a la cola MQ");
+            return 1;
+        }
+
+        terminal_print_line("mq send: ok");
+        return 1;
+    }
+
+    if (str_equals(argv[1], "recv")) {
+        int queue_id;
+        char payload[MQ_MAX_MESSAGE_SIZE];
+        unsigned int received_size = 0;
+        int rc;
+
+        if (argc < 3) {
+            terminal_print_line("uso: mq recv <id>");
+            return 1;
+        }
+
+        queue_id = (int)parse_positive_or_default(argv[2], 0U);
+        rc = task_mq_receive(queue_id, payload, sizeof(payload), &received_size);
+        if (rc == MQ_E_EMPTY) {
+            terminal_print_line("mq recv: vacia");
+            return 1;
+        }
+        if (rc != 0) {
+            terminal_print_line("[error] no se pudo recibir de la cola MQ");
+            return 1;
+        }
+
+        payload[(received_size < sizeof(payload)) ? received_size : (sizeof(payload) - 1U)] = '\0';
+        terminal_print("mq recv: ");
+        terminal_print_line(payload);
+        return 1;
+    }
+
+    if (str_equals(argv[1], "unlink")) {
+        int queue_id;
+
+        if (argc < 3) {
+            terminal_print_line("uso: mq unlink <id>");
+            return 1;
+        }
+
+        queue_id = (int)parse_positive_or_default(argv[2], 0U);
+        if (task_mq_unlink(queue_id) != 0) {
+            terminal_print_line("[error] no existe esa cola MQ");
+            return 1;
+        }
+
+        terminal_print_line("mq unlink: ok");
+        return 1;
+    }
+
+    if (str_equals(argv[1], "demo")) {
+        static const char* messages[] = {
+            "uno",
+            "dos",
+            "tres"
+        };
+        char buffer[MQ_MAX_MESSAGE_SIZE];
+        unsigned int received_size = 0;
+        int queue_id;
+
+        queue_id = task_mq_create(4U, 32U);
+        if (queue_id < 0) {
+            terminal_print_line("[error] no se pudo crear la cola MQ para la demo");
+            return 1;
+        }
+
+        for (unsigned int i = 0; i < (sizeof(messages) / sizeof(messages[0])); i++) {
+            if (task_mq_send(queue_id, messages[i], str_length(messages[i]) + 1U) != 0) {
+                task_mq_unlink(queue_id);
+                terminal_print_line("[error] mq demo: fallo al enviar");
+                return 1;
+            }
+        }
+
+        for (unsigned int i = 0; i < (sizeof(messages) / sizeof(messages[0])); i++) {
+            if (task_mq_receive(queue_id, buffer, sizeof(buffer), &received_size) != 0) {
+                task_mq_unlink(queue_id);
+                terminal_print_line("[error] mq demo: fallo al recibir");
+                return 1;
+            }
+            buffer[(received_size < sizeof(buffer)) ? received_size : (sizeof(buffer) - 1U)] = '\0';
+            terminal_print("mqrecv: ");
+            terminal_print_line(buffer);
+        }
+
+        task_mq_unlink(queue_id);
+        terminal_print_line("mq demo ok");
+        return 1;
+    }
+
+    terminal_print_line("uso: mq [list|create <depth> <msg_size>|send <id> <texto>|recv <id>|unlink <id>|demo]");
     return 1;
 }
 

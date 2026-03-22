@@ -63,7 +63,11 @@ enum {
     SYSCALL_SHM_CREATE   = 54,
     SYSCALL_SHM_ATTACH   = 55,
     SYSCALL_SHM_DETACH   = 56,
-    SYSCALL_SHM_UNLINK   = 57
+    SYSCALL_SHM_UNLINK   = 57,
+    SYSCALL_MQ_CREATE    = 58,
+    SYSCALL_MQ_SEND      = 59,
+    SYSCALL_MQ_RECV      = 60,
+    SYSCALL_MQ_UNLINK    = 61
 };
 
 #define SYSCALL_POLLIN   0x0001U
@@ -188,5 +192,9 @@ int syscall_shm_create(unsigned int size);
 void* syscall_shm_attach(int segment_id);
 int syscall_shm_detach(void* address);
 int syscall_shm_unlink(int segment_id);
+int syscall_mq_create(unsigned int max_messages, unsigned int msg_size);
+int syscall_mq_send(int queue_id, const void* message, unsigned int size);
+int syscall_mq_recv(int queue_id, void* buffer, unsigned int buffer_size, unsigned int* received_size_out);
+int syscall_mq_unlink(int queue_id);
 
 #endif

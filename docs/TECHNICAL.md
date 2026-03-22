@@ -139,6 +139,7 @@ Todas las syscalls que reciben punteros de usuario los validan con `paging_valid
 | `PIPE` | Crea un par de FDs de tubería |
 | `POLL` / `SELECT` | Multiplexación de I/O |
 | `SHM_CREATE/ATTACH/DETACH/UNLINK` | Segmentos de memoria compartida |
+| `MQ_CREATE/SEND/RECV/UNLINK` | Message queues kernel-globales |
 | `GET_TIME` / `GET_MONOTONIC_MS` | Tiempo real y monotónico |
 | `GETRLIMIT` / `SETRLIMIT` | Límites de recursos (RLIMIT_NOFILE) |
 | `ALLOC` / `FREE` | Heap de usuario |
@@ -204,6 +205,8 @@ La implementación sigue siendo una tubería textual interna de shell, no un str
 En builds con `AUTOTEST=1`, la ramfs inicial incluye `/etc/bootrc.sh` con una secuencia de validación automática de shell y guard pages. En ese modo, la salida del terminal se espeja también a COM1 para que el harness headless pueda validar el resultado desde el host.
 
 La shell expone `shm` para administración básica de segmentos (`list`, `create`, `unlink`) y `shmdemo` para una prueba end-to-end. `shmdemo` crea un segmento, arranca un writer userland que escribe un byte en la ventana SHM y luego un reader userland que valida el mismo valor desde otro mapeo. El harness AUTOTEST comprueba el mensaje `shmread verificado correctamente` en la salida serie.
+
+La shell expone `mq` para colas de mensajes globales. La implementación actual usa hasta 16 colas simultáneas, con un máximo de 32 mensajes por cola y 256 bytes por mensaje. `mq demo` crea una cola, envía tres mensajes acotados, los recibe de vuelta desde la misma cola y termina con `mq demo ok` cuando la entrega se completó.
 
 ---
 

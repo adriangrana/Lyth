@@ -61,6 +61,7 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 - ELF32 loader, ring 3, `argv`/`envp` completos, `fork` con clonación de memoria y FDs
 - Señales completas: entrega, handlers en userland, `SIGKILL` no bloqueable, `SIGCHLD` + `waitpid`
 - Shared memory con herencia de mapeos en `fork` y limpieza automática en `exec`/salida
+- Message passing con colas MQ kernel-globales y mensajes acotados
 - Adopción de huérfanos por `init` (PID 1), recolección de zombies
 
 ### Seguridad y multiusuario
@@ -221,7 +222,7 @@ tools/              scripts auxiliares
 | Procesos | `ps`, `kill`, `nice`, `task`, `wait`, `signal`, `sleep`, `yield`, `getpid`, `exec` |
 | Archivos | `ls`, `cat`, `cd`, `pwd`, `touch`, `rm`, `mkdir`, `cp`, `mv`, `rename`, `stat`, `chmod`, `chown`, `grep`, `head`, `tail`, `more`, `less`, `wc`, `find`, `which`, `rmdir`, `cmp`, `diff`, `file`, `du`, `df`, `sync` |
 | Discos | `disk` (read / mount / fsck / gpt) |
-| Shell | `echo`, `env`, `set`, `unset`, `source`, `history`, `repeat`, `shm`, `shmdemo` |
+| Shell | `echo`, `env`, `set`, `unset`, `source`, `history`, `repeat`, `shm`, `shmdemo`, `mq` |
 | Entrada | `keymap`, `mouse` |
 | Visual | `color`, `theme`, `gfxdemo` |
 | Usuarios | `whoami`, `id`, `groups`, `su`, `login`, `logout`, `who`, `users` |

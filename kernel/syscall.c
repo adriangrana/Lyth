@@ -855,6 +855,83 @@ unsigned int syscall_callback(unsigned int number,
             }
             return 0;
 
+        case SYSCALL_MQ_CREATE:
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1);
+                return (unsigned int)-1;
+            }
+            {
+                int queue_id = task_mq_create(arg0, arg1);
+                if (queue_id < 0) {
+                    task_set_errno(22);
+                    return (unsigned int)-1;
+                }
+                return (unsigned int)queue_id;
+            }
+
+        case SYSCALL_MQ_SEND:
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1);
+                return (unsigned int)-1;
+            }
+            if (!syscall_validate_user_buffer((const void*)(uintptr_t)arg1, arg2)) {
+                task_set_errno(14);
+                return (unsigned int)-1;
+            }
+            {
+                int rc = task_mq_send((int)arg0, (const void*)(uintptr_t)arg1, arg2);
+                if (rc == MQ_E_FULL) {
+                    task_set_errno(11);
+                    return (unsigned int)-1;
+                }
+                if (rc != 0) {
+                    task_set_errno(22);
+                    return (unsigned int)-1;
+                }
+                return 0;
+            }
+
+        case SYSCALL_MQ_RECV:
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1);
+                return (unsigned int)-1;
+            }
+            if (!syscall_validate_user_buffer((const void*)(uintptr_t)arg1, arg2) ||
+                (arg3 != 0 && !syscall_validate_user_buffer((const void*)(uintptr_t)arg3, sizeof(unsigned int)))) {
+                task_set_errno(14);
+                return (unsigned int)-1;
+            }
+            {
+                unsigned int received_size = 0;
+                int rc = task_mq_receive((int)arg0,
+                                         (void*)(uintptr_t)arg1,
+                                         arg2,
+                                         arg3 ? &received_size : 0);
+                if (rc == MQ_E_EMPTY) {
+                    task_set_errno(11);
+                    return (unsigned int)-1;
+                }
+                if (rc != 0) {
+                    task_set_errno(22);
+                    return (unsigned int)-1;
+                }
+                if (arg3 != 0) {
+                    *(unsigned int*)(uintptr_t)arg3 = received_size;
+                }
+                return received_size;
+            }
+
+        case SYSCALL_MQ_UNLINK:
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1);
+                return (unsigned int)-1;
+            }
+            if (task_mq_unlink((int)arg0) != 0) {
+                task_set_errno(22);
+                return (unsigned int)-1;
+            }
+            return 0;
+
         case SYSCALL_KILL: {
             int ok = task_send_signal((int)arg0, LYTH_SIGTERM);
             if (!ok) task_set_errno(3); /* ESRCH */
@@ -1569,5 +1646,31 @@ int syscall_shm_detach(void* address) {
 int syscall_shm_unlink(int segment_id) {
     return (int)syscall_invoke(SYSCALL_SHM_UNLINK,
                                (unsigned int)segment_id,
+                               0U, 0U, 0U);
+}
+
+int syscall_mq_create(unsigned int max_messages, unsigned int msg_size) {
+    return (int)syscall_invoke(SYSCALL_MQ_CREATE, max_messages, msg_size, 0U, 0U);
+}
+
+int syscall_mq_send(int queue_id, const void* message, unsigned int size) {
+    return (int)syscall_invoke(SYSCALL_MQ_SEND,
+                               (unsigned int)queue_id,
+                               (unsigned int)(uintptr_t)message,
+                               size,
+                               0U);
+}
+
+int syscall_mq_recv(int queue_id, void* buffer, unsigned int buffer_size, unsigned int* received_size_out) {
+    return (int)syscall_invoke(SYSCALL_MQ_RECV,
+                               (unsigned int)queue_id,
+                               (unsigned int)(uintptr_t)buffer,
+                               buffer_size,
+                               (unsigned int)(uintptr_t)received_size_out);
+}
+
+int syscall_mq_unlink(int queue_id) {
+    return (int)syscall_invoke(SYSCALL_MQ_UNLINK,
+                               (unsigned int)queue_id,
                                0U, 0U, 0U);
 }

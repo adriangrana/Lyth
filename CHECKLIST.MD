@@ -202,7 +202,7 @@
 ## 18. Componentes avanzados
 - [x] IPC (pipes avanzados)
 - [x] Shared memory
-- [ ] Message passing
+- [x] Message passing
 - [x] poll / select
 - [x] Gestión de errores (errno)
 - [x] Gestión de recursos (FD limits)

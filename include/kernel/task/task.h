@@ -5,6 +5,7 @@
 #include "vfs.h"
 #include "signal.h"
 #include "shm.h"
+#include "mqueue.h"
 
 typedef enum {
 	TASK_STATE_FREE = 0,
@@ -172,5 +173,10 @@ uint32_t task_shm_attach(int segment_id);
 int task_shm_detach(uint32_t address);
 int task_shm_unlink(int segment_id);
 int task_shm_list(shm_segment_info_t* out, int max_segments);
+int task_mq_create(unsigned int max_messages, unsigned int msg_size);
+int task_mq_send(int queue_id, const void* message, unsigned int size);
+int task_mq_receive(int queue_id, void* buffer, unsigned int buffer_size, unsigned int* received_size_out);
+int task_mq_unlink(int queue_id);
+int task_mq_list(mqueue_info_t* out, int max_queues);
 
 #endif
