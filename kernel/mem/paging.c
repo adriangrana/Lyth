@@ -16,6 +16,10 @@ static uint32_t* current_directory = page_directory;
 static int paging_enabled = 0;
 static uint32_t paging_bytes_mapped = 0;
 
+static void paging_invalidate_page(uint32_t address) {
+    __asm__ volatile ("invlpg (%0)" : : "r"((void*)(uintptr_t)address) : "memory");
+}
+
 static uint32_t align_up(uint32_t value, uint32_t alignment) {
     return (value + alignment - 1U) & ~(alignment - 1U);
 }
@@ -261,6 +265,105 @@ uint32_t* paging_create_user_directory(uint32_t user_physical_base) {
         table_physical | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
 
     return directory;
+}
+
+static uint32_t* paging_user_table(uint32_t* directory) {
+    uint32_t pde;
+
+    if (directory == 0) {
+        return 0;
+    }
+
+    pde = directory[PAGING_USER_BASE / PAGE_SIZE_4MB];
+    if ((pde & PAGE_PRESENT) == 0 || (pde & PAGE_PAGE_SIZE) != 0) {
+        return 0;
+    }
+
+    return (uint32_t*)(uintptr_t)(pde & 0xFFFFF000U);
+}
+
+int paging_map_user_page(uint32_t* directory,
+                         uint32_t virtual_address,
+                         uint32_t physical_address,
+                         int writable) {
+    uint32_t* table;
+    uint32_t pte_index;
+    uint32_t flags;
+
+    if (directory == 0 ||
+        virtual_address < PAGING_USER_BASE ||
+        virtual_address >= PAGING_USER_BASE + PAGING_USER_SIZE ||
+        (virtual_address % PAGING_PAGE_SIZE) != 0U ||
+        physical_address == 0U ||
+        (physical_address % PAGING_PAGE_SIZE) != 0U) {
+        return 0;
+    }
+
+    table = paging_user_table(directory);
+    if (table == 0) {
+        return 0;
+    }
+
+    pte_index = (virtual_address >> 12) & 0x3FFU;
+    flags = PAGE_PRESENT | PAGE_USER | (writable ? PAGE_WRITABLE : 0U);
+    table[pte_index] = physical_address | flags;
+
+    if (current_directory == directory) {
+        paging_invalidate_page(virtual_address);
+    }
+
+    return 1;
+}
+
+int paging_unmap_user_page(uint32_t* directory, uint32_t virtual_address) {
+    uint32_t* table;
+    uint32_t pte_index;
+
+    if (directory == 0 ||
+        virtual_address < PAGING_USER_BASE ||
+        virtual_address >= PAGING_USER_BASE + PAGING_USER_SIZE ||
+        (virtual_address % PAGING_PAGE_SIZE) != 0U) {
+        return 0;
+    }
+
+    table = paging_user_table(directory);
+    if (table == 0) {
+        return 0;
+    }
+
+    pte_index = (virtual_address >> 12) & 0x3FFU;
+    table[pte_index] = 0U;
+
+    if (current_directory == directory) {
+        paging_invalidate_page(virtual_address);
+    }
+
+    return 1;
+}
+
+uint32_t paging_lookup_user_page(uint32_t* directory, uint32_t virtual_address) {
+    uint32_t* table;
+    uint32_t pte_index;
+    uint32_t pte;
+
+    if (directory == 0 ||
+        virtual_address < PAGING_USER_BASE ||
+        virtual_address >= PAGING_USER_BASE + PAGING_USER_SIZE) {
+        return 0U;
+    }
+
+    table = paging_user_table(directory);
+    if (table == 0) {
+        return 0U;
+    }
+
+    pte_index = (virtual_address >> 12) & 0x3FFU;
+    pte = table[pte_index];
+    if ((pte & PAGE_PRESENT) == 0U) {
+        return 0U;
+    }
+
+    return pte & 0xFFFFF000U;
 }
 
 void paging_destroy_user_directory(uint32_t* directory) {

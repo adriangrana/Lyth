@@ -23,5 +23,7 @@ int usermode_spawn_stackbomb(int foreground);
 /* Spawn a tiny synthetic user-mode task that touches valid stack memory
    and exits cleanly, used as a control test for stack guard pages. */
 int usermode_spawn_stackok(int foreground);
+int usermode_spawn_shm_writer(int segment_id, unsigned char value, int foreground);
+int usermode_spawn_shm_reader(int segment_id, unsigned char expected, int foreground);
 
 #endif

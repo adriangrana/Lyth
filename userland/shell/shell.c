@@ -98,6 +98,8 @@ static int cmd_time(int argc, const char* argv[], int background);
 static int cmd_alarm(int argc, const char* argv[], int background);
 static int cmd_stackbomb(int argc, const char* argv[], int background);
 static int cmd_stackok(int argc, const char* argv[], int background);
+static int cmd_shm(int argc, const char* argv[], int background);
+static int cmd_shmdemo(int argc, const char* argv[], int background);
 static int cmd_task(int argc, const char* argv[], int background);
 static int cmd_mem(int argc, const char* argv[], int background);
 static int cmd_wait(int argc, const char* argv[], int background);
@@ -198,6 +200,8 @@ static command_t commands[] = {
     {"time",    cmd_time,    "mide tiempo de ejecucion: time <comando> [args...]"},
     {"stackbomb", cmd_stackbomb, "prueba guard page del stack userland"},
     {"stackok", cmd_stackok, "prueba acceso valido al stack userland"},
+    {"shm",     cmd_shm,     "memoria compartida: shm [list|create <bytes>|unlink <id>]"},
+    {"shmdemo", cmd_shmdemo, "valida SHM con writer/reader userland: shmdemo [byte]"},
     {"task",    cmd_task,    "muestra la tarea actual y foreground"},
     {"mem",     cmd_mem,     "estadisticas de heap, memoria fisica y paging"},
     {"wait",    cmd_wait,    "bloquea una tarea en evento: wait <id> [&]"},
@@ -2269,6 +2273,151 @@ static int cmd_stackok(int argc, const char* argv[], int background) {
 
     shell_print_job_started(id, "stackok");
     terminal_print_line("stackok: prueba lanzada en background");
+    return 1;
+}
+
+/* ---- cmd_shm ---- */
+static int cmd_shm(int argc, const char* argv[], int background) {
+    shm_segment_info_t infos[SHM_MAX_SEGMENTS];
+    int count;
+    (void)background;
+
+    if (argc < 2 || str_equals(argv[1], "list")) {
+        count = task_shm_list(infos, SHM_MAX_SEGMENTS);
+        if (count <= 0) {
+            terminal_print_line("No hay segmentos SHM");
+            return 1;
+        }
+
+        terminal_print_line("ID   SIZE   REFS   STATE");
+        for (int i = 0; i < count; i++) {
+            terminal_print_uint((unsigned int)infos[i].id);
+            terminal_print("   ");
+            terminal_print_uint(infos[i].size);
+            terminal_print("   ");
+            terminal_print_uint(infos[i].ref_count);
+            terminal_print("   ");
+            terminal_print_line(infos[i].marked_for_delete ? "pending-delete" : "active");
+        }
+        return 1;
+    }
+
+    if (str_equals(argv[1], "create")) {
+        unsigned int size;
+        int segment_id;
+
+        if (argc < 3) {
+            terminal_print_line("uso: shm create <bytes>");
+            return 1;
+        }
+
+        size = parse_positive_or_default(argv[2], 0);
+        if (size == 0U) {
+            terminal_print_line("[error] tamano invalido");
+            return 1;
+        }
+
+        segment_id = task_shm_create(size);
+        if (segment_id < 0) {
+            terminal_print_line("[error] no se pudo crear el segmento SHM");
+            return 1;
+        }
+
+        terminal_print("SHM creado: id=");
+        terminal_print_uint((unsigned int)segment_id);
+        terminal_print(" size=");
+        terminal_print_uint(size);
+        terminal_put_char('\n');
+        return 1;
+    }
+
+    if (str_equals(argv[1], "unlink")) {
+        int segment_id;
+
+        if (argc < 3) {
+            terminal_print_line("uso: shm unlink <id>");
+            return 1;
+        }
+
+        segment_id = (int)parse_positive_or_default(argv[2], 0);
+        if (segment_id <= 0) {
+            terminal_print_line("[error] id invalido");
+            return 1;
+        }
+
+        if (task_shm_unlink(segment_id) != 0) {
+            terminal_print_line("[error] no existe ese segmento SHM");
+            return 1;
+        }
+
+        terminal_print("SHM marcado para liberar: id=");
+        terminal_print_uint((unsigned int)segment_id);
+        terminal_put_char('\n');
+        return 1;
+    }
+
+    terminal_print_line("uso: shm [list|create <bytes>|unlink <id>]");
+    return 1;
+}
+
+/* ---- cmd_shmdemo ---- */
+static int cmd_shmdemo(int argc, const char* argv[], int background) {
+    unsigned int requested_value = 65U;
+    unsigned char value;
+    int segment_id;
+    int writer_id;
+    int reader_id;
+    (void)background;
+
+    if (argc >= 2) {
+        requested_value = parse_positive_or_default(argv[1], 65U);
+    }
+    if (requested_value > 255U) {
+        terminal_print_line("[error] byte invalido, debe estar entre 0 y 255");
+        return 1;
+    }
+    value = (unsigned char)requested_value;
+
+    segment_id = task_shm_create(1U);
+    if (segment_id < 0) {
+        terminal_print_line("[error] no se pudo crear el segmento SHM para la demo");
+        return 1;
+    }
+
+    terminal_print("shmdemo: segmento creado id=");
+    terminal_print_uint((unsigned int)segment_id);
+    terminal_print(" valor=");
+    terminal_print_uint((unsigned int)value);
+    terminal_put_char('\n');
+
+    writer_id = usermode_spawn_shm_writer(segment_id, value, 0);
+    if (writer_id < 0) {
+        terminal_print_line("[error] no se pudo lanzar shmwrite");
+        task_shm_unlink(segment_id);
+        return 1;
+    }
+
+    task_set_priority(writer_id, TASK_PRIORITY_HIGH);
+    shell_print_job_started(writer_id, "shmwrite");
+    task_wait_id(writer_id);
+
+    reader_id = usermode_spawn_shm_reader(segment_id, value, 0);
+    if (reader_id < 0) {
+        terminal_print_line("[error] no se pudo lanzar shmread");
+        task_shm_unlink(segment_id);
+        return 1;
+    }
+
+    task_set_priority(reader_id, TASK_PRIORITY_HIGH);
+    shell_print_job_started(reader_id, "shmread");
+    task_wait_id(reader_id);
+
+    if (task_shm_unlink(segment_id) != 0) {
+        terminal_print_line("[warn] no se pudo liberar el segmento SHM");
+        return 1;
+    }
+
+    terminal_print_line("shmdemo: segmento liberado");
     return 1;
 }
 

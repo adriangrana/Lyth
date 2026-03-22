@@ -805,6 +805,56 @@ unsigned int syscall_callback(unsigned int number,
             return 0;
         }
 
+        case SYSCALL_SHM_CREATE:
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1); /* EPERM */
+                return (unsigned int)-1;
+            }
+            {
+                int shmid = task_shm_create(arg0);
+                if (shmid < 0) {
+                    task_set_errno(12); /* ENOMEM / EINVAL generic */
+                    return (unsigned int)-1;
+                }
+                return (unsigned int)shmid;
+            }
+
+        case SYSCALL_SHM_ATTACH:
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1); /* EPERM */
+                return (unsigned int)-1;
+            }
+            {
+                uint32_t address = task_shm_attach((int)arg0);
+                if (address == 0U) {
+                    task_set_errno(22); /* EINVAL / ENOMEM generic */
+                    return (unsigned int)-1;
+                }
+                return address;
+            }
+
+        case SYSCALL_SHM_DETACH:
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1); /* EPERM */
+                return (unsigned int)-1;
+            }
+            if (task_shm_detach(arg0) != 0) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+            return 0;
+
+        case SYSCALL_SHM_UNLINK:
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1); /* EPERM */
+                return (unsigned int)-1;
+            }
+            if (task_shm_unlink((int)arg0) != 0) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+            return 0;
+
         case SYSCALL_KILL: {
             int ok = task_send_signal((int)arg0, LYTH_SIGTERM);
             if (!ok) task_set_errno(3); /* ESRCH */
@@ -1498,4 +1548,26 @@ int syscall_getitimer(syscall_itimerval_t* out) {
     return (int)syscall_invoke(SYSCALL_GETITIMER,
                                (unsigned int)(uintptr_t)out,
                                0, 0, 0);
+}
+
+int syscall_shm_create(unsigned int size) {
+    return (int)syscall_invoke(SYSCALL_SHM_CREATE, size, 0U, 0U, 0U);
+}
+
+void* syscall_shm_attach(int segment_id) {
+    return (void*)(uintptr_t)syscall_invoke(SYSCALL_SHM_ATTACH,
+                                            (unsigned int)segment_id,
+                                            0U, 0U, 0U);
+}
+
+int syscall_shm_detach(void* address) {
+    return (int)syscall_invoke(SYSCALL_SHM_DETACH,
+                               (unsigned int)(uintptr_t)address,
+                               0U, 0U, 0U);
+}
+
+int syscall_shm_unlink(int segment_id) {
+    return (int)syscall_invoke(SYSCALL_SHM_UNLINK,
+                               (unsigned int)segment_id,
+                               0U, 0U, 0U);
 }

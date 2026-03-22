@@ -5,6 +5,7 @@
 #include "gdt.h"
 #include "paging.h"
 #include "physmem.h"
+#include "shm.h"
 #include "assert.h"
 #include "rlimit.h"
 #include "terminal.h"
@@ -87,6 +88,7 @@ typedef struct {
     unsigned int egid;                   /* effective group id */
     unsigned int supp_groups[TASK_MAX_SUPP_GROUPS]; /* supplementary groups */
     int supp_group_count;
+    shm_mapping_t shm_mappings[SHM_MAX_MAPPINGS];
     /* alarm()/setitimer() state */
     unsigned int alarm_tick;             /* tick at which SIGALRM fires (0 = not armed) */
     unsigned int itimer_interval_ticks; /* ITIMER_REAL reload interval (0 = one-shot) */
@@ -117,6 +119,19 @@ static int sys_init_pid = -1;   /* PID of the init/reaper task */
 
 static void task_thread_bootstrap(void);
 static void complete_task(task_entry_t* task);
+
+static void task_reset_shm_mappings(task_entry_t* task) {
+    if (task == 0) {
+        return;
+    }
+
+    for (int i = 0; i < SHM_MAX_MAPPINGS; i++) {
+        task->shm_mappings[i].used = 0;
+        task->shm_mappings[i].segment_id = 0;
+        task->shm_mappings[i].base = 0U;
+        task->shm_mappings[i].size = 0U;
+    }
+}
 
 /* ── Queue helper: derive slot index from pointer ─────────────────────── */
 static int task_slot_index(const task_entry_t* t) {
@@ -393,6 +408,7 @@ static void clear_task(task_entry_t* task) {
     }
 
     if (task->page_directory != 0) {
+        shm_detach_all(task->page_directory, task->shm_mappings, SHM_MAX_MAPPINGS);
         paging_destroy_user_directory(task->page_directory);
     }
 
@@ -443,6 +459,7 @@ static void clear_task(task_entry_t* task) {
     }
     task->alarm_tick = 0;
     task->itimer_interval_ticks = 0;
+    task_reset_shm_mappings(task);
 }
 
 /*
@@ -472,6 +489,7 @@ static void zombify_task(task_entry_t* task) {
         task->user_stack = 0;
     }
     if (task->page_directory != 0) {
+        shm_detach_all(task->page_directory, task->shm_mappings, SHM_MAX_MAPPINGS);
         paging_destroy_user_directory(task->page_directory);
         task->page_directory = 0;
     }
@@ -681,6 +699,19 @@ static void complete_task(task_entry_t* task) {
         terminal_print_line(" terminado correctamente");
     }
 
+    if (task_name[0] == 's' && task_name[1] == 'h' && task_name[2] == 'm' &&
+        task_name[3] == 'r' && task_name[4] == 'e' && task_name[5] == 'a' &&
+        task_name[6] == 'd' && task_name[7] == '\0') {
+        terminal_print("[job ");
+        terminal_print_uint((unsigned int)task_id);
+        terminal_print("] shmread ");
+        if (!cancelled && task->exit_code == 0) {
+            terminal_print_line("verificado correctamente");
+        } else {
+            terminal_print_line("fallo la validacion");
+        }
+    }
+
     /* Reparent any live children so they aren't orphaned when this task dies. */
     reparent_children(task_id, sys_init_pid);
 
@@ -888,7 +919,10 @@ void task_system_init(void) {
         tasks[i].sched_next = -1;
         vfs_task_fd_init(tasks[i].fd_table);
         task_signal_handlers_init(&tasks[i]);
+        task_reset_shm_mappings(&tasks[i]);
     }
+
+    shm_init();
 
     current_task_index = -1;
     next_task_id = 1;
@@ -1023,6 +1057,7 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
         for (int gi = 0; gi < TASK_MAX_SUPP_GROUPS; gi++) tasks[slot].supp_groups[gi] = 0U;
     }
     task_signal_handlers_init(&tasks[slot]);
+    task_reset_shm_mappings(&tasks[slot]);
     vfs_task_fd_init(tasks[slot].fd_table);  /* (re-)install stdio if tty is ready */
     tasks[slot].stack = (unsigned char*)kmalloc(TASK_STACK_SIZE);
     if (tasks[slot].stack == 0) {
@@ -1059,14 +1094,15 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
     return tasks[slot].id;
 }
 
-int task_spawn_user(const char* name,
-                    unsigned int entry_point,
-                    uint32_t user_physical_base,
-                    uint32_t user_heap_base,
-                    uint32_t user_heap_size,
-                    uint32_t* page_directory,
-                    uint32_t initial_user_esp,
-                    int foreground) {
+static int task_spawn_user_common(const char* name,
+                                  unsigned int entry_point,
+                                  uint32_t user_physical_base,
+                                  uint32_t user_heap_base,
+                                  uint32_t user_heap_size,
+                                  uint32_t* page_directory,
+                                  uint32_t initial_user_esp,
+                                  int shm_segment_id,
+                                  int foreground) {
     unsigned int flags;
     int slot = -1;
 
@@ -1136,6 +1172,7 @@ int task_spawn_user(const char* name,
         for (int gi = 0; gi < TASK_MAX_SUPP_GROUPS; gi++) tasks[slot].supp_groups[gi] = 0U;
     }
     task_signal_handlers_init(&tasks[slot]);
+    task_reset_shm_mappings(&tasks[slot]);
 
     vfs_task_fd_init(tasks[slot].fd_table);  /* (re-)install stdio if tty is ready */
 
@@ -1148,6 +1185,16 @@ int task_spawn_user(const char* name,
     tasks[slot].user_stack = (unsigned char*)(uintptr_t)PAGING_USER_STACK_BOTTOM;
     task_install_signal_trampoline(&tasks[slot]);
 
+    if (shm_segment_id > 0 &&
+        shm_attach(tasks[slot].page_directory,
+                   tasks[slot].shm_mappings,
+                   SHM_MAX_MAPPINGS,
+                   shm_segment_id) == 0U) {
+        clear_task(&tasks[slot]);
+        interrupt_restore(flags);
+        return -1;
+    }
+
     initialize_task_stack(&tasks[slot]);
 
     if (foreground) {
@@ -1157,6 +1204,45 @@ int task_spawn_user(const char* name,
     sched_enqueue_ready(slot);
     interrupt_restore(flags);
     return tasks[slot].id;
+}
+
+int task_spawn_user(const char* name,
+                    unsigned int entry_point,
+                    uint32_t user_physical_base,
+                    uint32_t user_heap_base,
+                    uint32_t user_heap_size,
+                    uint32_t* page_directory,
+                    uint32_t initial_user_esp,
+                    int foreground) {
+    return task_spawn_user_common(name,
+                                  entry_point,
+                                  user_physical_base,
+                                  user_heap_base,
+                                  user_heap_size,
+                                  page_directory,
+                                  initial_user_esp,
+                                  -1,
+                                  foreground);
+}
+
+int task_spawn_user_shm1(const char* name,
+                         unsigned int entry_point,
+                         uint32_t user_physical_base,
+                         uint32_t user_heap_base,
+                         uint32_t user_heap_size,
+                         uint32_t* page_directory,
+                         uint32_t initial_user_esp,
+                         int shm_segment_id,
+                         int foreground) {
+    return task_spawn_user_common(name,
+                                  entry_point,
+                                  user_physical_base,
+                                  user_heap_base,
+                                  user_heap_size,
+                                  page_directory,
+                                  initial_user_esp,
+                                  shm_segment_id,
+                                  foreground);
 }
 
 void task_on_tick(void) {
@@ -1833,6 +1919,8 @@ int task_exec_current_user_from_frame(unsigned int frame_esp,
     paging_switch_directory(page_directory);
 
     if (old_page_directory != 0) {
+        shm_detach_all(old_page_directory, task->shm_mappings, SHM_MAX_MAPPINGS);
+        task_reset_shm_mappings(task);
         paging_destroy_user_directory(old_page_directory);
     }
     if (old_user_physical_base != 0) {
@@ -2002,6 +2090,61 @@ int task_set_groups(const unsigned int* gids, int count) {
     return 0;
 }
 
+int task_shm_create(unsigned int size) {
+    unsigned int flags = interrupt_save();
+    int rc = shm_create(size);
+    interrupt_restore(flags);
+    return rc;
+}
+
+uint32_t task_shm_attach(int segment_id) {
+    unsigned int flags;
+    uint32_t address;
+
+    if (current_task_index < 0 || !tasks[current_task_index].used || !tasks[current_task_index].user_mode) {
+        return 0U;
+    }
+
+    flags = interrupt_save();
+    address = shm_attach(tasks[current_task_index].page_directory,
+                         tasks[current_task_index].shm_mappings,
+                         SHM_MAX_MAPPINGS,
+                         segment_id);
+    interrupt_restore(flags);
+    return address;
+}
+
+int task_shm_detach(uint32_t address) {
+    unsigned int flags;
+    int rc;
+
+    if (current_task_index < 0 || !tasks[current_task_index].used || !tasks[current_task_index].user_mode) {
+        return -1;
+    }
+
+    flags = interrupt_save();
+    rc = shm_detach(tasks[current_task_index].page_directory,
+                    tasks[current_task_index].shm_mappings,
+                    SHM_MAX_MAPPINGS,
+                    address);
+    interrupt_restore(flags);
+    return rc ? 0 : -1;
+}
+
+int task_shm_unlink(int segment_id) {
+    unsigned int flags = interrupt_save();
+    int rc = shm_unlink(segment_id);
+    interrupt_restore(flags);
+    return rc;
+}
+
+int task_shm_list(shm_segment_info_t* out, int max_segments) {
+    unsigned int flags = interrupt_save();
+    int count = shm_list(out, max_segments);
+    interrupt_restore(flags);
+    return count;
+}
+
 /* ── Resource-limit helpers ─────────────────────────────────────────────── */
 
 int task_current_open_fd_count(void) {
@@ -2141,6 +2284,19 @@ int task_fork_from_frame(unsigned int frame_esp) {
     tasks[slot].alarm_tick = 0;
     tasks[slot].itimer_interval_ticks = 0;
     task_signal_handlers_copy(&tasks[slot], parent);
+    task_reset_shm_mappings(&tasks[slot]);
+    if (!shm_clone_mappings(child_dir,
+                            tasks[slot].shm_mappings,
+                            SHM_MAX_MAPPINGS,
+                            parent->shm_mappings,
+                            SHM_MAX_MAPPINGS)) {
+        kfree(child_kstack);
+        paging_destroy_user_directory(child_dir);
+        physmem_free_region(child_phys, PAGING_USER_SIZE);
+        tasks[slot].used = 0;
+        interrupt_restore(flags);
+        return -1;
+    }
     vfs_task_fd_inherit(tasks[slot].fd_table, parent->fd_table);  /* inherit open FDs */
     task_install_signal_trampoline(&tasks[slot]);
 

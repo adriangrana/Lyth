@@ -96,13 +96,13 @@ int usermode_spawn_stackbomb(int foreground) {
 
     entry_point = paging_user_base();
     user_heap_base = align_up(entry_point + (uint32_t)sizeof(code), 16U);
-    if (user_heap_base >= PAGING_USER_STACK_GUARD_BASE) {
+    if (user_heap_base >= PAGING_USER_SHM_BASE) {
         paging_destroy_user_directory(page_directory);
         physmem_free_region(user_physical_base, paging_user_size());
         return -1;
     }
 
-    user_heap_size = PAGING_USER_STACK_GUARD_BASE - user_heap_base;
+    user_heap_size = PAGING_USER_SHM_BASE - user_heap_base;
 
     return task_spawn_user("stackbomb",
                            entry_point,
@@ -151,13 +151,13 @@ int usermode_spawn_stackok(int foreground) {
 
     entry_point = paging_user_base();
     user_heap_base = align_up(entry_point + (uint32_t)sizeof(code), 16U);
-    if (user_heap_base >= PAGING_USER_STACK_GUARD_BASE) {
+    if (user_heap_base >= PAGING_USER_SHM_BASE) {
         paging_destroy_user_directory(page_directory);
         physmem_free_region(user_physical_base, paging_user_size());
         return -1;
     }
 
-    user_heap_size = PAGING_USER_STACK_GUARD_BASE - user_heap_base;
+    user_heap_size = PAGING_USER_SHM_BASE - user_heap_base;
 
     return task_spawn_user("stackok",
                            entry_point,
@@ -167,6 +167,133 @@ int usermode_spawn_stackok(int foreground) {
                            page_directory,
                            0,
                            foreground);
+}
+
+int usermode_spawn_shm_writer(int segment_id, unsigned char value, int foreground) {
+    static const uint8_t template_code[] = {
+        0xB8,
+        (uint8_t)(PAGING_USER_SHM_BASE & 0xFFU),
+        (uint8_t)((PAGING_USER_SHM_BASE >> 8) & 0xFFU),
+        (uint8_t)((PAGING_USER_SHM_BASE >> 16) & 0xFFU),
+        (uint8_t)((PAGING_USER_SHM_BASE >> 24) & 0xFFU),
+        0xC6, 0x00, 0x00,
+        0x31, 0xDB,
+        0xB8, 0x0B, 0x00, 0x00, 0x00,
+        0xCD, 0x80
+    };
+    uint8_t code[sizeof(template_code)];
+    uint32_t user_physical_base;
+    uint32_t* page_directory;
+    uint32_t entry_point;
+    uint32_t user_heap_base;
+    uint32_t user_heap_size;
+
+    if (segment_id <= 0) {
+        return -1;
+    }
+
+    copy_memory(code, template_code, (uint32_t)sizeof(template_code));
+    code[7] = value;
+
+    user_physical_base = physmem_alloc_region(paging_user_size(), paging_user_size());
+    if (user_physical_base == 0) {
+        return -1;
+    }
+
+    page_directory = paging_create_user_directory(user_physical_base);
+    if (page_directory == 0) {
+        physmem_free_region(user_physical_base, paging_user_size());
+        return -1;
+    }
+
+    zero_memory((uint8_t*)(uintptr_t)user_physical_base, paging_user_size());
+    copy_memory((uint8_t*)(uintptr_t)user_physical_base, code, (uint32_t)sizeof(code));
+
+    entry_point = paging_user_base();
+    user_heap_base = align_up(entry_point + (uint32_t)sizeof(code), 16U);
+    if (user_heap_base >= PAGING_USER_SHM_BASE) {
+        paging_destroy_user_directory(page_directory);
+        physmem_free_region(user_physical_base, paging_user_size());
+        return -1;
+    }
+
+    user_heap_size = PAGING_USER_SHM_BASE - user_heap_base;
+
+    return task_spawn_user_shm1("shmwrite",
+                                entry_point,
+                                user_physical_base,
+                                user_heap_base,
+                                user_heap_size,
+                                page_directory,
+                                0,
+                                segment_id,
+                                foreground);
+}
+
+int usermode_spawn_shm_reader(int segment_id, unsigned char expected, int foreground) {
+    static const uint8_t template_code[] = {
+        0xB8,
+        (uint8_t)(PAGING_USER_SHM_BASE & 0xFFU),
+        (uint8_t)((PAGING_USER_SHM_BASE >> 8) & 0xFFU),
+        (uint8_t)((PAGING_USER_SHM_BASE >> 16) & 0xFFU),
+        (uint8_t)((PAGING_USER_SHM_BASE >> 24) & 0xFFU),
+        0x8A, 0x08,
+        0x80, 0xF9, 0x00,
+        0x75, 0x07,
+        0x31, 0xDB,
+        0xB8, 0x0B, 0x00, 0x00, 0x00,
+        0xCD, 0x80,
+        0xBB, 0x01, 0x00, 0x00, 0x00,
+        0xB8, 0x0B, 0x00, 0x00, 0x00,
+        0xCD, 0x80
+    };
+    uint8_t code[sizeof(template_code)];
+    uint32_t user_physical_base;
+    uint32_t* page_directory;
+    uint32_t entry_point;
+    uint32_t user_heap_base;
+    uint32_t user_heap_size;
+
+    if (segment_id <= 0) {
+        return -1;
+    }
+
+    copy_memory(code, template_code, (uint32_t)sizeof(template_code));
+    code[9] = expected;
+
+    user_physical_base = physmem_alloc_region(paging_user_size(), paging_user_size());
+    if (user_physical_base == 0) {
+        return -1;
+    }
+
+    page_directory = paging_create_user_directory(user_physical_base);
+    if (page_directory == 0) {
+        physmem_free_region(user_physical_base, paging_user_size());
+        return -1;
+    }
+
+    zero_memory((uint8_t*)(uintptr_t)user_physical_base, paging_user_size());
+    copy_memory((uint8_t*)(uintptr_t)user_physical_base, code, (uint32_t)sizeof(code));
+
+    entry_point = paging_user_base();
+    user_heap_base = align_up(entry_point + (uint32_t)sizeof(code), 16U);
+    if (user_heap_base >= PAGING_USER_SHM_BASE) {
+        paging_destroy_user_directory(page_directory);
+        physmem_free_region(user_physical_base, paging_user_size());
+        return -1;
+    }
+
+    user_heap_size = PAGING_USER_SHM_BASE - user_heap_base;
+
+    return task_spawn_user_shm1("shmread",
+                                entry_point,
+                                user_physical_base,
+                                user_heap_base,
+                                user_heap_size,
+                                page_directory,
+                                0,
+                                segment_id,
+                                foreground);
 }
 
 /* ============================================================

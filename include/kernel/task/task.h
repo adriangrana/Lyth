@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "vfs.h"
 #include "signal.h"
+#include "shm.h"
 
 typedef enum {
 	TASK_STATE_FREE = 0,
@@ -51,6 +52,15 @@ int task_spawn_user(const char* name,
 					uint32_t* page_directory,
 					uint32_t initial_user_esp,
 					int foreground);
+int task_spawn_user_shm1(const char* name,
+					 unsigned int entry_point,
+					 uint32_t user_physical_base,
+					 uint32_t user_heap_base,
+					 uint32_t user_heap_size,
+					 uint32_t* page_directory,
+					 uint32_t initial_user_esp,
+					 int shm_segment_id,
+					 int foreground);
 void task_run_ready(void);
 int task_has_runnable(void);
 void task_on_tick(void);
@@ -157,5 +167,10 @@ int task_in_group(unsigned int gid);
 /* getgroups/setgroups style API (count or -1 on error). */
 int task_get_groups(unsigned int* gids_out, int max_groups);
 int task_set_groups(const unsigned int* gids, int count);
+int task_shm_create(unsigned int size);
+uint32_t task_shm_attach(int segment_id);
+int task_shm_detach(uint32_t address);
+int task_shm_unlink(int segment_id);
+int task_shm_list(shm_segment_info_t* out, int max_segments);
 
 #endif

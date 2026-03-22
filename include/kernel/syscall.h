@@ -59,7 +59,11 @@ enum {
     SYSCALL_SETGROUPS    = 50,
     SYSCALL_ALARM        = 51,  /* alarm(seconds)                       -> remaining_secs */
     SYSCALL_SETITIMER    = 52,  /* setitimer(value_us, interval_us)     -> 0/-1 */
-    SYSCALL_GETITIMER    = 53   /* getitimer(*value_us_out,*interval_us_out) -> 0/-1 */
+    SYSCALL_GETITIMER    = 53,  /* getitimer(*value_us_out,*interval_us_out) -> 0/-1 */
+    SYSCALL_SHM_CREATE   = 54,
+    SYSCALL_SHM_ATTACH   = 55,
+    SYSCALL_SHM_DETACH   = 56,
+    SYSCALL_SHM_UNLINK   = 57
 };
 
 #define SYSCALL_POLLIN   0x0001U
@@ -180,5 +184,9 @@ unsigned int syscall_alarm(unsigned int seconds);
 int syscall_setitimer(unsigned int value_us, unsigned int interval_us,
                       syscall_itimerval_t* old_out);
 int syscall_getitimer(syscall_itimerval_t* out);
+int syscall_shm_create(unsigned int size);
+void* syscall_shm_attach(int segment_id);
+int syscall_shm_detach(void* address);
+int syscall_shm_unlink(int segment_id);
 
 #endif

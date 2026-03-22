@@ -79,6 +79,8 @@ Cada proceso de usuario tiene su propio directorio de páginas. El kernel usa id
 
 La región de usuario usa una page table de 4 KiB y deja una guard page no mapeada justo debajo del stack. Si un proceso toca esa página, provoca `Page fault` y el kernel lo reporta como `stack guard page hit`.
 
+Justo debajo de la guard page existe además una ventana fija de shared memory. Los segmentos SHM se respaldan con frames físicos propios del kernel y se remapean dentro de esa ventana en cada proceso que hace `attach`, de modo que varios procesos ven las mismas páginas físicas sin copiar contenido.
+
 ### Heap del kernel
 `heap.c` gestiona un array estático de 256 KB con un allocator first-fit. `kmalloc(size)` devuelve un puntero alineado; `kfree(ptr)` libera y coalesce bloques adyacentes libres.
 
@@ -97,12 +99,15 @@ La región de usuario usa una page table de 4 KiB y deja una guard page no mapea
 - `uid`, `gid`, `euid`, `egid`, grupos suplementarios (hasta `TASK_MAX_SUPP_GROUPS`).
 - Señales: máscara, conjunto de señales pendientes, tabla de handlers.
 - `parent_id`, `exit_code`.
+- Mapeos SHM activos por proceso (hasta 8 segmentos simultáneos).
 - Límites de recursos (`fd_limit_soft`, `fd_limit_hard`).
 
 ### Ciclo de vida
 La IRQ0 llama al scheduler, que elige la tarea de mayor prioridad en estado `READY`. El context switch guarda/restaura registros de kernel en el stack de la tarea saliente/entrante.
 
 `task_fork()` clona la tarea activa: copia el stack de usuario, la tabla de FDs (con `ref_count` en VFS) y el directorio de páginas. No copia el heap del kernel.
+
+Cuando el proceso tiene SHM adjunta, `fork` hereda esos mapeos reinsertando las mismas páginas físicas en el hijo. `exec` y la salida del proceso hacen `detach_all`, decrementan referencias y liberan el segmento cuando ya no quedan adjuntos y además fue marcado con `shm_unlink`.
 
 Los zombies permanecen visibles en `ps` hasta que el padre llama a `wait`/`waitpid` o `init` los adopta.
 
@@ -133,6 +138,7 @@ Todas las syscalls que reciben punteros de usuario los validan con `paging_valid
 | `GETGROUPS` / `SETGROUPS` | Grupos suplementarios |
 | `PIPE` | Crea un par de FDs de tubería |
 | `POLL` / `SELECT` | Multiplexación de I/O |
+| `SHM_CREATE/ATTACH/DETACH/UNLINK` | Segmentos de memoria compartida |
 | `GET_TIME` / `GET_MONOTONIC_MS` | Tiempo real y monotónico |
 | `GETRLIMIT` / `SETRLIMIT` | Límites de recursos (RLIMIT_NOFILE) |
 | `ALLOC` / `FREE` | Heap de usuario |
@@ -196,6 +202,8 @@ Ejemplos válidos:
 La implementación sigue siendo una tubería textual interna de shell, no un stream POSIX completo entre procesos separados, pero ya no trunca la salida simplemente por un buffer fijo de 4 KB en cada etapa.
 
 En builds con `AUTOTEST=1`, la ramfs inicial incluye `/etc/bootrc.sh` con una secuencia de validación automática de shell y guard pages. En ese modo, la salida del terminal se espeja también a COM1 para que el harness headless pueda validar el resultado desde el host.
+
+La shell expone `shm` para administración básica de segmentos (`list`, `create`, `unlink`) y `shmdemo` para una prueba end-to-end. `shmdemo` crea un segmento, arranca un writer userland que escribe un byte en la ventana SHM y luego un reader userland que valida el mismo valor desde otro mapeo. El harness AUTOTEST comprueba el mensaje `shmread verificado correctamente` en la salida serie.
 
 ---
 

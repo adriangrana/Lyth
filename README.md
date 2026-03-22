@@ -43,10 +43,11 @@ Lyth OS cubre los subsistemas clásicos de un kernel real: arranque, gestión de
 ### Memoria
 - Frame allocator físico por bitmap a partir del mapa Multiboot
 - Paginación con páginas grandes de 4 MiB, espacio virtual independiente por proceso
+- Ventana de memoria compartida por proceso con segmentos SHM respaldados por frames físicos
 - Heap del kernel (`kmalloc`/`kfree`), 256 KB
 
 ### Syscalls (`int 0x80`)
-Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit`, `wait/waitpid`, `pipe`, `poll`, `select`, `lseek`, `getpid`, `kill`, señales, identidad (`getuid/geteuid/setuid/setgid/getgroups`), `vfs_chown`, `getrlimit/setrlimit`, tiempo real y monotónico.
+Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit`, `wait/waitpid`, `pipe`, `poll`, `select`, `lseek`, `getpid`, `kill`, señales, identidad (`getuid/geteuid/setuid/setgid/getgroups`), `shm_create/shm_attach/shm_detach/shm_unlink`, `vfs_chown`, `getrlimit/setrlimit`, tiempo real y monotónico.
 
 ### Sistema de archivos
 - VFS con montajes, rutas absolutas/relativas, normalización, `cwd` por proceso
@@ -59,6 +60,7 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 ### Procesos y señales
 - ELF32 loader, ring 3, `argv`/`envp` completos, `fork` con clonación de memoria y FDs
 - Señales completas: entrega, handlers en userland, `SIGKILL` no bloqueable, `SIGCHLD` + `waitpid`
+- Shared memory con herencia de mapeos en `fork` y limpieza automática en `exec`/salida
 - Adopción de huérfanos por `init` (PID 1), recolección de zombies
 
 ### Seguridad y multiusuario
@@ -219,7 +221,7 @@ tools/              scripts auxiliares
 | Procesos | `ps`, `kill`, `nice`, `task`, `wait`, `signal`, `sleep`, `yield`, `getpid`, `exec` |
 | Archivos | `ls`, `cat`, `cd`, `pwd`, `touch`, `rm`, `mkdir`, `cp`, `mv`, `rename`, `stat`, `chmod`, `chown`, `grep`, `head`, `tail`, `more`, `less`, `wc`, `find`, `which`, `rmdir`, `cmp`, `diff`, `file`, `du`, `df`, `sync` |
 | Discos | `disk` (read / mount / fsck / gpt) |
-| Shell | `echo`, `env`, `set`, `unset`, `source`, `history`, `repeat` |
+| Shell | `echo`, `env`, `set`, `unset`, `source`, `history`, `repeat`, `shm`, `shmdemo` |
 | Entrada | `keymap`, `mouse` |
 | Visual | `color`, `theme`, `gfxdemo` |
 | Usuarios | `whoami`, `id`, `groups`, `su`, `login`, `logout`, `who`, `users` |
