@@ -241,7 +241,7 @@ static command_t commands[] = {
     {"more",    cmd_more,    "pagina un archivo: more <ruta>"},
     {"less",    cmd_more,    "alias de more"},
     {"wc",      cmd_wc,      "cuenta lineas/palabras/bytes: wc [-l|-w|-c] <ruta>"},
-    {"cmp",     cmd_cmp,     "compara dos archivos byte a byte: cmp <a> <b>"},
+    {"cmp",     cmd_cmp,     "compara dos archivos byte a byte: cmp [-l] [-v] [-q] <a> <b>"},
     {"diff",    cmd_cmp,     "alias de cmp"},
     {"file",    cmd_file,    "detecta tipo de archivo: file <ruta>"},
     {"du",      cmd_du,      "uso de disco por directorio: du [ruta]"},
@@ -4137,10 +4137,23 @@ static void find_recursive(const char* dir, const char* pattern) {
 static int cmd_find(int argc, const char* argv[], int background) {
     char root[VFS_PATH_MAX];
     const char* pattern = 0;
+    vfs_stat_t st;
     (void)background;
-    if (argc < 2) shell_resolve_path(".", root, sizeof(root));
-    else shell_resolve_path(argv[1], root, sizeof(root));
-    if (argc >= 4 && str_equals(argv[2], "-name")) pattern = argv[3];
+    /* find -name <pattern>  =>  search CWD */
+    if (argc >= 3 && str_equals(argv[1], "-name")) {
+        shell_resolve_path(".", root, sizeof(root));
+        pattern = argv[2];
+    } else if (argc >= 2) {
+        shell_resolve_path(argv[1], root, sizeof(root));
+        if (argc >= 4 && str_equals(argv[2], "-name")) pattern = argv[3];
+    } else {
+        shell_resolve_path(".", root, sizeof(root));
+    }
+    if (vfs_stat(root, &st) != 0 || !(st.flags & VFS_FLAG_DIR)) {
+        terminal_print("[error] No existe o no es un directorio: ");
+        terminal_print_line(root);
+        return 1;
+    }
     find_recursive(root, pattern);
     return 1;
 }
@@ -4173,6 +4186,12 @@ static int cmd_head(int argc, const char* argv[], int background) {
         for (i = 0; argv[2][i] >= '0' && argv[2][i] <= '9'; i++)
             n = n * 10 + (argv[2][i] - '0');
         arg_idx = 3;
+    } else if (argc >= 2 && argv[1][0] == '-' && argv[1][1] >= '1' && argv[1][1] <= '9') {
+        /* head -5 file */
+        unsigned int i; n = 0;
+        for (i = 1; argv[1][i] >= '0' && argv[1][i] <= '9'; i++)
+            n = n * 10 + (argv[1][i] - '0');
+        arg_idx = 2;
     }
     if (arg_idx >= argc) { terminal_print_line("Uso: head [-n N] <ruta>"); return 1; }
     shell_resolve_path(argv[arg_idx], path, sizeof(path));
@@ -4211,7 +4230,7 @@ static int cmd_tail(int argc, const char* argv[], int background) {
     fd = vfs_open_flags(path, VFS_O_RDONLY);
     if (fd < 0) { terminal_print("[error] No se pudo abrir: "); terminal_print_line(path); return 1; }
     {
-        /* Find the offset of the n-th line from the end */
+        /* Print the last N logical lines, including files ending with '\n'. */
         unsigned int size = st.size;
         unsigned char* tmp = (unsigned char*)kmalloc(size + 1U);
         if (tmp) {
@@ -4219,18 +4238,28 @@ static int cmd_tail(int argc, const char* argv[], int background) {
             int nb;
             while (got < size && (nb = vfs_read(fd, tmp + got, size - got)) > 0) got += (unsigned int)nb;
             tmp[got] = '\0';
-            /* count newlines from end */
             {
-                int newlines = 0;
-                unsigned int start = got;
-                for (i = got; i > 0; i--) {
-                    if (tmp[i-1] == '\n') {
-                        newlines++;
-                        if (newlines > n) { start = i; break; }
+                unsigned int start = 0;
+                unsigned int total_lines = 0;
+                if (n <= 0) {
+                    start = got;
+                } else {
+                    for (i = 0; i < got; i++) {
+                        if (tmp[i] == '\n') total_lines++;
+                }
+                    if (got > 0 && tmp[got - 1] != '\n') total_lines++;
+                    if (total_lines > (unsigned int)n) {
+                        unsigned int skip = total_lines - (unsigned int)n;
+                        for (i = 0; i < got && skip > 0; i++) {
+                            if (tmp[i] == '\n') {
+                                start = i + 1U;
+                                skip--;
+                            }
+                        }
                     }
                 }
                 for (i = start; i < got; i++) terminal_put_char((char)tmp[i]);
-                if (got > 0 && tmp[got-1] != '\n') terminal_put_char('\n');
+                if (start < got && tmp[got-1] != '\n') terminal_put_char('\n');
             }
             kfree(tmp);
         }
@@ -4321,17 +4350,108 @@ static int cmd_wc(int argc, const char* argv[], int background) {
     return 1;
 }
 
+static void shell_cmp_print_hex_byte(unsigned char value) {
+    static const char hex[] = "0123456789ABCDEF";
+    char s[3];
+    s[0] = hex[value >> 4];
+    s[1] = hex[value & 0x0F];
+    s[2] = '\0';
+    terminal_print(s);
+}
+
+static void shell_cmp_print_octal_byte(unsigned char value) {
+    char s[4];
+    s[0] = (char)('0' + ((value >> 6) & 0x07));
+    s[1] = (char)('0' + ((value >> 3) & 0x07));
+    s[2] = (char)('0' + (value & 0x07));
+    s[3] = '\0';
+    terminal_print(s);
+}
+
+static void shell_cmp_print_byte_label(unsigned char value) {
+    terminal_put_char('\'');
+    switch (value) {
+        case '\n': terminal_print("\\n"); break;
+        case '\r': terminal_print("\\r"); break;
+        case '\t': terminal_print("\\t"); break;
+        case '\0': terminal_print("\\0"); break;
+        case '\\': terminal_print("\\\\"); break;
+        case '\'': terminal_print("\\'"); break;
+        default:
+            if (value >= 32U && value <= 126U)
+                terminal_put_char((char)value);
+            else {
+                terminal_print("\\x");
+                shell_cmp_print_hex_byte(value);
+            }
+            break;
+    }
+    terminal_put_char('\'');
+}
+
+static void shell_cmp_print_difference(unsigned int byte_index,
+                                       unsigned char left,
+                                       unsigned char right,
+                                       int verbose) {
+    terminal_print("Byte ");
+    terminal_print_uint(byte_index);
+    terminal_print(": ");
+    if (verbose) {
+        shell_cmp_print_byte_label(left);
+        terminal_print(" (0x");
+        shell_cmp_print_hex_byte(left);
+        terminal_print(" / ");
+        shell_cmp_print_octal_byte(left);
+        terminal_print(") vs ");
+        shell_cmp_print_byte_label(right);
+        terminal_print(" (0x");
+        shell_cmp_print_hex_byte(right);
+        terminal_print(" / ");
+        shell_cmp_print_octal_byte(right);
+        terminal_print_line(")");
+        return;
+    }
+
+    terminal_print("0x");
+    shell_cmp_print_hex_byte(left);
+    terminal_print(" vs 0x");
+    shell_cmp_print_hex_byte(right);
+    terminal_put_char('\n');
+}
+
 /* ---- cmd_cmp ---- */
 static int cmd_cmp(int argc, const char* argv[], int background) {
     char pa[VFS_PATH_MAX], pb[VFS_PATH_MAX];
+    int arg_idx = 1;
     int fda, fdb;
     unsigned char ba[1], bb[1];
     unsigned int offset = 0;
+    unsigned int diff_count = 0;
+    int list_all = 0;
+    int verbose = 0;
+    int quiet = 0;
+    int different = 0;
     int ra, rb;
     (void)background;
-    if (argc < 3) { terminal_print_line("Uso: cmp <archivo1> <archivo2>"); return 1; }
-    shell_resolve_path(argv[1], pa, sizeof(pa));
-    shell_resolve_path(argv[2], pb, sizeof(pb));
+    while (arg_idx < argc && argv[arg_idx][0] == '-') {
+        int i;
+        if (argv[arg_idx][1] == '\0') break;
+        for (i = 1; argv[arg_idx][i] != '\0'; i++) {
+            if (argv[arg_idx][i] == 'l') list_all = 1;
+            else if (argv[arg_idx][i] == 'v') verbose = 1;
+            else if (argv[arg_idx][i] == 'q') quiet = 1;
+            else {
+                terminal_print("[error] Opcion no soportada: ");
+                terminal_print_line(argv[arg_idx]);
+                terminal_print_line("Uso: cmp [-l] [-v] [-q] <archivo1> <archivo2>");
+                return 1;
+            }
+        }
+        arg_idx++;
+    }
+    if (argc - arg_idx < 2) { terminal_print_line("Uso: cmp [-l] [-v] [-q] <archivo1> <archivo2>"); return 1; }
+    shell_resolve_path(argv[arg_idx], pa, sizeof(pa));
+    shell_resolve_path(argv[arg_idx + 1], pb, sizeof(pb));
     fda = vfs_open_flags(pa, VFS_O_RDONLY);
     fdb = vfs_open_flags(pb, VFS_O_RDONLY);
     if (fda < 0) { terminal_print("[error] No encontrado: "); terminal_print_line(pa); if (fdb >= 0) vfs_close(fdb); return 1; }
@@ -4339,22 +4459,37 @@ static int cmd_cmp(int argc, const char* argv[], int background) {
     while (1) {
         ra = vfs_read(fda, ba, 1);
         rb = vfs_read(fdb, bb, 1);
-        if (ra <= 0 && rb <= 0) { terminal_print_line("Los archivos son identicos"); break; }
+        if (ra <= 0 && rb <= 0) {
+            if (quiet)
+                terminal_print_line(different ? "Son distintos" : "Son identicos");
+            else if (diff_count == 0U)
+                terminal_print_line("Los archivos son identicos");
+            break;
+        }
         if (ra <= 0 || rb <= 0) {
-            terminal_print("Los archivos difieren en longitud (byte ");
-            terminal_print_uint(offset); terminal_print_line(")");
+            different = 1;
+            if (quiet) {
+                terminal_print_line("Son distintos");
+            } else if (list_all || verbose) {
+                terminal_print("Longitud distinta a partir del byte ");
+                terminal_print_uint(offset + 1U);
+                terminal_put_char('\n');
+            } else {
+                terminal_print("Los archivos difieren en longitud (byte ");
+                terminal_print_uint(offset); terminal_print_line(")");
+            }
             break;
         }
         if (ba[0] != bb[0]) {
-            terminal_print("Difieren en byte "); terminal_print_uint(offset);
-            terminal_print(": 0x");
-            {
-                static const char h[] = "0123456789ABCDEF";
-                char s[3]; s[0]=h[ba[0]>>4]; s[1]=h[ba[0]&0xF]; s[2]=0; terminal_print(s);
-                terminal_print(" vs 0x");
-                s[0]=h[bb[0]>>4]; s[1]=h[bb[0]&0xF]; s[2]=0; terminal_print_line(s);
+            diff_count++;
+            different = 1;
+            if (quiet) {
+                terminal_print_line("Son distintos");
+                break;
             }
-            break;
+            shell_cmp_print_difference((list_all || verbose) ? (offset + 1U) : offset,
+                                       ba[0], bb[0], verbose);
+            if (!list_all) break;
         }
         offset++;
     }
