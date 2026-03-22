@@ -19,6 +19,14 @@ typedef struct {
     int prompt_col;
     int rendered_length;
     int prompt_visible;
+    char input_buffer[INPUT_MAX];
+    int input_length;
+    int cursor_pos;
+    int selection_active;
+    int selection_anchor;
+    int history_index;
+    int browsing_history;
+    char draft_buffer[INPUT_MAX];
 } shell_input_vc_state_t;
 
 static char input_buffer[INPUT_MAX];
@@ -95,6 +103,18 @@ static void shell_input_store_current_vc_state(void) {
     shell_input_vc_states[slot].prompt_col = prompt_col;
     shell_input_vc_states[slot].rendered_length = rendered_length;
     shell_input_vc_states[slot].prompt_visible = prompt_visible;
+    shell_input_vc_states[slot].input_length = input_length;
+    shell_input_vc_states[slot].cursor_pos = cursor_pos;
+    shell_input_vc_states[slot].selection_active = selection_active;
+    shell_input_vc_states[slot].selection_anchor = selection_anchor;
+    shell_input_vc_states[slot].history_index = history_index;
+    shell_input_vc_states[slot].browsing_history = browsing_history;
+    for (int i = 0; i < input_length; i++)
+        shell_input_vc_states[slot].input_buffer[i] = input_buffer[i];
+    shell_input_vc_states[slot].input_buffer[input_length] = '\0';
+    for (int i = 0; draft_buffer[i] != '\0' && i < INPUT_MAX - 1; i++)
+        shell_input_vc_states[slot].draft_buffer[i] = draft_buffer[i];
+    shell_input_vc_states[slot].draft_buffer[INPUT_MAX - 1] = '\0';
 }
 
 static int shell_input_load_vc_state(int slot) {
@@ -106,6 +126,17 @@ static int shell_input_load_vc_state(int slot) {
     prompt_col = shell_input_vc_states[slot].prompt_col;
     rendered_length = shell_input_vc_states[slot].rendered_length;
     prompt_visible = shell_input_vc_states[slot].prompt_visible;
+    input_length = shell_input_vc_states[slot].input_length;
+    cursor_pos = shell_input_vc_states[slot].cursor_pos;
+    selection_active = shell_input_vc_states[slot].selection_active;
+    selection_anchor = shell_input_vc_states[slot].selection_anchor;
+    history_index = shell_input_vc_states[slot].history_index;
+    browsing_history = shell_input_vc_states[slot].browsing_history;
+    for (int i = 0; i < shell_input_vc_states[slot].input_length; i++)
+        input_buffer[i] = shell_input_vc_states[slot].input_buffer[i];
+    input_buffer[shell_input_vc_states[slot].input_length] = '\0';
+    for (int i = 0; i < INPUT_MAX; i++)
+        draft_buffer[i] = shell_input_vc_states[slot].draft_buffer[i];
     return 1;
 }
 
@@ -841,6 +872,14 @@ void shell_input_init(void) {
         shell_input_vc_states[i].prompt_col = 0;
         shell_input_vc_states[i].rendered_length = 0;
         shell_input_vc_states[i].prompt_visible = 0;
+        shell_input_vc_states[i].input_length = 0;
+        shell_input_vc_states[i].cursor_pos = 0;
+        shell_input_vc_states[i].selection_active = 0;
+        shell_input_vc_states[i].selection_anchor = 0;
+        shell_input_vc_states[i].history_index = -1;
+        shell_input_vc_states[i].browsing_history = 0;
+        shell_input_vc_states[i].input_buffer[0] = '\0';
+        shell_input_vc_states[i].draft_buffer[0] = '\0';
     }
 
     shell_init();

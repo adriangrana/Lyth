@@ -982,6 +982,7 @@ void task_system_init(void) {
             tasks[slot].parent_id        = 0;
             tasks[slot].waitpid_status_uptr = 0;
             tasks[slot].sched_next       = -1;
+            tasks[slot].output_vc        = -1;
             task_signal_handlers_init(&tasks[slot]);
             vfs_task_fd_init(tasks[slot].fd_table);
             tasks[slot].stack = (unsigned char*)kmalloc(TASK_STACK_SIZE);
@@ -1434,14 +1435,19 @@ void task_request_cancel(void) {
 }
 
 void task_request_foreground_cancel(void) {
+    unsigned int flags;
     task_entry_t* task;
 
+    flags = interrupt_save();
+
     if (foreground_task_id == -1) {
+        interrupt_restore(flags);
         return;
     }
 
     task = find_task_by_id(foreground_task_id);
     if (task == 0) {
+        interrupt_restore(flags);
         return;
     }
 
@@ -1451,6 +1457,8 @@ void task_request_foreground_cancel(void) {
         task->state = TASK_STATE_READY;
         sched_enqueue_ready(task_slot_index(task));
     }
+
+    interrupt_restore(flags);
 }
 
 int task_cancel_requested(void) {
@@ -1605,10 +1613,12 @@ int task_set_priority(int id, task_priority_t priority) {
 }
 
 void task_set_output_vc(int id, int vc_index) {
+    unsigned int flags = interrupt_save();
     task_entry_t* task = find_task_by_id(id);
     if (task != 0) {
         task->output_vc = vc_index;
     }
+    interrupt_restore(flags);
 }
 
 const char* task_priority_name(task_priority_t priority) {
