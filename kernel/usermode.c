@@ -89,8 +89,8 @@ static uint32_t setup_user_stack_argv(uint32_t user_physical_base,
                                        int argc, const char* const* argv,
                                        int envc, const char* const* envp)
 {
-    uint32_t phys_top  = user_physical_base + paging_user_size();
-    uint32_t virt_top  = paging_user_base()  + paging_user_size();
+    uint32_t phys_top  = user_physical_base + paging_user_size() - PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
+    uint32_t virt_top  = paging_user_base()  + paging_user_size() - PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
     uint32_t sp_phys   = phys_top;
     uint32_t sp_virt   = virt_top;
     uint32_t phys_limit = phys_top - ARGV_STACK_LIMIT;
@@ -250,14 +250,14 @@ int usermode_spawn_elf_task(const char* fs_name, int foreground) {
     }
 
     user_heap_base = align_up(highest_user_end, 16U);
-    if (user_heap_base >= PAGING_USER_STACK_TOP) {
+    if (user_heap_base >= PAGING_USER_STACK_GUARD_BASE) {
         paging_destroy_user_directory(page_directory);
         physmem_free_region(user_physical_base, paging_user_size());
         kfree(image);
         return -1;
     }
 
-    user_heap_size = PAGING_USER_STACK_TOP - user_heap_base;
+    user_heap_size = PAGING_USER_STACK_GUARD_BASE - user_heap_base;
 
     task_id = task_spawn_user(fs_name,
                               info.entry,
@@ -370,13 +370,13 @@ int usermode_spawn_elf_vfs_argv(const char* vfs_path,
     }
 
     user_heap_base = align_up(highest_user_end, 16U);
-    if (user_heap_base >= PAGING_USER_STACK_TOP) {
+    if (user_heap_base >= PAGING_USER_STACK_GUARD_BASE) {
         paging_destroy_user_directory(page_directory);
         physmem_free_region(user_physical_base, paging_user_size());
         kfree(image);
         return -1;
     }
-    user_heap_size = PAGING_USER_STACK_TOP - user_heap_base;
+    user_heap_size = PAGING_USER_STACK_GUARD_BASE - user_heap_base;
 
     /* Use the basename of vfs_path as the task name */
     task_name = vfs_path;
@@ -482,13 +482,13 @@ int usermode_exec_current_vfs_argv(const char* vfs_path,
     }
 
     user_heap_base = align_up(highest_user_end, 16U);
-    if (user_heap_base >= PAGING_USER_STACK_TOP) {
+    if (user_heap_base >= PAGING_USER_STACK_GUARD_BASE) {
         paging_destroy_user_directory(page_directory);
         physmem_free_region(user_physical_base, paging_user_size());
         kfree(image);
         return -1;
     }
-    user_heap_size = PAGING_USER_STACK_TOP - user_heap_base;
+    user_heap_size = PAGING_USER_STACK_GUARD_BASE - user_heap_base;
 
     /* Use the basename of vfs_path as process name after exec */
     task_name = vfs_path;

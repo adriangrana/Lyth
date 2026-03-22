@@ -49,7 +49,7 @@
 - [ ] Kernel heap robusto
 - [ ] Copy-on-write
 - [ ] mmap / regiones mapeadas
-- [ ] Guard pages para stacks
+- [x] Guard pages para stacks
 
 ## 8. Syscalls
 - [x] Dispatcher

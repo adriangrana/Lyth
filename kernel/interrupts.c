@@ -6,6 +6,7 @@
 #include "timer.h"
 #include "syscall.h"
 #include "task.h"
+#include "paging.h"
 #include "terminal.h"
 #include "panic.h"
 
@@ -207,9 +208,14 @@ unsigned int exception_interrupt_handler(unsigned int current_esp) {
         terminal_print(": ");
         terminal_print_line(vector < 32 ? exception_names[vector] : "Unknown");
         if (vector == 14) {
+            unsigned int fault_addr = read_cr2();
             terminal_print("CR2: ");
-            terminal_print_hex(read_cr2());
+            terminal_print_hex(fault_addr);
             terminal_put_char('\n');
+            if (fault_addr >= PAGING_USER_STACK_GUARD_BASE &&
+                fault_addr < PAGING_USER_STACK_BOTTOM) {
+                terminal_print_line("[user fault] stack guard page hit");
+            }
         }
         terminal_set_color(0x0F);
 

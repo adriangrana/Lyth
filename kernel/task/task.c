@@ -250,6 +250,10 @@ static void write_user_int32(task_entry_t* t, uint32_t vaddr, int value) {
     uint32_t offset;
     if (!t || !t->user_physical_base || !vaddr) return;
     if (vaddr < base || vaddr + 4U > base + size) return;
+    if (t->page_directory != 0 &&
+        !paging_directory_user_buffer_is_accessible(t->page_directory, vaddr, sizeof(int))) {
+        return;
+    }
     offset = vaddr - base;
     *(int*)(uintptr_t)(t->user_physical_base + offset) = value;
 }
@@ -313,7 +317,7 @@ static void task_install_signal_trampoline(task_entry_t* task) {
         return;
     }
 
-    va = PAGING_USER_BASE + PAGING_USER_SIZE - TASK_USER_STACK_SIZE - 16U;
+    va = PAGING_USER_STACK_TOP - PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
     offset = va - PAGING_USER_BASE;
     if (offset + sizeof(code) > PAGING_USER_SIZE) {
         task->signal_trampoline_va = 0;
@@ -560,13 +564,13 @@ static int task_push_user_signal_frame(task_entry_t* task,
         return 0;
     }
 
-    if (frame->user_esp < (PAGING_USER_BASE + 12U) ||
-        frame->user_esp > (PAGING_USER_BASE + PAGING_USER_SIZE)) {
+    if (frame->user_esp < (PAGING_USER_STACK_BOTTOM + 12U) ||
+        frame->user_esp > PAGING_USER_STACK_TOP) {
         return 0;
     }
 
     new_user_esp = frame->user_esp - 12U;
-    if (new_user_esp < PAGING_USER_BASE) {
+    if (new_user_esp < PAGING_USER_STACK_BOTTOM) {
         return 0;
     }
 
@@ -789,6 +793,8 @@ static void initialize_task_stack(task_entry_t* task) {
         user_stack_top = (unsigned int)(task->user_stack + TASK_USER_STACK_SIZE);
         if (task->user_initial_esp != 0)
             user_stack_top = (unsigned int)task->user_initial_esp;
+        else
+            user_stack_top -= PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
         stack_top -= sizeof(task_user_stack_frame_t);
         frame = (task_user_stack_frame_t*)stack_top;
 
@@ -1127,7 +1133,7 @@ int task_spawn_user(const char* name,
         return -1;
     }
 
-    tasks[slot].user_stack = (unsigned char*)(uintptr_t)(PAGING_USER_BASE + PAGING_USER_SIZE - TASK_USER_STACK_SIZE);
+    tasks[slot].user_stack = (unsigned char*)(uintptr_t)PAGING_USER_STACK_BOTTOM;
     task_install_signal_trampoline(&tasks[slot]);
 
     initialize_task_stack(&tasks[slot]);
@@ -1753,11 +1759,11 @@ int task_exec_current_user_from_frame(unsigned int frame_esp,
         return 0;
     }
 
-    top_user_esp = PAGING_USER_BASE + PAGING_USER_SIZE;
+    top_user_esp = PAGING_USER_STACK_TOP - PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
     if (initial_user_esp == 0) {
         initial_user_esp = top_user_esp;
     }
-    if (initial_user_esp < PAGING_USER_BASE || initial_user_esp > top_user_esp) {
+    if (initial_user_esp < PAGING_USER_STACK_BOTTOM || initial_user_esp > top_user_esp) {
         return 0;
     }
 
@@ -1788,7 +1794,7 @@ int task_exec_current_user_from_frame(unsigned int frame_esp,
     task->user_heap_base = user_heap_base;
     task->user_heap_size = user_heap_size;
     task->page_directory = page_directory;
-    task->user_stack = (unsigned char*)(uintptr_t)(PAGING_USER_BASE + PAGING_USER_SIZE - TASK_USER_STACK_SIZE);
+    task->user_stack = (unsigned char*)(uintptr_t)PAGING_USER_STACK_BOTTOM;
     task->user_initial_esp = initial_user_esp;
     task->k_errno = 0;
     task->pending_signals = 0;
