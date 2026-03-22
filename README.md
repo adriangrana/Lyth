@@ -27,7 +27,7 @@ Lyth OS cubre los subsistemas clásicos de un kernel real: arranque, gestión de
 
 ### Shell interactiva
 - Parser propio con comillas, `argv` completo, variables de entorno (`$VAR`)
-- Redirección `>`, `>>`, `<` integrada con VFS; pipes (`cmd1 | cmd2`)
+- Redirección `>`, `>>`, `<` integrada con VFS; pipes encadenados (`cmd1 | cmd2 | cmd3`)
 - Utilidades de texto preparadas para pipe: `grep`, `head`, `tail`, `more`/`less`, `wc`
 - Ejecución en background (`cmd &`)
 - Historial, autocompletado (`Tab`) con barra de sugerencias inline

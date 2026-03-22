@@ -269,8 +269,10 @@ static command_t commands[] = {
 
 static const int command_count = sizeof(commands) / sizeof(commands[0]);
 static shell_env_var_t shell_env[SHELL_ENV_MAX];
-static char shell_pipe_buffer[SHELL_PIPE_MAX];
+static char* shell_pipe_buffer = 0;
 static unsigned int shell_pipe_length = 0;
+static unsigned int shell_pipe_capacity = 0;
+static int shell_pipe_active = 0;
 static shell_redir_file_t shell_redir_files[SHELL_REDIR_MAX];
 static const char* current_theme_name = "default";
 static unsigned char current_theme_banner_color = 0x0B;
@@ -283,15 +285,19 @@ static void shell_apply_theme(const char* name, int print_feedback);
 static int shell_find_unquoted_char(const char* text, char target);
 static int shell_find_unquoted_andand(const char* text);
 static void shell_trim_trailing_spaces(char* text);
-static void shell_set_pipe_input(const char* text);
+static int shell_buffer_reserve(char** buffer, unsigned int* capacity, unsigned int required);
+static void shell_set_pipe_input_owned(char* text, unsigned int length);
+static int shell_set_pipe_input(const char* text);
 static void shell_clear_pipe_input(void);
 static int shell_has_pipe_input(void);
-static char* shell_allocate_pipe_buffer(void);
+static int shell_read_fd_fully(int fd, char** out_buffer, unsigned int* out_length);
 static int shell_load_text_argument_or_pipe(const char* path_arg,
-                                            char* buffer,
-                                            unsigned int buffer_size,
+                                            char** out_buffer,
+                                            unsigned int* out_length,
                                             char* resolved_path,
                                             unsigned int resolved_size);
+static int shell_capture_command_output(const char* line, char** out_buffer, unsigned int* out_length);
+static int shell_execute_pipeline(const char* line);
 static int shell_redir_find(const char* name);
 static int shell_redir_store(const char* name, const char* content, unsigned int length, int append);
 static int shell_read_text_source(const char* name, char* buffer, unsigned int buffer_size);
@@ -1026,65 +1032,153 @@ static void shell_trim_trailing_spaces(char* text) {
     }
 }
 
-static void shell_set_pipe_input(const char* text) {
-    unsigned int length;
+static int shell_buffer_reserve(char** buffer, unsigned int* capacity, unsigned int required) {
+    char* next_buffer;
+    unsigned int next_capacity;
+    unsigned int i;
 
-    shell_pipe_buffer[0] = '\0';
-    shell_pipe_length = 0;
+    if (buffer == 0 || capacity == 0) {
+        return 0;
+    }
+
+    if (required <= *capacity) {
+        return 1;
+    }
+
+    next_capacity = *capacity > 0 ? *capacity : 64U;
+    while (next_capacity < required) {
+        if (next_capacity >= 0x80000000U) {
+            next_capacity = required;
+            break;
+        }
+        next_capacity *= 2U;
+    }
+
+    next_buffer = (char*)kmalloc(next_capacity);
+    if (next_buffer == 0) {
+        terminal_print_line("[error] Memoria insuficiente para procesar pipe/redireccion");
+        return 0;
+    }
+
+    if (*buffer != 0) {
+        for (i = 0; i < *capacity; i++) {
+            next_buffer[i] = (*buffer)[i];
+        }
+        kfree(*buffer);
+    }
+
+    *buffer = next_buffer;
+    *capacity = next_capacity;
+    return 1;
+}
+
+static void shell_set_pipe_input_owned(char* text, unsigned int length) {
+    shell_clear_pipe_input();
 
     if (text == 0) {
         return;
     }
 
-    length = str_length(text);
-    if (length >= SHELL_PIPE_MAX) {
-        length = SHELL_PIPE_MAX - 1;
-    }
-
-    for (unsigned int i = 0; i < length; i++) {
-        shell_pipe_buffer[i] = text[i];
-    }
-
-    shell_pipe_buffer[length] = '\0';
+    shell_pipe_buffer = text;
     shell_pipe_length = length;
+    shell_pipe_capacity = length + 1U;
+    shell_pipe_active = 1;
+    shell_pipe_buffer[length] = '\0';
+}
+
+static int shell_set_pipe_input(const char* text) {
+    unsigned int length;
+    char* buffer = 0;
+    unsigned int capacity = 0;
+    unsigned int i;
+
+    shell_clear_pipe_input();
+
+    if (text == 0) {
+        return 1;
+    }
+
+    length = str_length(text);
+    if (!shell_buffer_reserve(&buffer, &capacity, length + 1U)) {
+        return 0;
+    }
+
+    for (i = 0; i < length; i++) {
+        buffer[i] = text[i];
+    }
+
+    buffer[length] = '\0';
+    shell_pipe_buffer = buffer;
+    shell_pipe_length = length;
+    shell_pipe_capacity = capacity;
+    shell_pipe_active = 1;
+    return 1;
 }
 
 static void shell_clear_pipe_input(void) {
-    shell_pipe_buffer[0] = '\0';
+    if (shell_pipe_buffer != 0) {
+        kfree(shell_pipe_buffer);
+    }
+    shell_pipe_buffer = 0;
     shell_pipe_length = 0;
+    shell_pipe_capacity = 0;
+    shell_pipe_active = 0;
 }
 
 static int shell_has_pipe_input(void) {
-    return shell_pipe_length > 0 && shell_pipe_buffer[0] != '\0';
+    return shell_pipe_active;
 }
 
-static char* shell_allocate_pipe_buffer(void) {
-    char* buffer = (char*)kmalloc(SHELL_PIPE_MAX);
+static int shell_read_fd_fully(int fd, char** out_buffer, unsigned int* out_length) {
+    char* buffer = 0;
+    unsigned int capacity = 0;
+    unsigned int length = 0;
+    int n;
 
-    if (buffer == 0) {
-        terminal_print_line("[error] Memoria insuficiente para procesar pipe/redireccion");
+    if (out_buffer == 0 || out_length == 0) {
         return 0;
     }
 
-    buffer[0] = '\0';
-    return buffer;
+    *out_buffer = 0;
+    *out_length = 0;
+
+    if (!shell_buffer_reserve(&buffer, &capacity, 64U)) {
+        return 0;
+    }
+
+    while ((n = vfs_read(fd, (unsigned char*)buffer + length, capacity - length - 1U)) > 0) {
+        length += (unsigned int)n;
+        if (!shell_buffer_reserve(&buffer, &capacity, length + 65U)) {
+            kfree(buffer);
+            return 0;
+        }
+    }
+
+    if (n < 0) {
+        kfree(buffer);
+        return 0;
+    }
+
+    buffer[length] = '\0';
+    *out_buffer = buffer;
+    *out_length = length;
+    return 1;
 }
 
 static int shell_load_text_argument_or_pipe(const char* path_arg,
-                                            char* buffer,
-                                            unsigned int buffer_size,
+                                            char** out_buffer,
+                                            unsigned int* out_length,
                                             char* resolved_path,
                                             unsigned int resolved_size) {
-    unsigned int i;
-
-    if (buffer == 0 || buffer_size == 0) {
+    if (out_buffer == 0 || out_length == 0) {
         return 0;
     }
 
+    *out_buffer = 0;
+    *out_length = 0;
+
     if (path_arg != 0) {
         int fd;
-        int total = 0;
-        int n;
         const char* path_to_open = path_arg;
 
         if (resolved_path != 0 && resolved_size > 0) {
@@ -1099,16 +1193,11 @@ static int shell_load_text_argument_or_pipe(const char* path_arg,
             return 0;
         }
 
-        while ((n = vfs_read(fd,
-                             (unsigned char*)buffer + total,
-                             buffer_size - 1U - (unsigned int)total)) > 0) {
-            total += n;
-            if (total >= (int)buffer_size - 1) {
-                break;
-            }
+        if (!shell_read_fd_fully(fd, out_buffer, out_length)) {
+            vfs_close(fd);
+            return 0;
         }
 
-        buffer[total] = '\0';
         vfs_close(fd);
         return 1;
     }
@@ -1117,11 +1206,24 @@ static int shell_load_text_argument_or_pipe(const char* path_arg,
         return 0;
     }
 
-    for (i = 0; shell_pipe_buffer[i] != '\0' && i < buffer_size - 1U; i++) {
-        buffer[i] = shell_pipe_buffer[i];
+    {
+        char* buffer = 0;
+        unsigned int capacity = 0;
+        unsigned int i;
+
+        if (!shell_buffer_reserve(&buffer, &capacity, shell_pipe_length + 1U)) {
+            return 0;
+        }
+
+        for (i = 0; i < shell_pipe_length; i++) {
+            buffer[i] = shell_pipe_buffer[i];
+        }
+
+        buffer[shell_pipe_length] = '\0';
+        *out_buffer = buffer;
+        *out_length = shell_pipe_length;
     }
 
-    buffer[i] = '\0';
     return 1;
 }
 
@@ -2498,6 +2600,7 @@ static int cmd_cat(int argc, const char* argv[], int background) {
 static int cmd_grep(int argc, const char* argv[], int background) {
     const char* pattern;
     char* text;
+    unsigned int text_length = 0;
     unsigned int len;
     unsigned int i;
 
@@ -2509,25 +2612,19 @@ static int cmd_grep(int argc, const char* argv[], int background) {
     }
 
     pattern = argv[1];
-    text = shell_allocate_pipe_buffer();
-    if (text == 0) {
-        return 1;
-    }
+    text = 0;
 
     if (argc >= 3) {
         char path[VFS_PATH_MAX];
-        if (!shell_load_text_argument_or_pipe(argv[2], text, SHELL_PIPE_MAX, path, sizeof(path))) {
-            kfree(text);
+        if (!shell_load_text_argument_or_pipe(argv[2], &text, &text_length, path, sizeof(path))) {
             return 1;
         }
     } else if (shell_has_pipe_input()) {
-        if (!shell_load_text_argument_or_pipe(0, text, SHELL_PIPE_MAX, 0, 0)) {
-            kfree(text);
+        if (!shell_load_text_argument_or_pipe(0, &text, &text_length, 0, 0)) {
             return 1;
         }
     } else {
         terminal_print_line("Uso: grep <patron> [ruta]  o  comando | grep <patron>");
-        kfree(text);
         return 1;
     }
 
@@ -3006,30 +3103,24 @@ static int shell_execute_line_raw(const char* line) {
 
     if (input_redirect) {
         char in_path[VFS_PATH_MAX];
-        input_text = shell_allocate_pipe_buffer();
-        if (input_text == 0) {
+        unsigned int input_length = 0;
+
+        if (!shell_load_text_argument_or_pipe(input_redirection, &input_text, &input_length, in_path, sizeof(in_path))) {
             return 1;
         }
 
-        if (!shell_load_text_argument_or_pipe(input_redirection, input_text, SHELL_PIPE_MAX, in_path, sizeof(in_path))) {
-            kfree(input_text);
-            return 1;
-        }
-
-        shell_set_pipe_input(input_text);
+        shell_set_pipe_input_owned(input_text, input_length);
+        input_text = 0;
     }
 
     if (output_redirect) {
-        captured_output = shell_allocate_pipe_buffer();
-        if (captured_output == 0) {
+        if (!terminal_capture_begin_dynamic(256U)) {
             if (input_redirect) {
                 shell_clear_pipe_input();
-                kfree(input_text);
             }
             return 1;
         }
         capture_active = 1;
-        terminal_capture_begin(captured_output, SHELL_PIPE_MAX);
     }
 
     for (int i = 0; i < command_count; i++) {
@@ -3037,14 +3128,13 @@ static int shell_execute_line_raw(const char* line) {
             int result = commands[i].fn(filtered_argc, filtered_argv, background);
 
             if (capture_active) {
-                capture_length = (int)terminal_capture_end();
+                captured_output = terminal_capture_end_dynamic((unsigned int*)&capture_length);
                 shell_redir_store(output_redirection, captured_output, (unsigned int)capture_length, append_redirect);
                 kfree(captured_output);
             }
 
             if (input_redirect) {
                 shell_clear_pipe_input();
-                kfree(input_text);
             }
 
             return result;
@@ -3053,14 +3143,13 @@ static int shell_execute_line_raw(const char* line) {
 
     if (input_redirect) {
         shell_clear_pipe_input();
-        kfree(input_text);
     }
 
     terminal_print("Comando no reconocido: ");
     terminal_print_line(filtered_argv[0]);
 
     if (capture_active) {
-        capture_length = (int)terminal_capture_end();
+        captured_output = terminal_capture_end_dynamic((unsigned int*)&capture_length);
         shell_redir_store(output_redirection, captured_output, (unsigned int)capture_length, append_redirect);
         kfree(captured_output);
     }
@@ -3068,13 +3157,132 @@ static int shell_execute_line_raw(const char* line) {
     return 1;
 }
 
+static int shell_capture_command_output(const char* line, char** out_buffer, unsigned int* out_length) {
+    if (out_buffer == 0 || out_length == 0) {
+        return 0;
+    }
+
+    *out_buffer = 0;
+    *out_length = 0;
+
+    if (!terminal_capture_begin_dynamic(256U)) {
+        return 0;
+    }
+
+    shell_execute_line_raw(line);
+    *out_buffer = terminal_capture_end_dynamic(out_length);
+    return *out_buffer != 0;
+}
+
+static int shell_execute_pipeline(const char* line) {
+    unsigned int length;
+    char* line_copy;
+    unsigned int start = 0;
+    unsigned int index;
+    int last_result = 1;
+
+    if (line == 0) {
+        return 1;
+    }
+
+    length = str_length(line);
+    line_copy = (char*)kmalloc(length + 1U);
+    if (line_copy == 0) {
+        terminal_print_line("[error] Memoria insuficiente para ejecutar pipeline");
+        return 1;
+    }
+
+    for (index = 0; index <= length; index++) {
+        line_copy[index] = line[index];
+    }
+
+    index = 0;
+    while (index <= length) {
+        char current = line_copy[index];
+        int is_separator = 0;
+
+        if (current == '\0') {
+            is_separator = 1;
+        } else if ((unsigned int)shell_find_unquoted_char(line_copy + start, '|') == index - start && current == '|') {
+            is_separator = 1;
+        }
+
+        if (is_separator) {
+            char* segment = line_copy + start;
+            char* captured_output;
+            unsigned int captured_length;
+            int has_more = current == '|';
+
+            line_copy[index] = '\0';
+            while (*segment == ' ' || *segment == '\t') {
+                segment++;
+            }
+            shell_trim_trailing_spaces(segment);
+
+            if (segment[0] == '\0') {
+                terminal_print_line("Uso: comando1 | comando2");
+                shell_clear_pipe_input();
+                kfree(line_copy);
+                return 1;
+            }
+
+            if (has_more) {
+                if (shell_find_unquoted_char(segment, '>') >= 0) {
+                    terminal_print_line("No se admite redireccion de salida antes del final de un pipe");
+                    shell_clear_pipe_input();
+                    kfree(line_copy);
+                    return 1;
+                }
+
+                if (!shell_capture_command_output(segment, &captured_output, &captured_length)) {
+                    shell_clear_pipe_input();
+                    kfree(line_copy);
+                    return 1;
+                }
+
+                shell_set_pipe_input_owned(captured_output, captured_length);
+            } else {
+                last_result = shell_execute_line_raw(segment);
+            }
+
+            start = index + 1U;
+        }
+
+        if (current == '\0') {
+            break;
+        }
+
+        if (current == '\\' && line_copy[index + 1U] != '\0') {
+            index += 2U;
+            continue;
+        }
+
+        if (current == '\'' || current == '"') {
+            char quote = current;
+            index++;
+            while (index <= length && line_copy[index] != '\0') {
+                if (line_copy[index] == '\\' && line_copy[index + 1U] != '\0') {
+                    index += 2U;
+                    continue;
+                }
+                if (line_copy[index] == quote) {
+                    break;
+                }
+                index++;
+            }
+        }
+
+        index++;
+    }
+
+    shell_clear_pipe_input();
+    kfree(line_copy);
+    return last_result;
+}
+
 int shell_execute_line(const char* line) {
     char left_line[SHELL_PIPE_MAX];
-    char right_line[SHELL_PIPE_MAX];
-    char* captured_output = 0;
     int and_index;
-    int pipe_index;
-    int right_index;
     int result;
 
     if (line == 0) {
@@ -3114,63 +3322,11 @@ int shell_execute_line(const char* line) {
         return shell_execute_line(right_start);
     }
 
-    pipe_index = shell_find_unquoted_char(line, '|');
-    if (pipe_index < 0) {
+    if (shell_find_unquoted_char(line, '|') < 0) {
         return shell_execute_line_raw(line);
     }
 
-    if (shell_find_unquoted_char(line + pipe_index + 1, '|') >= 0) {
-        terminal_print_line("Solo se soporta un pipe por ahora");
-        return 1;
-    }
-
-    if (pipe_index <= 0 || pipe_index >= (int)sizeof(left_line)) {
-        terminal_print_line("Uso: comando1 | comando2");
-        return 1;
-    }
-
-    for (int i = 0; i < pipe_index && i < (int)sizeof(left_line) - 1; i++) {
-        left_line[i] = line[i];
-    }
-    left_line[pipe_index < (int)sizeof(left_line) ? pipe_index : (int)sizeof(left_line) - 1] = '\0';
-    shell_trim_trailing_spaces(left_line);
-
-    if (shell_find_unquoted_char(left_line, '>') >= 0) {
-        terminal_print_line("No se admite redireccion de salida en el lado izquierdo de un pipe");
-        return 1;
-    }
-
-    const char* right_start = line + pipe_index + 1;
-    while (*right_start == ' ' || *right_start == '\t') {
-        right_start++;
-    }
-
-    right_index = 0;
-    while (right_start[right_index] != '\0' && right_index < (int)sizeof(right_line) - 1) {
-        right_line[right_index] = right_start[right_index];
-        right_index++;
-    }
-    right_line[right_index] = '\0';
-
-    if (right_line[0] == '\0') {
-        terminal_print_line("Uso: comando1 | comando2");
-        return 1;
-    }
-
-    captured_output = shell_allocate_pipe_buffer();
-    if (captured_output == 0) {
-        return 1;
-    }
-
-    terminal_capture_begin(captured_output, SHELL_PIPE_MAX);
-    shell_execute_line_raw(left_line);
-    terminal_capture_end();
-
-    shell_set_pipe_input(captured_output);
-    result = shell_execute_line_raw(right_line);
-    shell_clear_pipe_input();
-    kfree(captured_output);
-    return result;
+    return shell_execute_pipeline(line);
 }
 
 int shell_complete_command(const char* prefix, const char* matches[], int max_matches) {
@@ -4660,7 +4816,8 @@ static void shell_count_text(const unsigned char* data,
 /* ---- cmd_head ---- */
 static int cmd_head(int argc, const char* argv[], int background) {
     char path[VFS_PATH_MAX];
-    char* text;
+    char* text = 0;
+    unsigned int text_length = 0;
     int n = 10, arg_idx = 1;
     (void)background;
     if (argc >= 3 && str_equals(argv[1], "-n")) {
@@ -4680,13 +4837,7 @@ static int cmd_head(int argc, const char* argv[], int background) {
         return 1;
     }
 
-    text = shell_allocate_pipe_buffer();
-    if (text == 0) {
-        return 1;
-    }
-
-    if (!shell_load_text_argument_or_pipe(arg_idx < argc ? argv[arg_idx] : 0, text, SHELL_PIPE_MAX, path, sizeof(path))) {
-        kfree(text);
+    if (!shell_load_text_argument_or_pipe(arg_idx < argc ? argv[arg_idx] : 0, &text, &text_length, path, sizeof(path))) {
         return 1;
     }
 
@@ -4698,7 +4849,8 @@ static int cmd_head(int argc, const char* argv[], int background) {
 /* ---- cmd_tail ---- */
 static int cmd_tail(int argc, const char* argv[], int background) {
     char path[VFS_PATH_MAX];
-    char* text;
+    char* text = 0;
+    unsigned int text_length = 0;
     int n = 10, arg_idx = 1;
     (void)background;
     if (argc >= 3 && str_equals(argv[1], "-n")) {
@@ -4719,13 +4871,7 @@ static int cmd_tail(int argc, const char* argv[], int background) {
         return 1;
     }
 
-    text = shell_allocate_pipe_buffer();
-    if (text == 0) {
-        return 1;
-    }
-
-    if (!shell_load_text_argument_or_pipe(arg_idx < argc ? argv[arg_idx] : 0, text, SHELL_PIPE_MAX, path, sizeof(path))) {
-        kfree(text);
+    if (!shell_load_text_argument_or_pipe(arg_idx < argc ? argv[arg_idx] : 0, &text, &text_length, path, sizeof(path))) {
         return 1;
     }
 
@@ -4737,20 +4883,15 @@ static int cmd_tail(int argc, const char* argv[], int background) {
 /* ---- cmd_more ---- */
 static int cmd_more(int argc, const char* argv[], int background) {
     char path[VFS_PATH_MAX];
-    char* text;
+    char* text = 0;
+    unsigned int text_length = 0;
     (void)background;
     if (argc < 2 && !shell_has_pipe_input()) {
         terminal_print_line("Uso: more <ruta>  o  comando | more");
         return 1;
     }
 
-    text = shell_allocate_pipe_buffer();
-    if (text == 0) {
-        return 1;
-    }
-
-    if (!shell_load_text_argument_or_pipe(argc >= 2 ? argv[1] : 0, text, SHELL_PIPE_MAX, path, sizeof(path))) {
-        kfree(text);
+    if (!shell_load_text_argument_or_pipe(argc >= 2 ? argv[1] : 0, &text, &text_length, path, sizeof(path))) {
         return 1;
     }
 
@@ -4762,7 +4903,8 @@ static int cmd_more(int argc, const char* argv[], int background) {
 /* ---- cmd_wc ---- */
 static int cmd_wc(int argc, const char* argv[], int background) {
     char path[VFS_PATH_MAX];
-    char* text;
+    char* text = 0;
+    unsigned int text_length = 0;
     int arg_idx = 1;
     int flag_l = 0, flag_w = 0, flag_c = 0;
     unsigned int lines = 0, words = 0, bytes = 0;
@@ -4783,17 +4925,11 @@ static int cmd_wc(int argc, const char* argv[], int background) {
         return 1;
     }
 
-    text = shell_allocate_pipe_buffer();
-    if (text == 0) {
+    if (!shell_load_text_argument_or_pipe(arg_idx < argc ? argv[arg_idx] : 0, &text, &text_length, path, sizeof(path))) {
         return 1;
     }
 
-    if (!shell_load_text_argument_or_pipe(arg_idx < argc ? argv[arg_idx] : 0, text, SHELL_PIPE_MAX, path, sizeof(path))) {
-        kfree(text);
-        return 1;
-    }
-
-    shell_count_text((const unsigned char*)text, str_length(text), &lines, &words, &bytes);
+    shell_count_text((const unsigned char*)text, text_length, &lines, &words, &bytes);
     kfree(text);
 
     if (flag_l) { terminal_print_uint(lines); terminal_put_char(' '); }

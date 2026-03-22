@@ -1,6 +1,7 @@
 #include "terminal.h"
 #include "console_backend.h"
 #include "timer.h"
+#include "heap.h"
 #include "utf8.h"
 #include <stdint.h>
 
@@ -18,6 +19,7 @@ static char* terminal_capture_buffer = 0;
 static unsigned int terminal_capture_size = 0;
 static unsigned int terminal_capture_length = 0;
 static int terminal_capture_active = 0;
+static int terminal_capture_dynamic = 0;
 
 static terminal_cell_t terminal_cells[TERMINAL_MAX_ROWS][TERMINAL_MAX_COLUMNS];
 static int terminal_cols = 80;
@@ -74,13 +76,36 @@ static void render_cell(int row, int col) {
 }
 
 static void terminal_capture_put_char(char c) {
+    char* next_buffer;
+    unsigned int next_size;
+    unsigned int i;
+
     if (!terminal_capture_active || terminal_capture_buffer == 0 || terminal_capture_size == 0) {
         return;
     }
 
     if (terminal_capture_length >= terminal_capture_size - 1) {
+        if (terminal_capture_dynamic) {
+            next_size = terminal_capture_size < 64U ? 64U : terminal_capture_size * 2U;
+            next_buffer = (char*)kmalloc(next_size);
+            if (next_buffer == 0) {
+                terminal_capture_buffer[terminal_capture_size - 1] = '\0';
+                return;
+            }
+
+            for (i = 0; i < terminal_capture_length; i++) {
+                next_buffer[i] = terminal_capture_buffer[i];
+            }
+            next_buffer[terminal_capture_length] = '\0';
+            kfree(terminal_capture_buffer);
+            terminal_capture_buffer = next_buffer;
+            terminal_capture_size = next_size;
+        }
+
         terminal_capture_buffer[terminal_capture_size - 1] = '\0';
-        return;
+        if (terminal_capture_length >= terminal_capture_size - 1) {
+            return;
+        }
     }
 
     terminal_capture_buffer[terminal_capture_length++] = c;
@@ -190,6 +215,7 @@ void terminal_capture_begin(char* buffer, unsigned int buffer_size) {
     terminal_capture_size = buffer_size;
     terminal_capture_length = 0;
     terminal_capture_active = (buffer != 0 && buffer_size > 0) ? 1 : 0;
+    terminal_capture_dynamic = 0;
 
     if (terminal_capture_active) {
         terminal_capture_buffer[0] = '\0';
@@ -203,8 +229,48 @@ unsigned int terminal_capture_end(void) {
     terminal_capture_size = 0;
     terminal_capture_length = 0;
     terminal_capture_active = 0;
+    terminal_capture_dynamic = 0;
 
     return length;
+}
+
+int terminal_capture_begin_dynamic(unsigned int initial_size) {
+    char* buffer;
+    unsigned int size = initial_size > 0 ? initial_size : 64U;
+
+    buffer = (char*)kmalloc(size);
+    if (buffer == 0) {
+        terminal_capture_buffer = 0;
+        terminal_capture_size = 0;
+        terminal_capture_length = 0;
+        terminal_capture_active = 0;
+        terminal_capture_dynamic = 0;
+        return 0;
+    }
+
+    terminal_capture_buffer = buffer;
+    terminal_capture_size = size;
+    terminal_capture_length = 0;
+    terminal_capture_active = 1;
+    terminal_capture_dynamic = 1;
+    terminal_capture_buffer[0] = '\0';
+    return 1;
+}
+
+char* terminal_capture_end_dynamic(unsigned int* length) {
+    char* buffer;
+
+    if (length != 0) {
+        *length = terminal_capture_length;
+    }
+
+    buffer = terminal_capture_buffer;
+    terminal_capture_buffer = 0;
+    terminal_capture_size = 0;
+    terminal_capture_length = 0;
+    terminal_capture_active = 0;
+    terminal_capture_dynamic = 0;
+    return buffer;
 }
 
 void terminal_get_cursor(int* row, int* col) {
