@@ -182,11 +182,11 @@
 
 ## 15. Interfaz gráfica
 - [x] Framebuffer
-- [ ] Ventanas
-- [ ] GUI básica
-- [ ] Compositor básico
-- [ ] Eventos de ventana / input gráfico
-- [ ] Widgets básicos
+- [x] Ventanas
+- [x] GUI básica
+- [x] Compositor básico
+- [x] Eventos de ventana / input gráfico
+- [x] Widgets básicos
 
 ## 16. UX
 - [x] Shell usable

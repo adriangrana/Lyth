@@ -35,6 +35,8 @@
 #include "dhcp.h"
 #include "dns.h"
 #include "endian.h"
+#include "compositor.h"
+#include "window.h"
 
 #define SHELL_MAX_ARGS 8
 #define SHELL_TOKEN_MAX 64
@@ -210,6 +212,7 @@ static int cmd_arp_cmd(int argc, const char* argv[], int background);
 static int cmd_dhcpc(int argc, const char* argv[], int background);
 static int cmd_nslookup(int argc, const char* argv[], int background);
 static int cmd_nc(int argc, const char* argv[], int background);
+static int cmd_gui(int argc, const char* argv[], int background);
 static void shell_resolve_path(const char* input, char* out, unsigned int out_size);
 
 /* Current working directory (always an absolute VFS path). */
@@ -331,6 +334,8 @@ static command_t commands[] = {
     {"dhcp",    cmd_dhcpc,   "obtiene configuracion IP por DHCP: dhcp"},
     {"nslookup",cmd_nslookup,"resuelve DNS: nslookup <hostname>"},
     {"nc",      cmd_nc,      "netcat UDP: nc <ip> <port> <mensaje>"},
+    /* --- GUI --- */
+    {"gui",     cmd_gui,     "inicia el escritorio grafico (ESC para salir)"},
 };
 
 static const int command_count = sizeof(commands) / sizeof(commands[0]);
@@ -6989,6 +6994,15 @@ static int cmd_nc(int argc, const char* argv[], int background) {
     } else {
         terminal_print_line("Error al enviar");
     }
+    return 1;
+}
+
+static int cmd_gui(int argc, const char* argv[], int background) {
+    (void)argc; (void)argv; (void)background;
+    terminal_print_line("Iniciando escritorio... (ESC para salir)");
+    gui_init();
+    gui_run();
+    terminal_print_line("Escritorio cerrado.");
     return 1;
 }
 

@@ -32,5 +32,6 @@ uint32_t fb_height(void);
 uint32_t fb_pitch(void);
 uint8_t fb_bpp(void);
 uint8_t fb_type(void);
+void* fb_get_buffer(void);
 
 #endif

@@ -578,3 +578,7 @@ uint8_t fb_bpp(void) {
 uint8_t fb_type(void) {
     return fb_is_active ? fbinfo.type : 0;
 }
+
+void* fb_get_buffer(void) {
+    return fb_is_active ? fbinfo.addr : 0;
+}
