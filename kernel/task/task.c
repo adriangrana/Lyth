@@ -2190,6 +2190,13 @@ int task_mq_create(unsigned int max_messages, unsigned int msg_size) {
     return rc;
 }
 
+int task_mq_open(int queue_id, unsigned int open_flags) {
+    unsigned int flags = interrupt_save();
+    int rc = mqueue_open_fd(queue_id, open_flags);
+    interrupt_restore(flags);
+    return rc;
+}
+
 int task_mq_send(int queue_id, const void* message, unsigned int size) {
     unsigned int flags = interrupt_save();
     int rc = mqueue_send(queue_id, message, size);
@@ -2214,6 +2221,54 @@ int task_mq_receive(int queue_id, void* buffer, unsigned int buffer_size, unsign
     }
 
     return rc;
+}
+
+int task_mq_send_timed(int queue_id, const void* message, unsigned int size, unsigned int timeout_ticks) {
+    unsigned int waited = 0U;
+
+    for (;;) {
+        int rc = task_mq_send(queue_id, message, size);
+        if (rc != MQ_E_FULL) {
+            return rc;
+        }
+
+        if (timeout_ticks == 0U) {
+            return MQ_E_TIMEOUT;
+        }
+
+        if (timeout_ticks != 0xFFFFFFFFU && waited >= timeout_ticks) {
+            return MQ_E_TIMEOUT;
+        }
+
+        task_sleep(1);
+        if (timeout_ticks != 0xFFFFFFFFU) {
+            waited++;
+        }
+    }
+}
+
+int task_mq_receive_timed(int queue_id, void* buffer, unsigned int buffer_size, unsigned int timeout_ticks, unsigned int* received_size_out) {
+    unsigned int waited = 0U;
+
+    for (;;) {
+        int rc = task_mq_receive(queue_id, buffer, buffer_size, received_size_out);
+        if (rc != MQ_E_EMPTY) {
+            return rc;
+        }
+
+        if (timeout_ticks == 0U) {
+            return MQ_E_TIMEOUT;
+        }
+
+        if (timeout_ticks != 0xFFFFFFFFU && waited >= timeout_ticks) {
+            return MQ_E_TIMEOUT;
+        }
+
+        task_sleep(1);
+        if (timeout_ticks != 0xFFFFFFFFU) {
+            waited++;
+        }
+    }
 }
 
 int task_mq_unlink(int queue_id) {

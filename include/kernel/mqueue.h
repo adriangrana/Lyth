@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+typedef struct vfs_node vfs_node_t;
+
 #define MQ_MAX_QUEUES 16
 #define MQ_MAX_MESSAGES 32
 #define MQ_MAX_MESSAGE_SIZE 256
@@ -27,5 +29,10 @@ int mqueue_unlink(int queue_id);
 int mqueue_list(mqueue_info_t* out, int max_queues);
 int mqueue_read_event_id(int queue_id);
 int mqueue_write_event_id(int queue_id);
+int mqueue_open_fd(int queue_id, unsigned int open_flags);
+int mqueue_node_is_queue(const vfs_node_t* node);
+int mqueue_node_is_valid(const vfs_node_t* node);
+int mqueue_fd_read_ready(const vfs_node_t* node);
+int mqueue_fd_write_ready(const vfs_node_t* node);
 
 #endif

@@ -164,6 +164,7 @@ int          vfs_readdir (int fd, unsigned int index,
 int          vfs_fd_valid (int fd);
 vfs_node_t*  vfs_fd_node  (int fd);
 unsigned int vfs_fd_offset(int fd);
+int          vfs_fd_install_node(vfs_node_t* node, unsigned int open_flags);
 
 /* ---- Per-task file-descriptor table ---- */
 typedef struct {

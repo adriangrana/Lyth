@@ -1072,6 +1072,36 @@ int vfs_open(const char* path) {
     return vfs_open_flags(path, VFS_O_RDWR);
 }
 
+int vfs_fd_install_node(vfs_node_t* node, unsigned int open_flags) {
+    vfs_fd_entry_t* fdt;
+    int i;
+
+    if (node == 0) return -1;
+
+    if (node->flags & VFS_FLAG_DYNAMIC) {
+        if (node->ref_count == 0U)
+            node->ref_count = 1U;
+        else
+            vfs_node_ref(node);
+    } else {
+        vfs_node_ref(node);
+    }
+
+    fdt = vfs_get_current_fd_table();
+    for (i = 0; i < VFS_MAX_FD; i++) {
+        if (!fdt[i].used) {
+            fdt[i].node = node;
+            fdt[i].offset = 0U;
+            fdt[i].open_flags = open_flags;
+            fdt[i].used = 1;
+            return i;
+        }
+    }
+
+    vfs_node_unref(node);
+    return -1;
+}
+
 void vfs_close(int fd) {
     vfs_fd_entry_t* fdt;
     vfs_node_t* node;

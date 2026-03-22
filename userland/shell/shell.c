@@ -234,7 +234,7 @@ static command_t commands[] = {
     {"stackok", cmd_stackok, "prueba acceso valido al stack userland"},
     {"shm",     cmd_shm,     "memoria compartida: shm [list|create <bytes>|unlink <id>]"},
     {"shmdemo", cmd_shmdemo, "valida SHM con writer/reader userland: shmdemo [byte]"},
-    {"mq",      cmd_mq,      "message passing: mq [list|create|send|recv|sendwait|recvwait|unlink|demo]"},
+    {"mq",      cmd_mq,      "message passing: mq [list|create|open|send|recv|sendwait|recvwait|unlink|demo]"},
     {"task",    cmd_task,    "muestra la tarea actual y foreground"},
     {"mem",     cmd_mem,     "estadisticas de heap, memoria fisica y paging"},
     {"wait",    cmd_wait,    "bloquea una tarea en evento: wait <id> [&]"},
@@ -2817,6 +2817,44 @@ static int cmd_mq(int argc, const char* argv[], int background) {
         return 1;
     }
 
+    if (str_equals(argv[1], "open")) {
+        int queue_id;
+        unsigned int open_flags = 0U;
+        int fd;
+
+        if (argc < 4) {
+            terminal_print_line("uso: mq open <id> <r|w|rw> [nonblock]");
+            return 1;
+        }
+
+        queue_id = (int)parse_positive_or_default(argv[2], 0U);
+        if (str_equals(argv[3], "r")) {
+            open_flags = VFS_O_RDONLY;
+        } else if (str_equals(argv[3], "w")) {
+            open_flags = VFS_O_WRONLY;
+        } else if (str_equals(argv[3], "rw")) {
+            open_flags = VFS_O_RDWR;
+        } else {
+            terminal_print_line("[error] modo invalido, usa r, w o rw");
+            return 1;
+        }
+
+        if (argc >= 5 && str_equals(argv[4], "nonblock")) {
+            open_flags |= VFS_O_NONBLOCK;
+        }
+
+        fd = task_mq_open(queue_id, open_flags);
+        if (fd < 0) {
+            terminal_print_line("[error] no se pudo abrir la cola MQ como FD");
+            return 1;
+        }
+
+        terminal_print("mq fd=");
+        terminal_print_uint((unsigned int)fd);
+        terminal_put_char('\n');
+        return 1;
+    }
+
     if (str_equals(argv[1], "send")) {
         int queue_id;
         char payload[SHELL_PIPE_MAX];
@@ -2970,10 +3008,19 @@ static int cmd_mq(int argc, const char* argv[], int background) {
     }
 
     if (str_equals(argv[1], "demo")) {
+        syscall_pollfd_t pfds[2];
+        unsigned int read_mask;
+        unsigned int write_mask;
+        char buffer[MQ_MAX_MESSAGE_SIZE];
+        unsigned int nfds;
         unsigned int send_deadline_tick;
+        int poll_ready;
         int queue_id;
+        int read_fd;
+        int write_fd;
         static const char occupied_payload[] = "ocupada";
         static const char blocked_payload[] = "bloqueada";
+        static const char poll_payload[] = "poll-msg";
 
         queue_id = task_mq_create(1U, 32U);
         if (queue_id < 0) {
@@ -2981,7 +3028,80 @@ static int cmd_mq(int argc, const char* argv[], int background) {
             return 1;
         }
 
+        read_fd = task_mq_open(queue_id, VFS_O_RDONLY | VFS_O_NONBLOCK);
+        write_fd = task_mq_open(queue_id, VFS_O_WRONLY | VFS_O_NONBLOCK);
+        if (read_fd < 0 || write_fd < 0) {
+            if (read_fd >= 0) {
+                vfs_close(read_fd);
+            }
+            if (write_fd >= 0) {
+                vfs_close(write_fd);
+            }
+            task_mq_unlink(queue_id);
+            terminal_print_line("[error] mq demo: no se pudo abrir la cola como FD");
+            return 1;
+        }
+
+        pfds[0].fd = read_fd;
+        pfds[0].events = SYSCALL_POLLIN;
+        pfds[0].revents = 0U;
+        pfds[1].fd = write_fd;
+        pfds[1].events = SYSCALL_POLLOUT;
+        pfds[1].revents = 0U;
+
+        poll_ready = syscall_poll(pfds, 2U, 0U);
+        if (poll_ready != 1 || pfds[0].revents != 0U || (pfds[1].revents & SYSCALL_POLLOUT) == 0U) {
+            vfs_close(read_fd);
+            vfs_close(write_fd);
+            task_mq_unlink(queue_id);
+            terminal_print_line("[error] mq demo: poll inicial incorrecto");
+            return 1;
+        }
+        terminal_print_line("mq poll write ok");
+
+        if (vfs_write(write_fd, (const unsigned char*)poll_payload, sizeof(poll_payload)) != (int)sizeof(poll_payload)) {
+            vfs_close(read_fd);
+            vfs_close(write_fd);
+            task_mq_unlink(queue_id);
+            terminal_print_line("[error] mq demo: fallo al escribir por FD");
+            return 1;
+        }
+
+        pfds[0].revents = 0U;
+        pfds[1].revents = 0U;
+        poll_ready = syscall_poll(pfds, 2U, 0U);
+        if (poll_ready != 1 || (pfds[0].revents & SYSCALL_POLLIN) == 0U || pfds[1].revents != 0U) {
+            vfs_close(read_fd);
+            vfs_close(write_fd);
+            task_mq_unlink(queue_id);
+            terminal_print_line("[error] mq demo: poll tras write incorrecto");
+            return 1;
+        }
+
+        read_mask = (1U << (unsigned int)read_fd);
+        write_mask = (1U << (unsigned int)write_fd);
+        nfds = (unsigned int)((read_fd > write_fd ? read_fd : write_fd) + 1);
+        poll_ready = syscall_select(nfds, &read_mask, &write_mask, 0U);
+        if (poll_ready != 1 || read_mask != (1U << (unsigned int)read_fd) || write_mask != 0U) {
+            vfs_close(read_fd);
+            vfs_close(write_fd);
+            task_mq_unlink(queue_id);
+            terminal_print_line("[error] mq demo: select incorrecto");
+            return 1;
+        }
+        terminal_print_line("mq select ok");
+
+        if (vfs_read(read_fd, (unsigned char*)buffer, sizeof(buffer)) <= 0) {
+            vfs_close(read_fd);
+            vfs_close(write_fd);
+            task_mq_unlink(queue_id);
+            terminal_print_line("[error] mq demo: fallo al leer por FD");
+            return 1;
+        }
+
         if (task_mq_send(queue_id, occupied_payload, sizeof(occupied_payload)) != 0) {
+            vfs_close(read_fd);
+            vfs_close(write_fd);
             task_mq_unlink(queue_id);
             terminal_print_line("[error] mq demo: fallo al llenar la cola");
             return 1;
@@ -2998,6 +3118,8 @@ static int cmd_mq(int argc, const char* argv[], int background) {
                 continue;
             }
 
+            vfs_close(read_fd);
+            vfs_close(write_fd);
             task_mq_unlink(queue_id);
             if (rc == 0) {
                 terminal_print_line("[error] mq demo: el timeout de send no se activo");
@@ -3007,12 +3129,14 @@ static int cmd_mq(int argc, const char* argv[], int background) {
             return 1;
         }
 
+        vfs_close(read_fd);
+        vfs_close(write_fd);
         task_mq_unlink(queue_id);
         terminal_print_line("mq demo ok");
         return 1;
     }
 
-    terminal_print_line("uso: mq [list|create <depth> <msg_size>|send <id> <texto>|recv <id>|sendwait <id> <timeout_ms> <texto>|recvwait <id> <timeout_ms>|unlink <id>|demo]");
+    terminal_print_line("uso: mq [list|create <depth> <msg_size>|open <id> <r|w|rw> [nonblock]|send <id> <texto>|recv <id>|sendwait <id> <timeout_ms> <texto>|recvwait <id> <timeout_ms>|unlink <id>|demo]");
     return 1;
 }
 
@@ -5498,6 +5622,7 @@ static int shell_print_more_text(const char* text) {
             line++;
             if (line >= MORE_PAGE_LINES) {
                 shell_print_text_with_color("-- Mas (q para salir, cualquier tecla para continuar) --", 0x0E);
+                
                 while (1) {
                     if (!input_poll_event(&ev)) { task_yield(); continue; }
                     if (ev.device_type != INPUT_DEVICE_KEYBOARD) continue;

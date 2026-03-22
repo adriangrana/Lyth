@@ -60,6 +60,10 @@ static unsigned int syscall_vfs_flag_mask(void) {
            VFS_O_TRUNC | VFS_O_EXCL | VFS_O_DIRECTORY | VFS_O_NONBLOCK;
 }
 
+static unsigned int syscall_mq_open_flag_mask(void) {
+    return VFS_O_RDONLY | VFS_O_WRONLY | VFS_O_NONBLOCK;
+}
+
 static int syscall_fd_alloc_pair(vfs_fd_entry_t* fdt, int* fd0_out, int* fd1_out) {
     int i;
     int a = -1;
@@ -105,6 +109,10 @@ static int syscall_fd_read_ready(vfs_fd_entry_t* table, int fd) {
         return 0;
     }
 
+    if (mqueue_node_is_queue(node)) {
+        return mqueue_fd_read_ready(node);
+    }
+
     if (pipe_node_is_pipe(node)) {
         return pipe_read_ready(node);
     }
@@ -130,6 +138,10 @@ static int syscall_fd_write_ready(vfs_fd_entry_t* table, int fd) {
     node = table[fd].node;
     if (node == 0) {
         return 0;
+    }
+
+    if (mqueue_node_is_queue(node)) {
+        return mqueue_fd_write_ready(node);
     }
 
     if (pipe_node_is_pipe(node)) {
@@ -159,6 +171,9 @@ static int syscall_poll_scan(syscall_pollfd_t* pfds, unsigned int nfds,
         if (fd < 0 || fd >= VFS_MAX_FD || table == 0 || !table[fd].used) {
             revents |= (unsigned short)SYSCALL_POLLERR;
         } else {
+            if (mqueue_node_is_queue(table[fd].node) && !mqueue_node_is_valid(table[fd].node)) {
+                revents |= (unsigned short)SYSCALL_POLLERR;
+            }
             if ((pfds[i].events & SYSCALL_POLLIN) && syscall_fd_read_ready(table, fd)) {
                 revents |= (unsigned short)SYSCALL_POLLIN;
             }
@@ -202,6 +217,13 @@ static int syscall_select_scan(unsigned int nfds,
         }
 
         if (fd >= VFS_MAX_FD || table == 0 || !table[fd].used) {
+            if (bad_fd_out != 0) {
+                *bad_fd_out = (int)fd;
+            }
+            return -1;
+        }
+
+        if (mqueue_node_is_queue(table[fd].node) && !mqueue_node_is_valid(table[fd].node)) {
             if (bad_fd_out != 0) {
                 *bad_fd_out = (int)fd;
             }
@@ -891,6 +913,34 @@ unsigned int syscall_callback(unsigned int number,
                 return 0;
             }
 
+        case SYSCALL_MQ_SEND_TIMED:
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1);
+                return (unsigned int)-1;
+            }
+            if (!syscall_validate_user_buffer((const void*)(uintptr_t)arg1, arg2)) {
+                task_set_errno(14);
+                return (unsigned int)-1;
+            }
+            {
+                unsigned int timeout_ticks = (arg3 == 0xFFFFFFFFU)
+                    ? 0xFFFFFFFFU
+                    : syscall_deadline_to_ticks(arg3);
+                int rc = task_mq_send_timed((int)arg0,
+                                            (const void*)(uintptr_t)arg1,
+                                            arg2,
+                                            timeout_ticks);
+                if (rc == MQ_E_TIMEOUT) {
+                    task_set_errno(arg3 == 0U ? 11 : 110);
+                    return (unsigned int)-1;
+                }
+                if (rc != 0) {
+                    task_set_errno(22);
+                    return (unsigned int)-1;
+                }
+                return 0;
+            }
+
         case SYSCALL_MQ_RECV:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1);
@@ -921,6 +971,36 @@ unsigned int syscall_callback(unsigned int number,
                 return received_size;
             }
 
+        case SYSCALL_MQ_RECV_TIMED:
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1);
+                return (unsigned int)-1;
+            }
+            if (!syscall_validate_user_buffer((const void*)(uintptr_t)arg1, arg2)) {
+                task_set_errno(14);
+                return (unsigned int)-1;
+            }
+            {
+                unsigned int received_size = 0U;
+                unsigned int timeout_ticks = (arg3 == 0xFFFFFFFFU)
+                    ? 0xFFFFFFFFU
+                    : syscall_deadline_to_ticks(arg3);
+                int rc = task_mq_receive_timed((int)arg0,
+                                               (void*)(uintptr_t)arg1,
+                                               arg2,
+                                               timeout_ticks,
+                                               &received_size);
+                if (rc == MQ_E_TIMEOUT) {
+                    task_set_errno(arg3 == 0U ? 11 : 110);
+                    return (unsigned int)-1;
+                }
+                if (rc != 0) {
+                    task_set_errno(22);
+                    return (unsigned int)-1;
+                }
+                return received_size;
+            }
+
         case SYSCALL_MQ_UNLINK:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1);
@@ -931,6 +1011,35 @@ unsigned int syscall_callback(unsigned int number,
                 return (unsigned int)-1;
             }
             return 0;
+
+        case SYSCALL_MQ_OPEN:
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1);
+                return (unsigned int)-1;
+            }
+            if ((arg1 & ~syscall_mq_open_flag_mask()) != 0U ||
+                (arg1 & VFS_O_ACCMODE) == 0U) {
+                task_set_errno(22);
+                return (unsigned int)-1;
+            }
+            {
+                unsigned int fd_soft = 0U;
+                int fd;
+
+                task_get_fd_rlimit(&fd_soft, 0);
+                if (fd_soft > 0U && (unsigned int)task_current_open_fd_count() >= fd_soft) {
+                    task_set_errno(24);
+                    return (unsigned int)-1;
+                }
+
+                fd = task_mq_open((int)arg0, arg1);
+                if (fd < 0) {
+                    task_set_errno(22);
+                    return (unsigned int)-1;
+                }
+
+                return (unsigned int)fd;
+            }
 
         case SYSCALL_KILL: {
             int ok = task_send_signal((int)arg0, LYTH_SIGTERM);
@@ -1653,6 +1762,14 @@ int syscall_mq_create(unsigned int max_messages, unsigned int msg_size) {
     return (int)syscall_invoke(SYSCALL_MQ_CREATE, max_messages, msg_size, 0U, 0U);
 }
 
+int syscall_mq_open(int queue_id, unsigned int open_flags) {
+    return (int)syscall_invoke(SYSCALL_MQ_OPEN,
+                               (unsigned int)queue_id,
+                               open_flags,
+                               0U,
+                               0U);
+}
+
 int syscall_mq_send(int queue_id, const void* message, unsigned int size) {
     return (int)syscall_invoke(SYSCALL_MQ_SEND,
                                (unsigned int)queue_id,
@@ -1661,12 +1778,28 @@ int syscall_mq_send(int queue_id, const void* message, unsigned int size) {
                                0U);
 }
 
+int syscall_mq_send_timed(int queue_id, const void* message, unsigned int size, unsigned int timeout_ms) {
+    return (int)syscall_invoke(SYSCALL_MQ_SEND_TIMED,
+                               (unsigned int)queue_id,
+                               (unsigned int)(uintptr_t)message,
+                               size,
+                               timeout_ms);
+}
+
 int syscall_mq_recv(int queue_id, void* buffer, unsigned int buffer_size, unsigned int* received_size_out) {
     return (int)syscall_invoke(SYSCALL_MQ_RECV,
                                (unsigned int)queue_id,
                                (unsigned int)(uintptr_t)buffer,
                                buffer_size,
                                (unsigned int)(uintptr_t)received_size_out);
+}
+
+int syscall_mq_recv_timed(int queue_id, void* buffer, unsigned int buffer_size, unsigned int timeout_ms) {
+    return (int)syscall_invoke(SYSCALL_MQ_RECV_TIMED,
+                               (unsigned int)queue_id,
+                               (unsigned int)(uintptr_t)buffer,
+                               buffer_size,
+                               timeout_ms);
 }
 
 int syscall_mq_unlink(int queue_id) {

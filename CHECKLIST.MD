@@ -204,5 +204,7 @@
 - [x] Shared memory
 - [x] Message passing
 - [x] poll / select
+- [x] MQ integradas con poll / select via FD
+- [x] MQ con syscalls temporizadas de userland
 - [x] Gestión de errores (errno)
 - [x] Gestión de recursos (FD limits)

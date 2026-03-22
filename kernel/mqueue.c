@@ -1,6 +1,8 @@
 #include "mqueue.h"
 #include "heap.h"
 #include "string.h"
+#include "task.h"
+#include "vfs.h"
 
 #define MQ_EVENT_BASE 0x40000000
 
@@ -16,8 +18,30 @@ typedef struct {
     unsigned char* storage;
 } mqueue_t;
 
+typedef struct {
+    int queue_id;
+    unsigned int open_flags;
+} mqueue_fd_t;
+
 static mqueue_t queues[MQ_MAX_QUEUES];
 static int next_queue_id = 1;
+
+static int mqueue_read_op(vfs_node_t* node, unsigned int offset,
+                          unsigned int size, unsigned char* buf);
+static int mqueue_write_op(vfs_node_t* node, unsigned int offset,
+                           unsigned int size, const unsigned char* buf);
+static void mqueue_close_op(vfs_node_t* node);
+
+static vfs_ops_t mqueue_fd_ops = {
+    .read = mqueue_read_op,
+    .write = mqueue_write_op,
+    .readdir = 0,
+    .finddir = 0,
+    .open = 0,
+    .close = mqueue_close_op,
+    .create = 0,
+    .unlink = 0,
+};
 
 static void mqueue_zero_memory(unsigned char* buffer, unsigned int size) {
     for (unsigned int i = 0; i < size; i++) {
@@ -47,6 +71,141 @@ static int mqueue_event_id_for(const mqueue_t* queue, unsigned int offset) {
     }
 
     return (int)(MQ_EVENT_BASE + ((unsigned int)queue->id * 2U) + offset);
+}
+
+static vfs_node_t* mqueue_make_fd_node(int queue_id, unsigned int open_flags) {
+    vfs_node_t* node;
+    mqueue_fd_t* endpoint;
+
+    node = (vfs_node_t*)kmalloc(sizeof(vfs_node_t));
+    if (node == 0) {
+        return 0;
+    }
+
+    endpoint = (mqueue_fd_t*)kmalloc(sizeof(mqueue_fd_t));
+    if (endpoint == 0) {
+        kfree(node);
+        return 0;
+    }
+
+    node->name[0] = 'm';
+    node->name[1] = 'q';
+    node->name[2] = '\0';
+    node->flags = VFS_FLAG_FILE | VFS_FLAG_DYNAMIC;
+    node->size = 0U;
+    node->ref_count = 0U;
+    node->impl = endpoint;
+    node->ops = &mqueue_fd_ops;
+    node->mountpoint = 0;
+
+    endpoint->queue_id = queue_id;
+    endpoint->open_flags = open_flags;
+    return node;
+}
+
+static int mqueue_endpoint_queue_id(const vfs_node_t* node) {
+    const mqueue_fd_t* endpoint;
+
+    if (node == 0 || node->ops != &mqueue_fd_ops || node->impl == 0) {
+        return -1;
+    }
+
+    endpoint = (const mqueue_fd_t*)node->impl;
+    return endpoint->queue_id;
+}
+
+static int mqueue_read_op(vfs_node_t* node, unsigned int offset,
+                          unsigned int size, unsigned char* buf) {
+    mqueue_fd_t* endpoint;
+    int queue_id;
+
+    (void)offset;
+
+    if (buf == 0 || size == 0U || node == 0 || node->impl == 0) {
+        return -1;
+    }
+
+    endpoint = (mqueue_fd_t*)node->impl;
+    queue_id = endpoint->queue_id;
+
+    for (;;) {
+        int rc;
+        unsigned int received_size = 0U;
+
+        if (mqueue_find(queue_id) == 0) {
+            return -1;
+        }
+
+        rc = mqueue_receive(queue_id, buf, size, &received_size);
+        if (rc == 0) {
+            int write_event_id = mqueue_write_event_id(queue_id);
+            if (write_event_id >= 0) {
+                task_signal_event(write_event_id);
+            }
+            return (int)received_size;
+        }
+
+        if (rc != MQ_E_EMPTY) {
+            return -1;
+        }
+
+        if ((endpoint->open_flags & VFS_O_NONBLOCK) != 0U) {
+            return MQ_E_FULL;
+        }
+
+        task_sleep(1);
+    }
+}
+
+static int mqueue_write_op(vfs_node_t* node, unsigned int offset,
+                           unsigned int size, const unsigned char* buf) {
+    mqueue_fd_t* endpoint;
+    int queue_id;
+
+    (void)offset;
+
+    if (buf == 0 || size == 0U || node == 0 || node->impl == 0) {
+        return -1;
+    }
+
+    endpoint = (mqueue_fd_t*)node->impl;
+    queue_id = endpoint->queue_id;
+
+    for (;;) {
+        int rc;
+
+        if (mqueue_find(queue_id) == 0) {
+            return -1;
+        }
+
+        rc = mqueue_send(queue_id, buf, size);
+        if (rc == 0) {
+            int read_event_id = mqueue_read_event_id(queue_id);
+            if (read_event_id >= 0) {
+                task_signal_event(read_event_id);
+            }
+            return (int)size;
+        }
+
+        if (rc != MQ_E_FULL) {
+            return -1;
+        }
+
+        if ((endpoint->open_flags & VFS_O_NONBLOCK) != 0U) {
+            return MQ_E_FULL;
+        }
+
+        task_sleep(1);
+    }
+}
+
+static void mqueue_close_op(vfs_node_t* node) {
+    if (node == 0 || node->impl == 0) {
+        return;
+    }
+
+    kfree(node->impl);
+    node->impl = 0;
 }
 
 void mqueue_init(void) {
@@ -236,4 +395,45 @@ int mqueue_read_event_id(int queue_id) {
 
 int mqueue_write_event_id(int queue_id) {
     return mqueue_event_id_for(mqueue_find(queue_id), 1U);
+}
+
+int mqueue_open_fd(int queue_id, unsigned int open_flags) {
+    vfs_node_t* node;
+
+    if (mqueue_find(queue_id) == 0) {
+        return -1;
+    }
+
+    if ((open_flags & VFS_O_ACCMODE) == 0U) {
+        return -1;
+    }
+
+    if ((open_flags & ~(VFS_O_RDONLY | VFS_O_WRONLY | VFS_O_NONBLOCK)) != 0U) {
+        return -1;
+    }
+
+    node = mqueue_make_fd_node(queue_id, open_flags);
+    if (node == 0) {
+        return -1;
+    }
+
+    return vfs_fd_install_node(node, open_flags);
+}
+
+int mqueue_node_is_queue(const vfs_node_t* node) {
+    return node != 0 && node->ops == &mqueue_fd_ops;
+}
+
+int mqueue_node_is_valid(const vfs_node_t* node) {
+    return mqueue_find(mqueue_endpoint_queue_id(node)) != 0;
+}
+
+int mqueue_fd_read_ready(const vfs_node_t* node) {
+    mqueue_t* queue = mqueue_find(mqueue_endpoint_queue_id(node));
+    return queue != 0 && queue->count > 0U;
+}
+
+int mqueue_fd_write_ready(const vfs_node_t* node) {
+    mqueue_t* queue = mqueue_find(mqueue_endpoint_queue_id(node));
+    return queue != 0 && queue->count < queue->max_messages;
 }
