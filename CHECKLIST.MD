@@ -187,6 +187,7 @@
 - [x] Utilidades básicas del sistema (cp, mv, grep, ulimit, nice, id, whoami, groups, chown, gfxdemo, elfinfo...)
 - [x] Ayuda integrada (help)
 - [x] who / users (sesiones activas)
+- [x] rmdir, find, which, head, tail, more/less, wc, cmp/diff, file, du, df, sync
 
 ## 17. Build & mantenimiento
 - [x] Makefile
