@@ -1416,13 +1416,17 @@ void task_exit(int exit_code) {
 }
 
 void task_request_cancel(void) {
+    unsigned int flags;
     task_entry_t* task = 0;
+
+    flags = interrupt_save();
 
     if (current_task_index >= 0) {
         task = &tasks[current_task_index];
     }
 
     if (task == 0) {
+        interrupt_restore(flags);
         return;
     }
 
@@ -1432,6 +1436,8 @@ void task_request_cancel(void) {
         task->state = TASK_STATE_READY;
         sched_enqueue_ready(task_slot_index(task));
     }
+
+    interrupt_restore(flags);
 }
 
 void task_request_foreground_cancel(void) {

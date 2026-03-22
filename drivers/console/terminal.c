@@ -87,9 +87,8 @@ static void sync_terminal_geometry(void) {
     terminal_rows_count = rows;
 }
 
-static void render_cell(int row, int col) {
+static void render_cell_vc(const terminal_vc_state_t* vc, int row, int col) {
     const console_backend_t* backend = terminal_backend();
-    const terminal_vc_state_t* vc = active_vc_const();
 
     if (row < 0 || row >= terminal_rows_count || col < 0 || col >= terminal_cols) {
         return;
@@ -109,7 +108,7 @@ static void render_active_console(void) {
     backend->clear(active_vc()->color);
     for (int row = 0; row < terminal_rows_count; row++) {
         for (int col = 0; col < terminal_cols; col++) {
-            render_cell(row, col);
+            render_cell_vc(active_vc_const(), row, col);
         }
     }
 }
@@ -159,7 +158,7 @@ static void hide_cursor(void) {
         return;
     }
 
-    render_cell(vc->cursor_row, vc->cursor_col);
+    render_cell_vc(vc, vc->cursor_row, vc->cursor_col);
     cursor_visible = 0;
 }
 
@@ -230,7 +229,7 @@ static void scroll_if_needed(void) {
         backend->scroll(vc->color);
 
         for (int col = 0; col < terminal_cols; col++) {
-            render_cell(terminal_rows_count - 1, col);
+            render_cell_vc(vc, terminal_rows_count - 1, col);
         }
     }
 
@@ -459,7 +458,7 @@ void terminal_put_char(char c) {
 
     vc->cells[vc->cursor_row][vc->cursor_col].glyph = glyph;
     vc->cells[vc->cursor_row][vc->cursor_col].color = vc->color;
-    if (visible) render_cell(vc->cursor_row, vc->cursor_col);
+    if (visible) render_cell_vc(vc, vc->cursor_row, vc->cursor_col);
 
     vc->cursor_col++;
 
@@ -495,7 +494,7 @@ void terminal_backspace(void) {
         vc->cursor_col--;
         vc->cells[vc->cursor_row][vc->cursor_col].glyph = ' ';
         vc->cells[vc->cursor_row][vc->cursor_col].color = vc->color;
-        if (visible) render_cell(vc->cursor_row, vc->cursor_col);
+        if (visible) render_cell_vc(vc, vc->cursor_row, vc->cursor_col);
     }
 
     if (visible) {
