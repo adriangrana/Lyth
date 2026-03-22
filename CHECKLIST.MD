@@ -4,6 +4,7 @@
 - [x] GRUB + Multiboot
 - [x] Kernel ELF32
 - [x] Stack inicial
+- [x] ACPI (MADT, LAPIC/IOAPIC discovery)
 - [ ] Soporte hardware real
 - [ ] UEFI
 - [x] SMP (multicore)
@@ -40,6 +41,7 @@
 - [x] Bloqueo por eventos
 - [x] Idle task
 - [x] Cola ready / blocked robusta
+- [x] Spinlocks (IRQ-safe, SMP-aware)
 
 ## 7. Memoria
 - [x] Paging
@@ -50,6 +52,8 @@
 - [x] Copy-on-write
 - [ ] mmap / regiones mapeadas
 - [x] Guard pages para stacks
+- [x] Shared memory (shm)
+- [x] Message queues (mqueue)
 
 ## 8. Syscalls
 - [x] Dispatcher
@@ -150,6 +154,7 @@
 - [x] Ethernet
 - [x] IPv4 (routing, checksum)
 - [x] Driver E1000 (Intel 82540EM)
+- [x] Comandos de red (ping, ifconfig, netstat, arp, dhcp, nslookup, nc)
 
 ## 13. Seguridad
 - [x] Separación kernel/user
@@ -192,6 +197,8 @@
 - [x] Ayuda integrada (help)
 - [x] who / users (sesiones activas)
 - [x] rmdir, find, which, head, tail, more/less, wc, cmp/diff, file, du, df, sync (incluyen uso en pipes de shell donde aplica)
+- [x] Herramientas de sistema (uptime, date, ps, jobs, mem, disk, touch, chmod, source, dmesg)
+- [x] IPC shell (shm, shmdemo, mq)
 
 ## 17. Build & mantenimiento
 - [x] Makefile
