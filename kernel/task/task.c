@@ -7,6 +7,7 @@
 #include "physmem.h"
 #include "assert.h"
 #include "rlimit.h"
+#include "terminal.h"
 #include "ugdb.h"
 #include <stdint.h>
 
@@ -667,6 +668,17 @@ static void complete_task(task_entry_t* task) {
 
     if (notify_foreground && foreground_complete_handler != 0) {
         foreground_complete_handler(task_id, task_name, cancelled);
+    }
+
+    if (!cancelled &&
+        task_name[0] == 's' && task_name[1] == 't' && task_name[2] == 'a' &&
+        task_name[3] == 'c' && task_name[4] == 'k' && task_name[5] == 'o' &&
+        task_name[6] == 'k' && task_name[7] == '\0') {
+        terminal_print("[job ");
+        terminal_print_uint((unsigned int)task_id);
+        terminal_print("] ");
+        terminal_print(task_name);
+        terminal_print_line(" terminado correctamente");
     }
 
     /* Reparent any live children so they aren't orphaned when this task dies. */

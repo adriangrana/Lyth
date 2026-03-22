@@ -114,6 +114,61 @@ int usermode_spawn_stackbomb(int foreground) {
                            foreground);
 }
 
+int usermode_spawn_stackok(int foreground) {
+    static const uint8_t code[] = {
+        0xB8,                                            /* mov eax, imm32 */
+        (uint8_t)(PAGING_USER_STACK_BOTTOM & 0xFFU),
+        (uint8_t)((PAGING_USER_STACK_BOTTOM >> 8) & 0xFFU),
+        (uint8_t)((PAGING_USER_STACK_BOTTOM >> 16) & 0xFFU),
+        (uint8_t)((PAGING_USER_STACK_BOTTOM >> 24) & 0xFFU),
+        0xC6, 0x00, 0x4F,                               /* mov byte ptr [eax], 0x4F */
+        0x31, 0xDB,                                     /* xor ebx, ebx */
+        0xB8, 0x0B, 0x00, 0x00, 0x00,                   /* mov eax, 11 (exit) */
+        0xCD, 0x80                                      /* int 0x80 */
+    };
+    uint32_t user_physical_base;
+    uint32_t* page_directory;
+    uint32_t entry_point;
+    uint32_t user_heap_base;
+    uint32_t user_heap_size;
+    unsigned int i;
+
+    user_physical_base = physmem_alloc_region(paging_user_size(), paging_user_size());
+    if (user_physical_base == 0) {
+        return -1;
+    }
+
+    page_directory = paging_create_user_directory(user_physical_base);
+    if (page_directory == 0) {
+        physmem_free_region(user_physical_base, paging_user_size());
+        return -1;
+    }
+
+    zero_memory((uint8_t*)(uintptr_t)user_physical_base, paging_user_size());
+    for (i = 0; i < sizeof(code); i++) {
+        ((uint8_t*)(uintptr_t)user_physical_base)[i] = code[i];
+    }
+
+    entry_point = paging_user_base();
+    user_heap_base = align_up(entry_point + (uint32_t)sizeof(code), 16U);
+    if (user_heap_base >= PAGING_USER_STACK_GUARD_BASE) {
+        paging_destroy_user_directory(page_directory);
+        physmem_free_region(user_physical_base, paging_user_size());
+        return -1;
+    }
+
+    user_heap_size = PAGING_USER_STACK_GUARD_BASE - user_heap_base;
+
+    return task_spawn_user("stackok",
+                           entry_point,
+                           user_physical_base,
+                           user_heap_base,
+                           user_heap_size,
+                           page_directory,
+                           0,
+                           foreground);
+}
+
 /* ============================================================
  *  argv / envp stack setup
  *

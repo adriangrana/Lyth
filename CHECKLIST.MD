@@ -184,7 +184,7 @@
 - [x] Tema visual
 - [x] Config persistente
 - [x] Persistencia por usuario
-- [x] Utilidades básicas del sistema (cp, mv, grep, ulimit, nice, renice, id, whoami, groups, chown, gfxdemo, elfinfo, alarm, pidof, killall, fg, bg, time...)
+- [x] Utilidades básicas del sistema (cp, mv, grep, ulimit, nice, renice, id, whoami, groups, chown, gfxdemo, elfinfo, alarm, pidof, killall, fg, bg, time, stackbomb, stackok...)
 - [x] Ayuda integrada (help)
 - [x] who / users (sesiones activas)
 - [x] rmdir, find, which, head, tail, more/less, wc, cmp/diff, file, du, df, sync

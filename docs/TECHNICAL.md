@@ -77,6 +77,8 @@ El framebuffer se activa si el flag `MULTIBOOT_INFO_FRAMEBUFFER_INFO` está pres
 
 Cada proceso de usuario tiene su propio directorio de páginas. El kernel usa identity mapping supervisor-only global.
 
+La región de usuario usa una page table de 4 KiB y deja una guard page no mapeada justo debajo del stack. Si un proceso toca esa página, provoca `Page fault` y el kernel lo reporta como `stack guard page hit`.
+
 ### Heap del kernel
 `heap.c` gestiona un array estático de 256 KB con un allocator first-fit. `kmalloc(size)` devuelve un puntero alineado; `kfree(ptr)` libera y coalesce bloques adyacentes libres.
 
@@ -175,6 +177,10 @@ Tabla interna de hasta 256 entradas (ruta → modo 9 bits). Modos por defecto: `
 
 ### ELF loader y user mode
 `kernel/elf.c` valida la cabecera ELF32 i386. `kernel/usermode.c` mapea los segmentos `PT_LOAD` en la región virtual de usuario, construye la pila con `argv`/`envp` y crea una tarea ring 3.
+
+Para validar las guard pages del stack hay dos pruebas sintéticas expuestas por la shell:
+- `stackbomb`: lanza una tarea userland mínima que toca la guard page del stack y debe terminar con `Page fault`.
+- `stackok`: lanza una tarea userland mínima que toca memoria válida del stack y sale limpiamente con `exit(0)`.
 
 ### Señales
 Cada tarea mantiene:

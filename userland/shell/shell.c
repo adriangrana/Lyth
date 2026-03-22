@@ -96,6 +96,7 @@ static int cmd_bg(int argc, const char* argv[], int background);
 static int cmd_time(int argc, const char* argv[], int background);
 static int cmd_alarm(int argc, const char* argv[], int background);
 static int cmd_stackbomb(int argc, const char* argv[], int background);
+static int cmd_stackok(int argc, const char* argv[], int background);
 static int cmd_task(int argc, const char* argv[], int background);
 static int cmd_mem(int argc, const char* argv[], int background);
 static int cmd_wait(int argc, const char* argv[], int background);
@@ -195,6 +196,7 @@ static command_t commands[] = {
     {"bg",      cmd_bg,      "lista/mueve tareas al background: bg [id]"},
     {"time",    cmd_time,    "mide tiempo de ejecucion: time <comando> [args...]"},
     {"stackbomb", cmd_stackbomb, "prueba guard page del stack userland"},
+    {"stackok", cmd_stackok, "prueba acceso valido al stack userland"},
     {"task",    cmd_task,    "muestra la tarea actual y foreground"},
     {"mem",     cmd_mem,     "estadisticas de heap, memoria fisica y paging"},
     {"wait",    cmd_wait,    "bloquea una tarea en evento: wait <id> [&]"},
@@ -2069,6 +2071,26 @@ static int cmd_stackbomb(int argc, const char* argv[], int background) {
 
     shell_print_job_started(id, "stackbomb");
     terminal_print_line("stackbomb: prueba lanzada en background");
+    return 1;
+}
+
+/* ---- cmd_stackok ---- */
+static int cmd_stackok(int argc, const char* argv[], int background) {
+    int id;
+    (void)argc;
+    (void)argv;
+    (void)background;
+
+    id = usermode_spawn_stackok(0);
+    if (id < 0) {
+        terminal_print_line("No se pudo crear la prueba stackok");
+        return 1;
+    }
+
+    task_set_priority(id, TASK_PRIORITY_HIGH);
+
+    shell_print_job_started(id, "stackok");
+    terminal_print_line("stackok: prueba lanzada en background");
     return 1;
 }
 

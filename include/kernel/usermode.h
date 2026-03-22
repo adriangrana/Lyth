@@ -20,5 +20,8 @@ int usermode_exec_current_vfs_argv(const char* vfs_path,
 /* Spawn a tiny synthetic user-mode task that intentionally touches the
    unmapped stack guard page to validate overflow detection. */
 int usermode_spawn_stackbomb(int foreground);
+/* Spawn a tiny synthetic user-mode task that touches valid stack memory
+   and exits cleanly, used as a control test for stack guard pages. */
+int usermode_spawn_stackok(int foreground);
 
 #endif
