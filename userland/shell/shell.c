@@ -135,6 +135,18 @@ static int cmd_logout(int argc, const char* argv[], int background);
 static int cmd_who(int argc, const char* argv[], int background);
 static int cmd_users(int argc, const char* argv[], int background);
 static int shell_read_secret_line(char* buf, unsigned int max);
+static int cmd_rmdir(int argc, const char* argv[], int background);
+static int cmd_find(int argc, const char* argv[], int background);
+static int cmd_which(int argc, const char* argv[], int background);
+static int cmd_head(int argc, const char* argv[], int background);
+static int cmd_tail(int argc, const char* argv[], int background);
+static int cmd_more(int argc, const char* argv[], int background);
+static int cmd_wc(int argc, const char* argv[], int background);
+static int cmd_cmp(int argc, const char* argv[], int background);
+static int cmd_file(int argc, const char* argv[], int background);
+static int cmd_du(int argc, const char* argv[], int background);
+static int cmd_df(int argc, const char* argv[], int background);
+static int cmd_sync(int argc, const char* argv[], int background);
 static void shell_resolve_path(const char* input, char* out, unsigned int out_size);
 
 /* Current working directory (always an absolute VFS path). */
@@ -220,6 +232,21 @@ static command_t commands[] = {
     {"logout",  cmd_logout,  "cierra sesión actual y vuelve a root"},
     {"who",     cmd_who,     "muestra usuarios activos"},
     {"users",   cmd_users,   "lista nombres de usuarios conectados"},
+    /* --- filesystem utilities --- */
+    {"rmdir",   cmd_rmdir,   "borra directorio vacio: rmdir <ruta>"},
+    {"find",    cmd_find,    "busca archivos: find <ruta> [-name <patron>]"},
+    {"which",   cmd_which,   "localiza un comando: which <nombre>"},
+    {"head",    cmd_head,    "primeras lineas: head [-n N] <ruta>"},
+    {"tail",    cmd_tail,    "ultimas lineas: tail [-n N] <ruta>"},
+    {"more",    cmd_more,    "pagina un archivo: more <ruta>"},
+    {"less",    cmd_more,    "alias de more"},
+    {"wc",      cmd_wc,      "cuenta lineas/palabras/bytes: wc [-l|-w|-c] <ruta>"},
+    {"cmp",     cmd_cmp,     "compara dos archivos byte a byte: cmp <a> <b>"},
+    {"diff",    cmd_cmp,     "alias de cmp"},
+    {"file",    cmd_file,    "detecta tipo de archivo: file <ruta>"},
+    {"du",      cmd_du,      "uso de disco por directorio: du [ruta]"},
+    {"df",      cmd_df,      "espacio libre por filesystem: df"},
+    {"sync",    cmd_sync,    "fuerza escritura pendiente a disco: sync"},
 };
 
 static const int command_count = sizeof(commands) / sizeof(commands[0]);
@@ -4037,6 +4064,417 @@ static int cmd_who(int argc, const char* argv[], int background) {
 static int cmd_users(int argc, const char* argv[], int background) {
     (void)argc; (void)argv; (void)background;
     terminal_print_line(ugdb_username(task_current_euid()));
+    return 1;
+}
+
+/* ---- cmd_rmdir ---- */
+static int cmd_rmdir(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    vfs_stat_t st;
+    char entry[VFS_NAME_MAX];
+    int fd;
+    (void)background;
+    if (argc < 2) { terminal_print_line("Uso: rmdir <ruta>"); return 1; }
+    shell_resolve_path(argv[1], path, sizeof(path));
+    if (vfs_stat(path, &st) != 0) {
+        terminal_print("[error] No existe: "); terminal_print_line(path); return 1;
+    }
+    if (!(st.flags & VFS_FLAG_DIR)) {
+        terminal_print_line("[error] No es un directorio"); return 1;
+    }
+    fd = vfs_open_flags(path, VFS_O_RDONLY | VFS_O_DIRECTORY);
+    if (fd >= 0) {
+        int has = (vfs_readdir(fd, 0, entry, sizeof(entry)) == 0);
+        vfs_close(fd);
+        if (has) { terminal_print_line("[error] El directorio no esta vacio"); return 1; }
+    }
+    if (vfs_delete(path) == 0)
+        terminal_print_line("Directorio eliminado");
+    else { terminal_print("[error] No se pudo eliminar: "); terminal_print_line(path); }
+    return 1;
+}
+
+/* ---- cmd_find helpers ---- */
+static void find_recursive(const char* dir, const char* pattern) {
+    char entry[VFS_NAME_MAX];
+    char full[VFS_PATH_MAX];
+    int fd, idx = 0;
+    unsigned int pi, ei;
+
+    fd = vfs_open_flags(dir, VFS_O_RDONLY | VFS_O_DIRECTORY);
+    if (fd < 0) return;
+
+    while (vfs_readdir(fd, (unsigned int)idx, entry, sizeof(entry)) == 0) {
+        vfs_stat_t st;
+        idx++;
+        /* build full path */
+        for (pi = 0; dir[pi] && pi < VFS_PATH_MAX - 2U; pi++) full[pi] = dir[pi];
+        if (pi > 0 && full[pi-1] != '/') full[pi++] = '/';
+        for (ei = 0; entry[ei] && pi < VFS_PATH_MAX - 1U; ei++, pi++) full[pi] = entry[ei];
+        full[pi] = '\0';
+
+        /* match: if no pattern, print all; otherwise check if pattern is substring of name */
+        if (!pattern || pattern[0] == '\0') {
+            terminal_print_line(full);
+        } else {
+            /* simple substring match */
+            unsigned int i, j, plen = str_length(pattern), elen = str_length(entry);
+            int found = 0;
+            for (i = 0; i + plen <= elen && !found; i++) {
+                found = 1;
+                for (j = 0; j < plen; j++)
+                    if (entry[i+j] != pattern[j]) { found = 0; break; }
+            }
+            if (found) terminal_print_line(full);
+        }
+
+        if (vfs_stat(full, &st) == 0 && (st.flags & VFS_FLAG_DIR))
+            find_recursive(full, pattern);
+    }
+    vfs_close(fd);
+}
+
+static int cmd_find(int argc, const char* argv[], int background) {
+    char root[VFS_PATH_MAX];
+    const char* pattern = 0;
+    (void)background;
+    if (argc < 2) shell_resolve_path(".", root, sizeof(root));
+    else shell_resolve_path(argv[1], root, sizeof(root));
+    if (argc >= 4 && str_equals(argv[2], "-name")) pattern = argv[3];
+    find_recursive(root, pattern);
+    return 1;
+}
+
+/* ---- cmd_which ---- */
+static int cmd_which(int argc, const char* argv[], int background) {
+    int i;
+    (void)background;
+    if (argc < 2) { terminal_print_line("Uso: which <comando>"); return 1; }
+    for (i = 0; i < command_count; i++) {
+        if (str_equals(commands[i].name, argv[1])) {
+            terminal_print("built-in: ");
+            terminal_print_line(argv[1]);
+            return 1;
+        }
+    }
+    terminal_print(argv[1]); terminal_print_line(": no encontrado");
+    return 1;
+}
+
+/* ---- cmd_head ---- */
+static int cmd_head(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    int n = 10, fd, arg_idx = 1;
+    unsigned char buf[1];
+    int line = 0;
+    (void)background;
+    if (argc >= 3 && str_equals(argv[1], "-n")) {
+        unsigned int i; n = 0;
+        for (i = 0; argv[2][i] >= '0' && argv[2][i] <= '9'; i++)
+            n = n * 10 + (argv[2][i] - '0');
+        arg_idx = 3;
+    }
+    if (arg_idx >= argc) { terminal_print_line("Uso: head [-n N] <ruta>"); return 1; }
+    shell_resolve_path(argv[arg_idx], path, sizeof(path));
+    fd = vfs_open_flags(path, VFS_O_RDONLY);
+    if (fd < 0) { terminal_print("[error] No encontrado: "); terminal_print_line(path); return 1; }
+    while (line < n && vfs_read(fd, buf, 1) == 1) {
+        terminal_put_char((char)buf[0]);
+        if (buf[0] == '\n') line++;
+    }
+    vfs_close(fd);
+    return 1;
+}
+
+/* ---- cmd_tail ---- */
+static int cmd_tail(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    vfs_stat_t st;
+    int n = 10, arg_idx = 1, fd;
+    (void)background;
+    if (argc >= 3 && str_equals(argv[1], "-n")) {
+        unsigned int i; n = 0;
+        for (i = 0; argv[2][i] >= '0' && argv[2][i] <= '9'; i++)
+            n = n * 10 + (argv[2][i] - '0');
+        arg_idx = 3;
+    }
+    if (arg_idx >= argc) { terminal_print_line("Uso: tail [-n N] <ruta>"); return 1; }
+    shell_resolve_path(argv[arg_idx], path, sizeof(path));
+    if (vfs_stat(path, &st) != 0) { terminal_print("[error] No encontrado: "); terminal_print_line(path); return 1; }
+    fd = vfs_open_flags(path, VFS_O_RDONLY);
+    if (fd < 0) { terminal_print("[error] No se pudo abrir: "); terminal_print_line(path); return 1; }
+    {
+        /* Find the offset of the n-th line from the end */
+        unsigned int size = st.size;
+        unsigned char* tmp = (unsigned char*)kmalloc(size + 1U);
+        if (tmp) {
+            unsigned int got = 0, i;
+            int nb;
+            while (got < size && (nb = vfs_read(fd, tmp + got, size - got)) > 0) got += (unsigned int)nb;
+            tmp[got] = '\0';
+            /* count newlines from end */
+            {
+                int newlines = 0;
+                unsigned int start = got;
+                for (i = got; i > 0; i--) {
+                    if (tmp[i-1] == '\n') {
+                        newlines++;
+                        if (newlines > n) { start = i; break; }
+                    }
+                }
+                for (i = start; i < got; i++) terminal_put_char((char)tmp[i]);
+                if (got > 0 && tmp[got-1] != '\n') terminal_put_char('\n');
+            }
+            kfree(tmp);
+        }
+    }
+    vfs_close(fd);
+    return 1;
+}
+
+/* ---- cmd_more ---- */
+#define MORE_PAGE_LINES 20
+static int cmd_more(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    int fd;
+    unsigned char buf[1];
+    int line = 0;
+    input_event_t ev;
+    (void)background;
+    if (argc < 2) { terminal_print_line("Uso: more <ruta>"); return 1; }
+    shell_resolve_path(argv[1], path, sizeof(path));
+    fd = vfs_open_flags(path, VFS_O_RDONLY);
+    if (fd < 0) { terminal_print("[error] No encontrado: "); terminal_print_line(path); return 1; }
+    while (vfs_read(fd, buf, 1) == 1) {
+        terminal_put_char((char)buf[0]);
+        if (buf[0] == '\n') {
+            line++;
+            if (line >= MORE_PAGE_LINES) {
+                shell_print_text_with_color("-- Mas (q para salir, cualquier tecla para continuar) --", 0x0E);
+                while (1) {
+                    if (!input_poll_event(&ev)) { task_yield(); continue; }
+                    if (ev.device_type != INPUT_DEVICE_KEYBOARD) continue;
+                    if (ev.type == INPUT_EVENT_CHAR && (ev.character == 'q' || ev.character == 'Q')) {
+                        terminal_put_char('\n'); vfs_close(fd); return 1;
+                    }
+                    if (ev.type == INPUT_EVENT_CHAR || ev.type == INPUT_EVENT_ENTER) break;
+                }
+                terminal_put_char('\r');
+                /* overwrite the prompt line with spaces */
+                {
+                    int k;
+                    for (k = 0; k < 56; k++) terminal_put_char(' ');
+                    terminal_put_char('\r');
+                }
+                line = 0;
+            }
+        }
+    }
+    vfs_close(fd);
+    return 1;
+}
+
+/* ---- cmd_wc ---- */
+static int cmd_wc(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    int fd, arg_idx = 1;
+    int flag_l = 0, flag_w = 0, flag_c = 0;
+    unsigned int lines = 0, words = 0, bytes = 0;
+    int in_word = 0;
+    unsigned char buf[256];
+    int n, i;
+    (void)background;
+    while (arg_idx < argc && argv[arg_idx][0] == '-') {
+        const char* f = argv[arg_idx] + 1;
+        for (i = 0; f[i]; i++) {
+            if (f[i] == 'l') flag_l = 1;
+            else if (f[i] == 'w') flag_w = 1;
+            else if (f[i] == 'c') flag_c = 1;
+        }
+        arg_idx++;
+    }
+    if (!flag_l && !flag_w && !flag_c) flag_l = flag_w = flag_c = 1;
+    if (arg_idx >= argc) { terminal_print_line("Uso: wc [-l|-w|-c] <ruta>"); return 1; }
+    shell_resolve_path(argv[arg_idx], path, sizeof(path));
+    fd = vfs_open_flags(path, VFS_O_RDONLY);
+    if (fd < 0) { terminal_print("[error] No encontrado: "); terminal_print_line(path); return 1; }
+    while ((n = vfs_read(fd, buf, sizeof(buf))) > 0) {
+        for (i = 0; i < n; i++) {
+            bytes++;
+            if (buf[i] == '\n') lines++;
+            if (buf[i] == ' ' || buf[i] == '\t' || buf[i] == '\n' || buf[i] == '\r') in_word = 0;
+            else if (!in_word) { in_word = 1; words++; }
+        }
+    }
+    vfs_close(fd);
+    if (flag_l) { terminal_print_uint(lines); terminal_put_char(' '); }
+    if (flag_w) { terminal_print_uint(words); terminal_put_char(' '); }
+    if (flag_c) { terminal_print_uint(bytes); terminal_put_char(' '); }
+    terminal_print_line(path);
+    return 1;
+}
+
+/* ---- cmd_cmp ---- */
+static int cmd_cmp(int argc, const char* argv[], int background) {
+    char pa[VFS_PATH_MAX], pb[VFS_PATH_MAX];
+    int fda, fdb;
+    unsigned char ba[1], bb[1];
+    unsigned int offset = 0;
+    int ra, rb;
+    (void)background;
+    if (argc < 3) { terminal_print_line("Uso: cmp <archivo1> <archivo2>"); return 1; }
+    shell_resolve_path(argv[1], pa, sizeof(pa));
+    shell_resolve_path(argv[2], pb, sizeof(pb));
+    fda = vfs_open_flags(pa, VFS_O_RDONLY);
+    fdb = vfs_open_flags(pb, VFS_O_RDONLY);
+    if (fda < 0) { terminal_print("[error] No encontrado: "); terminal_print_line(pa); if (fdb >= 0) vfs_close(fdb); return 1; }
+    if (fdb < 0) { terminal_print("[error] No encontrado: "); terminal_print_line(pb); vfs_close(fda); return 1; }
+    while (1) {
+        ra = vfs_read(fda, ba, 1);
+        rb = vfs_read(fdb, bb, 1);
+        if (ra <= 0 && rb <= 0) { terminal_print_line("Los archivos son identicos"); break; }
+        if (ra <= 0 || rb <= 0) {
+            terminal_print("Los archivos difieren en longitud (byte ");
+            terminal_print_uint(offset); terminal_print_line(")");
+            break;
+        }
+        if (ba[0] != bb[0]) {
+            terminal_print("Difieren en byte "); terminal_print_uint(offset);
+            terminal_print(": 0x");
+            {
+                static const char h[] = "0123456789ABCDEF";
+                char s[3]; s[0]=h[ba[0]>>4]; s[1]=h[ba[0]&0xF]; s[2]=0; terminal_print(s);
+                terminal_print(" vs 0x");
+                s[0]=h[bb[0]>>4]; s[1]=h[bb[0]&0xF]; s[2]=0; terminal_print_line(s);
+            }
+            break;
+        }
+        offset++;
+    }
+    vfs_close(fda); vfs_close(fdb);
+    return 1;
+}
+
+/* ---- cmd_file ---- */
+static int cmd_file(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    vfs_stat_t st;
+    unsigned char hdr[8];
+    int fd, n;
+    (void)background;
+    if (argc < 2) { terminal_print_line("Uso: file <ruta>"); return 1; }
+    shell_resolve_path(argv[1], path, sizeof(path));
+    if (vfs_stat(path, &st) != 0) { terminal_print("[error] No encontrado: "); terminal_print_line(path); return 1; }
+    terminal_print(path); terminal_print(": ");
+    if (st.flags & VFS_FLAG_DIR) { terminal_print_line("directorio"); return 1; }
+    fd = vfs_open_flags(path, VFS_O_RDONLY);
+    if (fd < 0) { terminal_print_line("no se pudo leer"); return 1; }
+    n = vfs_read(fd, hdr, sizeof(hdr));
+    vfs_close(fd);
+    if (n >= 4 && hdr[0] == 0x7F && hdr[1] == 'E' && hdr[2] == 'L' && hdr[3] == 'F') {
+        terminal_print_line("ELF executable");
+    } else if (n >= 2 && hdr[0] == '#' && hdr[1] == '!') {
+        terminal_print_line("script (shebang)");
+    } else if (n >= 2 && hdr[0] == '#') {
+        terminal_print_line("script de shell");
+    } else {
+        /* heuristic: printable? */
+        int is_text = 1, i;
+        for (i = 0; i < n; i++) {
+            if (hdr[i] < 9 || (hdr[i] > 13 && hdr[i] < 32 && hdr[i] != 27)) { is_text = 0; break; }
+        }
+        terminal_print_line(is_text ? "texto ASCII" : "datos binarios");
+    }
+    return 1;
+}
+
+/* ---- cmd_du helpers ---- */
+static unsigned int du_sum_dir(const char* dir) {
+    char entry[VFS_NAME_MAX];
+    char full[VFS_PATH_MAX];
+    vfs_stat_t st;
+    int fd, idx = 0;
+    unsigned int total = 0;
+    unsigned int pi, ei;
+
+    fd = vfs_open_flags(dir, VFS_O_RDONLY | VFS_O_DIRECTORY);
+    if (fd < 0) return 0;
+
+    while (vfs_readdir(fd, (unsigned int)idx, entry, sizeof(entry)) == 0) {
+        idx++;
+        for (pi = 0; dir[pi] && pi < VFS_PATH_MAX - 2U; pi++) full[pi] = dir[pi];
+        if (pi > 0 && full[pi-1] != '/') full[pi++] = '/';
+        for (ei = 0; entry[ei] && pi < VFS_PATH_MAX - 1U; ei++, pi++) full[pi] = entry[ei];
+        full[pi] = '\0';
+        if (vfs_stat(full, &st) != 0) continue;
+        if (st.flags & VFS_FLAG_DIR) {
+            unsigned int sub = du_sum_dir(full);
+            terminal_print_uint(sub / 1024U + 1U);
+            terminal_print("\t");
+            terminal_print_line(full);
+            total += sub;
+        } else {
+            total += st.size;
+        }
+    }
+    vfs_close(fd);
+    return total;
+}
+
+static int cmd_du(int argc, const char* argv[], int background) {
+    char path[VFS_PATH_MAX];
+    unsigned int total;
+    (void)background;
+    if (argc < 2) shell_resolve_path(".", path, sizeof(path));
+    else shell_resolve_path(argv[1], path, sizeof(path));
+    total = du_sum_dir(path);
+    terminal_print_uint(total / 1024U + 1U);
+    terminal_print("\t");
+    terminal_print_line(path);
+    return 1;
+}
+
+/* ---- cmd_df ---- */
+static int cmd_df(int argc, const char* argv[], int background) {
+    int i, count;
+    (void)argc; (void)argv; (void)background;
+    terminal_print_line("Filesystem       Bloques  Usados   Libres   Uso%  Montaje");
+    /* ramfs: always mounted at /, report as in-memory unlimited */
+    terminal_print_line("ramfs            -        -        -        -     /");
+    count = blkdev_count();
+    for (i = 0; i < count; i++) {
+        blkdev_t dev;
+        if (blkdev_get(i, &dev) != 0) continue;
+        if (!dev.used) continue;
+        /* skip partitions if their parent is a whole disk already listed */
+        {
+            unsigned int total_kb = (dev.block_count / 2U); /* 512-byte blocks -> KB */
+            char name_padded[18];
+            unsigned int ni;
+            for (ni = 0; dev.name[ni] && ni < 17U; ni++) name_padded[ni] = dev.name[ni];
+            name_padded[ni++] = ' ';
+            while (ni < 17U) name_padded[ni++] = ' ';
+            name_padded[17] = '\0';
+            terminal_print(name_padded);
+            terminal_print_uint(total_kb);
+            terminal_print("K");
+            terminal_print_line("     -        -        -     (disco)");
+        }
+    }
+    return 1;
+}
+
+/* ---- cmd_sync ---- */
+static int cmd_sync(int argc, const char* argv[], int background) {
+    int i, count;
+    (void)argc; (void)argv; (void)background;
+    count = blkdev_count();
+    for (i = 0; i < count; i++) {
+        blkdev_t dev;
+        if (blkdev_get(i, &dev) == 0 && dev.used)
+            blkdev_cache_invalidate_device(i);
+    }
+    terminal_print_line("sync: cache de bloques vaciada");
     return 1;
 }
 
