@@ -36,6 +36,7 @@
 .global irq12_stub
 .global irq14_stub
 .global syscall_stub
+.global apic_spurious_stub
 
 .extern exception_interrupt_handler
 .extern timer_interrupt_handler
@@ -160,6 +161,9 @@ syscall_stub:
     add $4, %esp
     mov %eax, %esp
     popa
+    iret
+
+apic_spurious_stub:
     iret
 
 .section .note.GNU-stack,"",@progbits

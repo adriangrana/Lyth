@@ -36,6 +36,9 @@ uint32_t paging_lookup_user_page(uint32_t* directory, uint32_t virtual_address);
 void paging_destroy_user_directory(uint32_t* directory);
 void paging_switch_directory(uint32_t* directory);
 
+/* MMIO mapping */
+int paging_map_mmio(uint32_t physical_address);
+
 /* COW support */
 uint32_t* paging_cow_clone_user_directory(uint32_t* parent_directory);
 void paging_release_user_pages(uint32_t* directory);

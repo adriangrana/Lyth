@@ -71,6 +71,11 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 - Base de datos de usuarios/grupos con contraseñas y membresía de grupo
 - Comandos de administración: `useradd/del/mod`, `groupadd/del`, `gpasswd`, `passwd`, `su`, `login`, `logout`
 
+### Interrupciones y tiempo
+- APIC/IOAPIC con detección automática vía ACPI MADT; fallback a PIC 8259A si no hay APIC
+- PIT a 100 Hz como fuente de tick del scheduler (IRQ 0 ruteada por IOAPIC o PIC)
+- Timers por proceso, RTC CMOS, `sleep` por syscall, reloj monotónico
+
 ### Drivers y debug
 - ATA PIO (master/slave), RTC CMOS, serie COM1, GDB remoto integrado
 - Panic screen con volcado de registros y backtrace

@@ -16,7 +16,7 @@
 
 ## 3. Interrupciones y tiempo
 - [x] IDT / PIC
-- [ ] APIC / IOAPIC
+- [x] APIC / IOAPIC
 - [ ] HPET
 - [x] Timers por proceso
 - [x] RTC / reloj del sistema

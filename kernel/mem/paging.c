@@ -395,6 +395,23 @@ void paging_switch_directory(uint32_t* directory) {
     current_directory = directory;
 }
 
+int paging_map_mmio(uint32_t physical_address) {
+    uint32_t pde_index = physical_address / PAGE_SIZE_4MB;
+    uint32_t flags = PAGE_PRESENT | PAGE_WRITABLE | PAGE_PAGE_SIZE;
+
+    if (pde_index >= PAGE_DIRECTORY_ENTRIES) {
+        return 0;
+    }
+
+    if ((page_directory[pde_index] & PAGE_PRESENT) != 0) {
+        return 1;
+    }
+
+    page_directory[pde_index] = (pde_index * PAGE_SIZE_4MB) | flags;
+    paging_invalidate_page(pde_index * PAGE_SIZE_4MB);
+    return 1;
+}
+
 uint32_t* paging_cow_clone_user_directory(uint32_t* parent_directory) {
     uint32_t directory_physical;
     uint32_t table_physical;

@@ -28,6 +28,8 @@
 #include "boot_tests.h"
 #include "version.h"
 #include "ugdb.h"
+#include "acpi.h"
+#include "apic.h"
 
 static void terminal_write_uint(uint32_t value) {
     char buffer[16];
@@ -144,6 +146,8 @@ void kernel_main(unsigned long mbi_ptr) {
     } else {
         klog_write(KLOG_LEVEL_WARN, "mouse", "Ratón PS/2 no disponible");
     }
+    acpi_init();
+    apic_init();
     interrupts_init();
     rtc_init();
     klog_write(KLOG_LEVEL_INFO, "rtc",  "RTC CMOS inicializado");

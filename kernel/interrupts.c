@@ -9,6 +9,7 @@
 #include "paging.h"
 #include "terminal.h"
 #include "panic.h"
+#include "apic.h"
 
 static const char* exception_names[32] = {
     "Division by zero",
@@ -144,21 +145,29 @@ static void pic_send_eoi(unsigned char irq) {
     outb(0x20, 0x20);
 }
 
+static void send_eoi(unsigned char irq) {
+    if (apic_is_enabled()) {
+        apic_eoi();
+    } else {
+        pic_send_eoi(irq);
+    }
+}
+
 unsigned int timer_interrupt_handler(unsigned int current_esp) {
     timer_handle_interrupt();
-    pic_send_eoi(0);
+    send_eoi(0);
     return task_schedule_on_timer(current_esp);
 }
 
 unsigned int keyboard_interrupt_handler(unsigned int current_esp) {
     keyboard_handle_interrupt();
-    pic_send_eoi(1);
+    send_eoi(1);
     return current_esp;
 }
 
 unsigned int mouse_interrupt_handler(unsigned int current_esp) {
     mouse_handle_interrupt();
-    pic_send_eoi(12);
+    send_eoi(12);
     return current_esp;
 }
 
@@ -256,7 +265,6 @@ void interrupts_init(void) {
         idt_set_gate((unsigned char)vector, exception_stubs[vector], code_selector, 0x8E);
     }
 
-    pic_remap();
     timer_init(100);
 
     idt_set_gate(32, (unsigned int)irq0_stub,  code_selector, 0x8E);
@@ -264,6 +272,16 @@ void interrupts_init(void) {
     idt_set_gate(44, (unsigned int)irq12_stub, code_selector, 0x8E);
     idt_set_gate(46, (unsigned int)irq14_stub, code_selector, 0x8E);
     idt_set_gate(0x80, (unsigned int)syscall_stub, code_selector, 0xEE);
+
+    if (apic_is_enabled()) {
+        /* Route ISA IRQs through IOAPIC */
+        ioapic_route_irq(0,  32, 0);   /* PIT timer */
+        ioapic_route_irq(1,  33, 0);   /* keyboard */
+        ioapic_route_irq(12, 44, mouse_is_enabled() ? 0 : 1);   /* mouse */
+        ioapic_route_irq(14, 46, 0);   /* ATA primary */
+    } else {
+        pic_remap();
+    }
 
     idt_load_table();
 

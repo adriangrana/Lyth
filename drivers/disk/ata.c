@@ -1,4 +1,5 @@
 #include "ata.h"
+#include "apic.h"
 
 /* ============================================================
  *  ATA PIO driver  —  primary bus only, LBA28, polling
@@ -301,9 +302,13 @@ unsigned int ata_irq14_handler(unsigned int current_esp) {
     /* Read status to clear pending interrupt on the drive side */
     (void)ata_inb(ATA_BASE + ATA_REG_STATUS);
 
-    /* Send EOI to slave PIC, then master PIC */
-    ata_outb(0xA0, 0x20);
-    ata_outb(0x20, 0x20);
+    /* Send EOI – APIC or legacy PIC */
+    if (apic_is_enabled()) {
+        apic_eoi();
+    } else {
+        ata_outb(0xA0, 0x20);
+        ata_outb(0x20, 0x20);
+    }
 
     return current_esp;
 }

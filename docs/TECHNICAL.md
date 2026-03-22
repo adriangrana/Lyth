@@ -4,7 +4,7 @@
 
 ```
 arch/x86/boot/boot.s  →  kernel_main()  →  subsistemas (GDT, consola, mem, VFS, scheduler)
-                                         →  interrupts_init() (IDT, PIC, PIT, IRQs)
+                                         →  acpi_init() + apic_init()  →  interrupts_init()
                                          →  tarea init (PID 1) → shell interactiva
 ```
 
@@ -16,6 +16,7 @@ Subsistemas principales y sus archivos:
 | Kernel init | `kernel/kernel.c` |
 | GDT / TSS | `kernel/gdt.c`, `arch/x86/gdt.s` |
 | IDT / PIC / PIT | `kernel/idt.c`, `kernel/interrupts.c`, `arch/x86/interrupts.s` |
+| ACPI / APIC | `kernel/acpi.c`, `kernel/apic.c` |
 | Scheduler | `kernel/task/task.c`, `kernel/task/timer.c` |
 | Memoria física | `kernel/mem/physmem.c` |
 | Paginación | `kernel/mem/paging.c` |
@@ -46,9 +47,43 @@ Subsistemas principales y sus archivos:
 1. GRUB carga el kernel con Multiboot. `boot.s` solicita modo gráfico `1280×1024×32` y pasa a `kernel_main()`.
 2. `kernel_main()` inicializa en orden: GDT + TSS, consola (detecta framebuffer o VGA), memoria física (bitmap Multiboot), heap, VFS (monta ramfs en `/`), ugdb (usuarios/grupos), scheduler.
 3. `ata_init()` detecta unidades ATA; `blkdev` escanea MBR/GPT; las particiones FAT16/FAT32 se montan automáticamente.
-4. `interrupts_init()` instala la IDT, remapea el PIC 8259A, configura el PIT a 100 Hz y habilita IRQs.
+4. `acpi_init()` busca el RSDP (EBDA + ROM BIOS), valida el RSDT y parsea la tabla MADT para obtener la dirección del Local APIC, las entradas IOAPIC y los Interrupt Source Overrides.
+5. `apic_init()` comprueba CPUID, mapea las regiones MMIO (LAPIC en 0xFEE00000, IOAPIC en 0xFEC00000) con `paging_map_mmio()`, deshabilita el PIC 8259A, inicializa el LAPIC (spurious vector 0xFF, TPR a 0) y el IOAPIC (enmascara todas las líneas).
+6. `interrupts_init()` instala la IDT, y rutea las IRQs 0, 1, 12 y 14 por el IOAPIC (si APIC está activo) o remapea el PIC 8259A como fallback. Configura el PIT a 100 Hz y habilita IRQs.
 5. El scheduler arranca la tarea `init` (PID 1), que inicializa la shell y entra en el bucle de eventos.
 6. El loop principal del kernel ejecuta `hlt`; toda la actividad ocurre desde interrupciones y la tarea init.
+
+---
+
+## APIC / IOAPIC
+
+El kernel detecta y usa APIC/IOAPIC cuando el hardware lo soporta, con fallback automático al PIC 8259A.
+
+### Detección (ACPI)
+`acpi_init()` busca el RSDP (Root System Description Pointer) en dos regiones de memoria:
+- EBDA (Extended BIOS Data Area): puntero en `[0x040E] << 4`
+- ROM BIOS: rango `0xE0000`–`0xFFFFF`
+
+A partir del RSDP, valida el RSDT (Root System Description Table) y recorre sus entradas buscando la tabla MADT (`signature = "APIC"`). De la MADT extrae:
+- **Dirección base del Local APIC** (normalmente `0xFEE00000`)
+- **Entradas IOAPIC**: dirección base (normalmente `0xFEC00000`), ID, GSI base
+- **Interrupt Source Overrides (ISO)**: remapeo ISA→GSI con flags de polaridad/trigger
+
+### Inicialización
+`apic_init()` verifica CPUID (EDX bit 9) y consume la información MADT:
+1. Mapea MMIO del LAPIC y del IOAPIC mediante `paging_map_mmio()` (páginas grandes de 4 MiB identity-mapped).
+2. Deshabilita el PIC 8259A (máscara `0xFF` en ambos chips).
+3. Inicializa el LAPIC: spurious interrupt vector `0xFF`, TPR a 0, ESR limpiado.
+4. Inicializa el IOAPIC: enmascara todas las líneas de redirección.
+5. Construye la tabla ISA→GSI con overrides de la MADT.
+
+### Ruteo de IRQs
+`interrupts_init()` comprueba `apic_is_enabled()`:
+- **Con APIC**: rutea IRQ 0 (PIT), 1 (teclado), 12 (ratón) y 14 (ATA) mediante `ioapic_route_irq()`, que aplica el mapeo GSI y los flags de polaridad/trigger de la MADT.
+- **Sin APIC**: remapea el PIC 8259A clásico (IRQ 0→vector 32, IRQ 8→vector 40).
+
+### EOI
+`send_eoi()` en `interrupts.c` y el handler de ATA usan `apic_eoi()` (write 0 al registro LAPIC EOI en `0xFEE000B0`) si el APIC está activo, o `pic_send_eoi()` como fallback.
 
 ---
 
