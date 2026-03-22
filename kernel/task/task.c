@@ -1255,9 +1255,19 @@ void task_on_tick(void) {
 
         if (tasks[i].state == TASK_STATE_SLEEPING) {
             if ((int)(now - tasks[i].wake_tick) >= 0) {
+                tasks[i].wake_tick = 0U;
                 tasks[i].state = TASK_STATE_READY;
                 sched_enqueue_ready(i);
             }
+        }
+
+        if (tasks[i].state == TASK_STATE_BLOCKED &&
+            tasks[i].wake_tick != 0U &&
+            (int)(now - tasks[i].wake_tick) >= 0) {
+            tasks[i].wake_tick = 0U;
+            tasks[i].blocked_event_id = -1;
+            tasks[i].state = TASK_STATE_READY;
+            sched_enqueue_ready(i);
         }
 
         /* ITIMER_REAL / alarm(): fire SIGALRM when deadline reached */
@@ -1324,6 +1334,31 @@ void task_wait_event(int event_id) {
     }
 
     tasks[current_task_index].blocked_event_id = event_id;
+    tasks[current_task_index].wake_tick = 0U;
+    tasks[current_task_index].state = TASK_STATE_BLOCKED;
+}
+
+void task_wait_event_timeout(int event_id, unsigned int timeout_ticks) {
+    int i;
+
+    if (current_task_index < 0 || event_id < 0) {
+        return;
+    }
+
+    if (timeout_ticks == 0U) {
+        task_wait_event(event_id);
+        return;
+    }
+
+    for (i = 0; i < TASK_MAX_COUNT; i++) {
+        if (tasks[i].used && tasks[i].id == event_id &&
+                tasks[i].state == TASK_STATE_ZOMBIE) {
+            return;
+        }
+    }
+
+    tasks[current_task_index].blocked_event_id = event_id;
+    tasks[current_task_index].wake_tick = timer_get_ticks() + timeout_ticks;
     tasks[current_task_index].state = TASK_STATE_BLOCKED;
 }
 
@@ -1342,6 +1377,7 @@ int task_signal_event(int event_id) {
             tasks[i].state == TASK_STATE_BLOCKED &&
             tasks[i].blocked_event_id == event_id) {
             tasks[i].blocked_event_id = -1;
+            tasks[i].wake_tick = 0U;
             tasks[i].state = TASK_STATE_READY;
             sched_enqueue_ready(i);
             woken++;
@@ -2157,21 +2193,45 @@ int task_mq_create(unsigned int max_messages, unsigned int msg_size) {
 int task_mq_send(int queue_id, const void* message, unsigned int size) {
     unsigned int flags = interrupt_save();
     int rc = mqueue_send(queue_id, message, size);
+    int read_event_id = (rc == 0) ? mqueue_read_event_id(queue_id) : -1;
     interrupt_restore(flags);
+
+    if (rc == 0 && read_event_id >= 0) {
+        task_signal_event(read_event_id);
+    }
+
     return rc;
 }
 
 int task_mq_receive(int queue_id, void* buffer, unsigned int buffer_size, unsigned int* received_size_out) {
     unsigned int flags = interrupt_save();
     int rc = mqueue_receive(queue_id, buffer, buffer_size, received_size_out);
+    int write_event_id = (rc == 0) ? mqueue_write_event_id(queue_id) : -1;
     interrupt_restore(flags);
+
+    if (rc == 0 && write_event_id >= 0) {
+        task_signal_event(write_event_id);
+    }
+
     return rc;
 }
 
 int task_mq_unlink(int queue_id) {
     unsigned int flags = interrupt_save();
+    int read_event_id = mqueue_read_event_id(queue_id);
+    int write_event_id = mqueue_write_event_id(queue_id);
     int rc = mqueue_unlink(queue_id);
     interrupt_restore(flags);
+
+    if (rc == 0) {
+        if (read_event_id >= 0) {
+            task_signal_event(read_event_id);
+        }
+        if (write_event_id >= 0 && write_event_id != read_event_id) {
+            task_signal_event(write_event_id);
+        }
+    }
+
     return rc;
 }
 
@@ -2180,6 +2240,20 @@ int task_mq_list(mqueue_info_t* out, int max_queues) {
     int count = mqueue_list(out, max_queues);
     interrupt_restore(flags);
     return count;
+}
+
+int task_mq_read_event_id(int queue_id) {
+    unsigned int flags = interrupt_save();
+    int event_id = mqueue_read_event_id(queue_id);
+    interrupt_restore(flags);
+    return event_id;
+}
+
+int task_mq_write_event_id(int queue_id) {
+    unsigned int flags = interrupt_save();
+    int event_id = mqueue_write_event_id(queue_id);
+    interrupt_restore(flags);
+    return event_id;
 }
 
 /* ── Resource-limit helpers ─────────────────────────────────────────────── */

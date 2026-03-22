@@ -2,6 +2,8 @@
 #include "heap.h"
 #include "string.h"
 
+#define MQ_EVENT_BASE 0x40000000
+
 typedef struct {
     int used;
     int id;
@@ -37,6 +39,14 @@ static mqueue_t* mqueue_find(int queue_id) {
     }
 
     return 0;
+}
+
+static int mqueue_event_id_for(const mqueue_t* queue, unsigned int offset) {
+    if (queue == 0 || !queue->used || queue->id <= 0) {
+        return -1;
+    }
+
+    return (int)(MQ_EVENT_BASE + ((unsigned int)queue->id * 2U) + offset);
 }
 
 void mqueue_init(void) {
@@ -218,4 +228,12 @@ int mqueue_list(mqueue_info_t* out, int max_queues) {
     }
 
     return count;
+}
+
+int mqueue_read_event_id(int queue_id) {
+    return mqueue_event_id_for(mqueue_find(queue_id), 0U);
+}
+
+int mqueue_write_event_id(int queue_id) {
+    return mqueue_event_id_for(mqueue_find(queue_id), 1U);
 }

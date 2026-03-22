@@ -59,6 +59,37 @@ typedef struct {
 } wait_task_data_t;
 
 typedef struct {
+    int queue_id;
+    unsigned int timeout_ticks;
+    unsigned int deadline_tick;
+    unsigned int payload_size;
+    int wait_started;
+    char payload[MQ_MAX_MESSAGE_SIZE];
+} mq_send_wait_task_data_t;
+
+typedef struct {
+    int queue_id;
+    unsigned int timeout_ticks;
+    unsigned int deadline_tick;
+    int wait_started;
+} mq_recv_wait_task_data_t;
+
+typedef struct {
+    int queue_id;
+    unsigned int delay_ticks;
+    unsigned int payload_size;
+    int armed;
+    char payload[MQ_MAX_MESSAGE_SIZE];
+} mq_delayed_send_task_data_t;
+
+typedef struct {
+    int queue_id;
+    int phase;
+    unsigned int recv_deadline_tick;
+    unsigned int send_deadline_tick;
+} mq_demo_task_data_t;
+
+typedef struct {
     int used;
     char name[SHELL_ENV_NAME_MAX];
     char value[SHELL_ENV_VALUE_MAX];
@@ -203,7 +234,7 @@ static command_t commands[] = {
     {"stackok", cmd_stackok, "prueba acceso valido al stack userland"},
     {"shm",     cmd_shm,     "memoria compartida: shm [list|create <bytes>|unlink <id>]"},
     {"shmdemo", cmd_shmdemo, "valida SHM con writer/reader userland: shmdemo [byte]"},
-    {"mq",      cmd_mq,      "message passing: mq [list|create|send|recv|unlink|demo]"},
+    {"mq",      cmd_mq,      "message passing: mq [list|create|send|recv|sendwait|recvwait|unlink|demo]"},
     {"task",    cmd_task,    "muestra la tarea actual y foreground"},
     {"mem",     cmd_mem,     "estadisticas de heap, memoria fisica y paging"},
     {"wait",    cmd_wait,    "bloquea una tarea en evento: wait <id> [&]"},
@@ -1517,6 +1548,319 @@ static void wait_task_step(void) {
     task_exit(0);
 }
 
+static void mq_send_wait_task_step(void) {
+    mq_send_wait_task_data_t* data = (mq_send_wait_task_data_t*)task_current_data();
+    unsigned int now;
+    unsigned int remaining_ticks;
+    int event_id;
+    int rc;
+
+    if (data == 0) {
+        task_exit(1);
+        return;
+    }
+
+    if (task_cancel_requested()) {
+        terminal_print_line("mq send cancelado");
+        task_clear_cancel();
+        task_exit(1);
+        return;
+    }
+
+    rc = task_mq_send(data->queue_id, data->payload, data->payload_size);
+    if (rc == 0) {
+        terminal_print_line("mq send: ok");
+        task_exit(0);
+        return;
+    }
+
+    if (rc != MQ_E_FULL) {
+        terminal_print_line("[error] no se pudo enviar a la cola MQ");
+        task_exit(1);
+        return;
+    }
+
+    if (!data->wait_started) {
+        if (data->timeout_ticks == 0U) {
+            terminal_print_line("[error] cola MQ llena");
+            task_exit(1);
+            return;
+        }
+
+        data->wait_started = 1;
+        data->deadline_tick = timer_get_ticks() + data->timeout_ticks;
+    }
+
+    now = timer_get_ticks();
+    if ((int)(now - data->deadline_tick) >= 0) {
+        terminal_print_line("mq send: timeout");
+        task_exit(1);
+        return;
+    }
+
+    event_id = task_mq_write_event_id(data->queue_id);
+    if (event_id < 0) {
+        terminal_print_line("[error] no existe esa cola MQ");
+        task_exit(1);
+        return;
+    }
+
+    remaining_ticks = data->deadline_tick - now;
+    task_wait_event_timeout(event_id, remaining_ticks);
+}
+
+static void mq_recv_wait_task_step(void) {
+    mq_recv_wait_task_data_t* data = (mq_recv_wait_task_data_t*)task_current_data();
+    char payload[MQ_MAX_MESSAGE_SIZE];
+    unsigned int received_size = 0;
+    unsigned int now;
+    unsigned int remaining_ticks;
+    int event_id;
+    int rc;
+
+    if (data == 0) {
+        task_exit(1);
+        return;
+    }
+
+    if (task_cancel_requested()) {
+        terminal_print_line("mq recv cancelado");
+        task_clear_cancel();
+        task_exit(1);
+        return;
+    }
+
+    rc = task_mq_receive(data->queue_id, payload, sizeof(payload), &received_size);
+    if (rc == 0) {
+        payload[(received_size < sizeof(payload)) ? received_size : (sizeof(payload) - 1U)] = '\0';
+        terminal_print("mq recv: ");
+        terminal_print_line(payload);
+        task_exit(0);
+        return;
+    }
+
+    if (rc != MQ_E_EMPTY) {
+        terminal_print_line("[error] no se pudo recibir de la cola MQ");
+        task_exit(1);
+        return;
+    }
+
+    if (!data->wait_started) {
+        if (data->timeout_ticks == 0U) {
+            terminal_print_line("mq recv: vacia");
+            task_exit(1);
+            return;
+        }
+
+        data->wait_started = 1;
+        data->deadline_tick = timer_get_ticks() + data->timeout_ticks;
+    }
+
+    now = timer_get_ticks();
+    if ((int)(now - data->deadline_tick) >= 0) {
+        terminal_print_line("mq recv: timeout");
+        task_exit(1);
+        return;
+    }
+
+    event_id = task_mq_read_event_id(data->queue_id);
+    if (event_id < 0) {
+        terminal_print_line("[error] no existe esa cola MQ");
+        task_exit(1);
+        return;
+    }
+
+    remaining_ticks = data->deadline_tick - now;
+    task_wait_event_timeout(event_id, remaining_ticks);
+}
+
+static void mq_delayed_send_task_step(void) {
+    mq_delayed_send_task_data_t* data = (mq_delayed_send_task_data_t*)task_current_data();
+    int rc;
+
+    if (data == 0) {
+        task_exit(1);
+        return;
+    }
+
+    if (task_cancel_requested()) {
+        task_clear_cancel();
+        task_exit(1);
+        return;
+    }
+
+    if (!data->armed) {
+        data->armed = 1;
+        syscall_sleep(data->delay_ticks);
+        return;
+    }
+
+    rc = task_mq_send(data->queue_id, data->payload, data->payload_size);
+    if (rc != 0) {
+        terminal_print_line("[error] mq demo: fallo al enviar en diferido");
+        task_exit(1);
+        return;
+    }
+
+    task_exit(0);
+}
+
+static void mq_demo_cleanup(mq_demo_task_data_t* data) {
+    if (data != 0 && data->queue_id >= 0) {
+        task_mq_unlink(data->queue_id);
+        data->queue_id = -1;
+    }
+}
+
+static void mq_demo_task_step(void) {
+    mq_demo_task_data_t* data = (mq_demo_task_data_t*)task_current_data();
+    unsigned int now;
+    unsigned int remaining_ticks;
+    char payload[MQ_MAX_MESSAGE_SIZE];
+    unsigned int received_size = 0;
+    int event_id;
+    int rc;
+
+    if (data == 0) {
+        task_exit(1);
+        return;
+    }
+
+    if (task_cancel_requested()) {
+        mq_demo_cleanup(data);
+        terminal_print_line("mq demo cancelado");
+        task_clear_cancel();
+        task_exit(1);
+        return;
+    }
+
+    if (data->phase == 0) {
+        mq_delayed_send_task_data_t sender_data;
+        int sender_id;
+        static const char delayed_payload[] = "desbloqueado";
+
+        data->queue_id = task_mq_create(1U, 32U);
+        if (data->queue_id < 0) {
+            terminal_print_line("[error] no se pudo crear la cola MQ para la demo");
+            task_exit(1);
+            return;
+        }
+
+        sender_data.queue_id = data->queue_id;
+        sender_data.delay_ticks = milliseconds_to_ticks(40U);
+        sender_data.payload_size = sizeof(delayed_payload);
+        sender_data.armed = 0;
+        for (unsigned int i = 0; i < sizeof(delayed_payload); i++) {
+            sender_data.payload[i] = delayed_payload[i];
+        }
+
+        sender_id = task_spawn("mqtx", mq_delayed_send_task_step, &sender_data, sizeof(sender_data), 0);
+        if (sender_id < 0) {
+            mq_demo_cleanup(data);
+            terminal_print_line("[error] mq demo: no se pudo crear el emisor diferido");
+            task_exit(1);
+            return;
+        }
+
+        data->phase = 1;
+        data->recv_deadline_tick = timer_get_ticks() + milliseconds_to_ticks(200U);
+    }
+
+    if (data->phase == 1) {
+        rc = task_mq_receive(data->queue_id, payload, sizeof(payload), &received_size);
+        if (rc == 0) {
+            payload[(received_size < sizeof(payload)) ? received_size : (sizeof(payload) - 1U)] = '\0';
+            terminal_print("mqrecv unblock: ");
+            terminal_print_line(payload);
+            data->phase = 2;
+        } else if (rc == MQ_E_EMPTY) {
+            now = timer_get_ticks();
+            if ((int)(now - data->recv_deadline_tick) >= 0) {
+                mq_demo_cleanup(data);
+                terminal_print_line("[error] mq demo: recv no se desbloqueo");
+                task_exit(1);
+                return;
+            }
+
+            event_id = task_mq_read_event_id(data->queue_id);
+            if (event_id < 0) {
+                mq_demo_cleanup(data);
+                terminal_print_line("[error] mq demo: cola invalida en recv");
+                task_exit(1);
+                return;
+            }
+
+            remaining_ticks = data->recv_deadline_tick - now;
+            task_wait_event_timeout(event_id, remaining_ticks);
+            return;
+        } else {
+            mq_demo_cleanup(data);
+            terminal_print_line("[error] mq demo: fallo al recibir");
+            task_exit(1);
+            return;
+        }
+    }
+
+    if (data->phase == 2) {
+        static const char occupied_payload[] = "ocupada";
+
+        rc = task_mq_send(data->queue_id, occupied_payload, sizeof(occupied_payload));
+        if (rc != 0) {
+            mq_demo_cleanup(data);
+            terminal_print_line("[error] mq demo: fallo al llenar la cola");
+            task_exit(1);
+            return;
+        }
+
+        data->phase = 3;
+        data->send_deadline_tick = timer_get_ticks() + milliseconds_to_ticks(80U);
+    }
+
+    if (data->phase == 3) {
+        static const char blocked_payload[] = "bloqueada";
+
+        rc = task_mq_send(data->queue_id, blocked_payload, sizeof(blocked_payload));
+        if (rc == 0) {
+            mq_demo_cleanup(data);
+            terminal_print_line("[error] mq demo: el timeout de send no se activo");
+            task_exit(1);
+            return;
+        }
+
+        if (rc != MQ_E_FULL) {
+            mq_demo_cleanup(data);
+            terminal_print_line("[error] mq demo: fallo inesperado en send");
+            task_exit(1);
+            return;
+        }
+
+        now = timer_get_ticks();
+        if ((int)(now - data->send_deadline_tick) >= 0) {
+            terminal_print_line("mq send timeout ok");
+            data->phase = 4;
+        } else {
+            event_id = task_mq_write_event_id(data->queue_id);
+            if (event_id < 0) {
+                mq_demo_cleanup(data);
+                terminal_print_line("[error] mq demo: cola invalida en send");
+                task_exit(1);
+                return;
+            }
+
+            remaining_ticks = data->send_deadline_tick - now;
+            task_wait_event_timeout(event_id, remaining_ticks);
+            return;
+        }
+    }
+
+    if (data->phase == 4) {
+        mq_demo_cleanup(data);
+        terminal_print_line("mq demo ok");
+        task_exit(0);
+        return;
+    }
+}
+
 static int cmd_help(int argc, const char* argv[], int background) {
     (void)argc;
     (void)argv;
@@ -2427,7 +2771,6 @@ static int cmd_shmdemo(int argc, const char* argv[], int background) {
 static int cmd_mq(int argc, const char* argv[], int background) {
     mqueue_info_t infos[MQ_MAX_QUEUES];
     int count;
-    (void)background;
 
     if (argc < 2 || str_equals(argv[1], "list")) {
         count = task_mq_list(infos, MQ_MAX_QUEUES);
@@ -2500,6 +2843,47 @@ static int cmd_mq(int argc, const char* argv[], int background) {
         return 1;
     }
 
+    if (str_equals(argv[1], "sendwait")) {
+        mq_send_wait_task_data_t data;
+        int timeout_ms;
+        int queue_id;
+        int id;
+
+        if (argc < 5) {
+            terminal_print_line("uso: mq sendwait <id> <timeout_ms> <texto>");
+            return 1;
+        }
+
+        queue_id = (int)parse_positive_or_default(argv[2], 0U);
+        timeout_ms = parser_parse_integer(argv[3], 0);
+        if (timeout_ms < 0) {
+            timeout_ms = 0;
+        }
+
+        shell_join_args_to_buffer(argc, argv, 4, data.payload, sizeof(data.payload));
+        data.queue_id = queue_id;
+        data.timeout_ticks = timeout_ms <= 0 ? 0U : milliseconds_to_ticks((unsigned int)timeout_ms);
+        data.deadline_tick = 0U;
+        data.payload_size = str_length(data.payload) + 1U;
+        data.wait_started = 0;
+
+        id = task_spawn("mqsend", mq_send_wait_task_step, &data, sizeof(data), background ? 0 : 1);
+        if (id < 0) {
+            terminal_print_line("No se pudo crear la tarea mqsend");
+            return 1;
+        }
+
+        if (background) {
+            shell_print_job_started(id, "mqsend");
+            return 1;
+        }
+
+        terminal_print("mq sendwait por ");
+        terminal_print_uint((unsigned int)timeout_ms);
+        terminal_print_line(" ms");
+        return 0;
+    }
+
     if (str_equals(argv[1], "recv")) {
         int queue_id;
         char payload[MQ_MAX_MESSAGE_SIZE];
@@ -2528,6 +2912,45 @@ static int cmd_mq(int argc, const char* argv[], int background) {
         return 1;
     }
 
+    if (str_equals(argv[1], "recvwait")) {
+        mq_recv_wait_task_data_t data;
+        int timeout_ms;
+        int queue_id;
+        int id;
+
+        if (argc < 4) {
+            terminal_print_line("uso: mq recvwait <id> <timeout_ms>");
+            return 1;
+        }
+
+        queue_id = (int)parse_positive_or_default(argv[2], 0U);
+        timeout_ms = parser_parse_integer(argv[3], 0);
+        if (timeout_ms < 0) {
+            timeout_ms = 0;
+        }
+
+        data.queue_id = queue_id;
+        data.timeout_ticks = timeout_ms <= 0 ? 0U : milliseconds_to_ticks((unsigned int)timeout_ms);
+        data.deadline_tick = 0U;
+        data.wait_started = 0;
+
+        id = task_spawn("mqrecv", mq_recv_wait_task_step, &data, sizeof(data), background ? 0 : 1);
+        if (id < 0) {
+            terminal_print_line("No se pudo crear la tarea mqrecv");
+            return 1;
+        }
+
+        if (background) {
+            shell_print_job_started(id, "mqrecv");
+            return 1;
+        }
+
+        terminal_print("mq recvwait por ");
+        terminal_print_uint((unsigned int)timeout_ms);
+        terminal_print_line(" ms");
+        return 0;
+    }
+
     if (str_equals(argv[1], "unlink")) {
         int queue_id;
 
@@ -2547,38 +2970,41 @@ static int cmd_mq(int argc, const char* argv[], int background) {
     }
 
     if (str_equals(argv[1], "demo")) {
-        static const char* messages[] = {
-            "uno",
-            "dos",
-            "tres"
-        };
-        char buffer[MQ_MAX_MESSAGE_SIZE];
-        unsigned int received_size = 0;
+        unsigned int send_deadline_tick;
         int queue_id;
+        static const char occupied_payload[] = "ocupada";
+        static const char blocked_payload[] = "bloqueada";
 
-        queue_id = task_mq_create(4U, 32U);
+        queue_id = task_mq_create(1U, 32U);
         if (queue_id < 0) {
             terminal_print_line("[error] no se pudo crear la cola MQ para la demo");
             return 1;
         }
 
-        for (unsigned int i = 0; i < (sizeof(messages) / sizeof(messages[0])); i++) {
-            if (task_mq_send(queue_id, messages[i], str_length(messages[i]) + 1U) != 0) {
-                task_mq_unlink(queue_id);
-                terminal_print_line("[error] mq demo: fallo al enviar");
-                return 1;
-            }
+        if (task_mq_send(queue_id, occupied_payload, sizeof(occupied_payload)) != 0) {
+            task_mq_unlink(queue_id);
+            terminal_print_line("[error] mq demo: fallo al llenar la cola");
+            return 1;
         }
 
-        for (unsigned int i = 0; i < (sizeof(messages) / sizeof(messages[0])); i++) {
-            if (task_mq_receive(queue_id, buffer, sizeof(buffer), &received_size) != 0) {
-                task_mq_unlink(queue_id);
-                terminal_print_line("[error] mq demo: fallo al recibir");
-                return 1;
+        send_deadline_tick = timer_get_ticks() + milliseconds_to_ticks(80U);
+        for (;;) {
+            int rc = task_mq_send(queue_id, blocked_payload, sizeof(blocked_payload));
+            if (rc == MQ_E_FULL) {
+                if ((int)(timer_get_ticks() - send_deadline_tick) >= 0) {
+                    terminal_print_line("mq send timeout ok");
+                    break;
+                }
+                continue;
             }
-            buffer[(received_size < sizeof(buffer)) ? received_size : (sizeof(buffer) - 1U)] = '\0';
-            terminal_print("mqrecv: ");
-            terminal_print_line(buffer);
+
+            task_mq_unlink(queue_id);
+            if (rc == 0) {
+                terminal_print_line("[error] mq demo: el timeout de send no se activo");
+            } else {
+                terminal_print_line("[error] mq demo: fallo inesperado en send");
+            }
+            return 1;
         }
 
         task_mq_unlink(queue_id);
@@ -2586,7 +3012,7 @@ static int cmd_mq(int argc, const char* argv[], int background) {
         return 1;
     }
 
-    terminal_print_line("uso: mq [list|create <depth> <msg_size>|send <id> <texto>|recv <id>|unlink <id>|demo]");
+    terminal_print_line("uso: mq [list|create <depth> <msg_size>|send <id> <texto>|recv <id>|sendwait <id> <timeout_ms> <texto>|recvwait <id> <timeout_ms>|unlink <id>|demo]");
     return 1;
 }
 

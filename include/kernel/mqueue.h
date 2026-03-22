@@ -9,6 +9,7 @@
 
 #define MQ_E_FULL  (-2)
 #define MQ_E_EMPTY (-3)
+#define MQ_E_TIMEOUT (-4)
 
 typedef struct {
     int used;
@@ -24,5 +25,7 @@ int mqueue_send(int queue_id, const void* message, unsigned int size);
 int mqueue_receive(int queue_id, void* buffer, unsigned int buffer_size, unsigned int* received_size_out);
 int mqueue_unlink(int queue_id);
 int mqueue_list(mqueue_info_t* out, int max_queues);
+int mqueue_read_event_id(int queue_id);
+int mqueue_write_event_id(int queue_id);
 
 #endif

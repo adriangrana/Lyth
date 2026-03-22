@@ -69,6 +69,7 @@ unsigned int task_schedule_on_timer(unsigned int current_esp);
 unsigned int task_schedule_on_syscall(unsigned int current_esp);
 void task_sleep(unsigned int ticks);
 void task_wait_event(int event_id);
+void task_wait_event_timeout(int event_id, unsigned int timeout_ticks);
 int task_signal_event(int event_id);
 void task_yield(void);
 void task_exit(int exit_code);
@@ -178,5 +179,7 @@ int task_mq_send(int queue_id, const void* message, unsigned int size);
 int task_mq_receive(int queue_id, void* buffer, unsigned int buffer_size, unsigned int* received_size_out);
 int task_mq_unlink(int queue_id);
 int task_mq_list(mqueue_info_t* out, int max_queues);
+int task_mq_read_event_id(int queue_id);
+int task_mq_write_event_id(int queue_id);
 
 #endif

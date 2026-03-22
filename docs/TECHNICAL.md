@@ -206,7 +206,7 @@ En builds con `AUTOTEST=1`, la ramfs inicial incluye `/etc/bootrc.sh` con una se
 
 La shell expone `shm` para administración básica de segmentos (`list`, `create`, `unlink`) y `shmdemo` para una prueba end-to-end. `shmdemo` crea un segmento, arranca un writer userland que escribe un byte en la ventana SHM y luego un reader userland que valida el mismo valor desde otro mapeo. El harness AUTOTEST comprueba el mensaje `shmread verificado correctamente` en la salida serie.
 
-La shell expone `mq` para colas de mensajes globales. La implementación actual usa hasta 16 colas simultáneas, con un máximo de 32 mensajes por cola y 256 bytes por mensaje. `mq demo` crea una cola, envía tres mensajes acotados, los recibe de vuelta desde la misma cola y termina con `mq demo ok` cuando la entrega se completó.
+La shell expone `mq` para colas de mensajes globales. La implementación actual usa hasta 16 colas simultáneas, con un máximo de 32 mensajes por cola y 256 bytes por mensaje. La cola publica dos eventos internos por identificador, uno de legibilidad y otro de espacio disponible, de modo que tareas del kernel pueden bloquearse de forma real sobre `recv` o `send` y despertar cuando la condición cambia o cuando vence un timeout. `mq send` y `mq recv` siguen siendo no bloqueantes, mientras que `mq sendwait` y `mq recvwait` ejecutan tareas auxiliares con espera acotada. Para mantener AUTOTEST determinista, `mq demo` valida el camino de timeout sobre cola llena y termina con `mq demo ok`; el camino de bloqueo real queda expuesto por los subcomandos `sendwait` y `recvwait`.
 
 ---
 
