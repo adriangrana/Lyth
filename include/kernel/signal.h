@@ -7,6 +7,7 @@ enum {
     LYTH_SIGKILL = 9,
     LYTH_SIGUSR1 = 10,
     LYTH_SIGUSR2 = 12,
+    LYTH_SIGALRM = 14,
     LYTH_SIGTERM = 15,
     LYTH_SIGCHLD = 17,
     LYTH_SIGNAL_MAX = 31

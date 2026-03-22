@@ -94,6 +94,7 @@ static int cmd_pidof(int argc, const char* argv[], int background);
 static int cmd_fg(int argc, const char* argv[], int background);
 static int cmd_bg(int argc, const char* argv[], int background);
 static int cmd_time(int argc, const char* argv[], int background);
+static int cmd_alarm(int argc, const char* argv[], int background);
 static int cmd_task(int argc, const char* argv[], int background);
 static int cmd_mem(int argc, const char* argv[], int background);
 static int cmd_wait(int argc, const char* argv[], int background);
@@ -259,6 +260,7 @@ static command_t commands[] = {
     {"du",      cmd_du,      "uso de disco por directorio: du [ruta]"},
     {"df",      cmd_df,      "espacio libre por filesystem: df"},
     {"sync",    cmd_sync,    "fuerza escritura pendiente a disco: sync"},
+    {"alarm",   cmd_alarm,   "arma/cancela SIGALRM: alarm [segundos]"},
 };
 
 static const int command_count = sizeof(commands) / sizeof(commands[0]);
@@ -4832,6 +4834,37 @@ static int cmd_sync(int argc, const char* argv[], int background) {
             blkdev_cache_invalidate_device(i);
     }
     terminal_print_line("sync: cache de bloques vaciada");
+    return 1;
+}
+
+static int cmd_alarm(int argc, const char* argv[], int background) {
+    unsigned int previous;
+    unsigned int seconds = 0;
+
+    (void)background;
+
+    if (argc >= 2) {
+        seconds = parse_positive_or_default(argv[1], 0);
+    }
+
+    previous = syscall_alarm(seconds);
+
+    if (argc < 2 || seconds == 0) {
+        terminal_print("alarm restante: ");
+        terminal_print_uint(previous);
+        terminal_print_line(" s");
+        return 1;
+    }
+
+    terminal_print("alarm armada: ");
+    terminal_print_uint(seconds);
+    terminal_print(" s");
+    if (previous != 0) {
+        terminal_print(" (anterior restante: ");
+        terminal_print_uint(previous);
+        terminal_print(" s)");
+    }
+    terminal_print_line("");
     return 1;
 }
 

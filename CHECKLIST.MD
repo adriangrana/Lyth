@@ -18,7 +18,7 @@
 - [x] IDT / PIC
 - [ ] APIC / IOAPIC
 - [ ] HPET
-- [ ] Timers por proceso
+- [x] Timers por proceso
 - [x] RTC / reloj del sistema
 - [x] sleep por syscall
 - [x] Fuente de tiempo monotónica
@@ -184,7 +184,7 @@
 - [x] Tema visual
 - [x] Config persistente
 - [x] Persistencia por usuario
-- [x] Utilidades básicas del sistema (cp, mv, grep, ulimit, nice, id, whoami, groups, chown, gfxdemo, elfinfo...)
+- [x] Utilidades básicas del sistema (cp, mv, grep, ulimit, nice, renice, id, whoami, groups, chown, gfxdemo, elfinfo, alarm, pidof, killall, fg, bg, time...)
 - [x] Ayuda integrada (help)
 - [x] who / users (sesiones activas)
 - [x] rmdir, find, which, head, tail, more/less, wc, cmp/diff, file, du, df, sync

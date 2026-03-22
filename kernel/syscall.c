@@ -772,6 +772,39 @@ unsigned int syscall_callback(unsigned int number,
             return 0;
         }
 
+        case SYSCALL_ALARM:
+            /* arg0 = seconds; returns remaining seconds of previous alarm */
+            return (unsigned int)task_alarm(arg0);
+
+        case SYSCALL_SETITIMER: {
+            /* arg0 = value_us, arg1 = interval_us, arg2 = old syscall_itimerval_t* (may be 0) */
+            syscall_itimerval_t* old = (syscall_itimerval_t*)(uintptr_t)arg2;
+            unsigned int old_val = 0, old_itv = 0;
+            int ret;
+            if (old != 0 && !syscall_validate_user_buffer(old, sizeof(syscall_itimerval_t))) {
+                task_set_errno(14); /* EFAULT */
+                return (unsigned int)-1;
+            }
+            ret = task_setitimer(arg0, arg1, &old_val, &old_itv);
+            if (ret != 0) { task_set_errno(22); return (unsigned int)-1; }
+            if (old) { old->value_us = old_val; old->interval_us = old_itv; }
+            return 0;
+        }
+
+        case SYSCALL_GETITIMER: {
+            /* arg0 = syscall_itimerval_t* */
+            syscall_itimerval_t* out = (syscall_itimerval_t*)(uintptr_t)arg0;
+            unsigned int val = 0, itv = 0;
+            if (!out || !syscall_validate_user_buffer(out, sizeof(syscall_itimerval_t))) {
+                task_set_errno(14); /* EFAULT */
+                return (unsigned int)-1;
+            }
+            task_getitimer(&val, &itv);
+            out->value_us    = val;
+            out->interval_us = itv;
+            return 0;
+        }
+
         case SYSCALL_KILL: {
             int ok = task_send_signal((int)arg0, LYTH_SIGTERM);
             if (!ok) task_set_errno(3); /* ESRCH */
@@ -1446,4 +1479,23 @@ int syscall_setgroups(int count, const unsigned int* gids) {
                                (unsigned int)(uintptr_t)gids,
                                0,
                                0);
+}
+
+unsigned int syscall_alarm(unsigned int seconds) {
+    return syscall_invoke(SYSCALL_ALARM, seconds, 0, 0, 0);
+}
+
+int syscall_setitimer(unsigned int value_us, unsigned int interval_us,
+                      syscall_itimerval_t* old_out) {
+    return (int)syscall_invoke(SYSCALL_SETITIMER,
+                               value_us,
+                               interval_us,
+                               (unsigned int)(uintptr_t)old_out,
+                               0);
+}
+
+int syscall_getitimer(syscall_itimerval_t* out) {
+    return (int)syscall_invoke(SYSCALL_GETITIMER,
+                               (unsigned int)(uintptr_t)out,
+                               0, 0, 0);
 }

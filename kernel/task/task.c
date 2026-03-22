@@ -86,6 +86,9 @@ typedef struct {
     unsigned int egid;                   /* effective group id */
     unsigned int supp_groups[TASK_MAX_SUPP_GROUPS]; /* supplementary groups */
     int supp_group_count;
+    /* alarm()/setitimer() state */
+    unsigned int alarm_tick;             /* tick at which SIGALRM fires (0 = not armed) */
+    unsigned int itimer_interval_ticks; /* ITIMER_REAL reload interval (0 = one-shot) */
 } task_entry_t;
 
 /* ── Per-priority ready queues ────────────────────────────────────────────
@@ -433,6 +436,8 @@ static void clear_task(task_entry_t* task) {
     for (int i = 0; i <= LYTH_SIGNAL_MAX; i++) {
         task->signal_handlers[i] = LYTH_SIG_DFL;
     }
+    task->alarm_tick = 0;
+    task->itimer_interval_ticks = 0;
 }
 
 /*
@@ -1140,8 +1145,29 @@ void task_on_tick(void) {
     unsigned int now = timer_get_ticks();
 
     for (int i = 0; i < TASK_MAX_COUNT; i++) {
-        if (tasks[i].used && tasks[i].state == TASK_STATE_SLEEPING) {
+        if (!tasks[i].used) continue;
+
+        if (tasks[i].state == TASK_STATE_SLEEPING) {
             if ((int)(now - tasks[i].wake_tick) >= 0) {
+                tasks[i].state = TASK_STATE_READY;
+                sched_enqueue_ready(i);
+            }
+        }
+
+        /* ITIMER_REAL / alarm(): fire SIGALRM when deadline reached */
+        if (tasks[i].alarm_tick != 0 && (int)(now - tasks[i].alarm_tick) >= 0) {
+            if (tasks[i].itimer_interval_ticks != 0) {
+                /* Periodic: reload */
+                tasks[i].alarm_tick = now + tasks[i].itimer_interval_ticks;
+            } else {
+                /* One-shot: disarm */
+                tasks[i].alarm_tick = 0;
+            }
+            /* Deliver SIGALRM regardless of user handler (wakes sleeping tasks too) */
+            tasks[i].pending_signals |= (1U << LYTH_SIGALRM);
+            if (tasks[i].state == TASK_STATE_SLEEPING ||
+                tasks[i].state == TASK_STATE_BLOCKED) {
+                tasks[i].blocked_event_id = -1;
                 tasks[i].state = TASK_STATE_READY;
                 sched_enqueue_ready(i);
             }
@@ -1426,6 +1452,126 @@ void task_set_foreground_complete_handler(void (*handler)(int id, const char* na
     foreground_complete_handler = handler;
 }
 
+/*
+ * task_alarm: arm a one-shot SIGALRM for the current task after `seconds`.
+ * seconds==0 cancels any pending alarm.
+ * Returns the number of seconds remaining in the previous alarm (POSIX).
+ */
+unsigned int task_alarm(unsigned int seconds) {
+    unsigned int flags;
+    unsigned int freq;
+    unsigned int now;
+    unsigned int remaining = 0;
+
+    if (current_task_index < 0) return 0;
+
+    flags = interrupt_save();
+    freq  = timer_get_frequency();
+    now   = timer_get_ticks();
+
+    if (tasks[current_task_index].alarm_tick != 0) {
+        unsigned int left_ticks = tasks[current_task_index].alarm_tick - now;
+        remaining = (freq > 0) ? (left_ticks + freq - 1U) / freq : 0;
+    }
+
+    if (seconds == 0) {
+        tasks[current_task_index].alarm_tick = 0;
+        tasks[current_task_index].itimer_interval_ticks = 0;
+    } else {
+        tasks[current_task_index].alarm_tick = now + seconds * freq;
+        tasks[current_task_index].itimer_interval_ticks = 0; /* one-shot */
+    }
+
+    interrupt_restore(flags);
+    return remaining;
+}
+
+/*
+ * task_setitimer: arm/disarm ITIMER_REAL for the current task.
+ * interval_us and value_us are in microseconds.
+ * old_value_us / old_interval_us (if non-NULL) receive previous state.
+ * Returns 0 on success, -1 on error.
+ */
+int task_setitimer(unsigned int value_us, unsigned int interval_us,
+                   unsigned int* old_value_us_out, unsigned int* old_interval_us_out) {
+    unsigned int flags;
+    unsigned int freq;
+    unsigned int now;
+    unsigned int us_per_tick;
+
+    if (current_task_index < 0) return -1;
+
+    flags = interrupt_save();
+    freq  = timer_get_frequency();
+    now   = timer_get_ticks();
+    us_per_tick = (freq > 0) ? (1000000U / freq) : 0U;
+
+    if (old_value_us_out) {
+        if (tasks[current_task_index].alarm_tick != 0 && freq > 0) {
+            unsigned int left = tasks[current_task_index].alarm_tick - now;
+            *old_value_us_out = (left * 1000000U) / freq;
+        } else {
+            *old_value_us_out = 0;
+        }
+    }
+    if (old_interval_us_out) {
+        unsigned int itv = tasks[current_task_index].itimer_interval_ticks;
+        *old_interval_us_out = (freq > 0) ? (itv * 1000000U) / freq : 0;
+    }
+
+    if (value_us == 0) {
+        tasks[current_task_index].alarm_tick = 0;
+        tasks[current_task_index].itimer_interval_ticks = 0;
+    } else {
+        unsigned int value_ticks;
+        unsigned int interval_ticks;
+        if (us_per_tick == 0U) {
+            interrupt_restore(flags);
+            return -1;
+        }
+        value_ticks = (value_us + us_per_tick - 1U) / us_per_tick;
+        interval_ticks = interval_us / us_per_tick;
+        if (value_ticks == 0) value_ticks = 1;
+        tasks[current_task_index].alarm_tick = now + value_ticks;
+        tasks[current_task_index].itimer_interval_ticks = interval_ticks;
+    }
+
+    interrupt_restore(flags);
+    return 0;
+}
+
+void task_getitimer(unsigned int* value_us_out, unsigned int* interval_us_out) {
+    unsigned int flags;
+    unsigned int freq;
+    unsigned int now;
+
+    if (!value_us_out && !interval_us_out) return;
+    if (current_task_index < 0) {
+        if (value_us_out)    *value_us_out    = 0;
+        if (interval_us_out) *interval_us_out = 0;
+        return;
+    }
+
+    flags = interrupt_save();
+    freq  = timer_get_frequency();
+    now   = timer_get_ticks();
+
+    if (value_us_out) {
+        if (tasks[current_task_index].alarm_tick != 0 && freq > 0) {
+            unsigned int left = tasks[current_task_index].alarm_tick - now;
+            *value_us_out = (left * 1000000U) / freq;
+        } else {
+            *value_us_out = 0;
+        }
+    }
+    if (interval_us_out) {
+        unsigned int itv = tasks[current_task_index].itimer_interval_ticks;
+        *interval_us_out = (freq > 0) ? (itv * 1000000U) / freq : 0;
+    }
+
+    interrupt_restore(flags);
+}
+
 int task_set_foreground(int id) {
     unsigned int flags;
     task_entry_t* old_task;
@@ -1646,6 +1792,8 @@ int task_exec_current_user_from_frame(unsigned int frame_esp,
     task->user_initial_esp = initial_user_esp;
     task->k_errno = 0;
     task->pending_signals = 0;
+    task->alarm_tick = 0;           /* POSIX: pending alarm cancelled on exec */
+    task->itimer_interval_ticks = 0;
 
     /* POSIX-like: caught handlers reset to default on exec; SIG_IGN preserved. */
     for (int signum = 1; signum <= LYTH_SIGNAL_MAX; signum++) {
@@ -1971,6 +2119,9 @@ int task_fork_from_frame(unsigned int frame_esp) {
     for (int gi = 0; gi < TASK_MAX_SUPP_GROUPS; gi++) {
         tasks[slot].supp_groups[gi] = parent->supp_groups[gi];
     }
+    /* POSIX: alarm not inherited across fork — child starts with no pending alarm */
+    tasks[slot].alarm_tick = 0;
+    tasks[slot].itimer_interval_ticks = 0;
     task_signal_handlers_copy(&tasks[slot], parent);
     vfs_task_fd_inherit(tasks[slot].fd_table, parent->fd_table);  /* inherit open FDs */
     task_install_signal_trampoline(&tasks[slot]);

@@ -118,6 +118,13 @@ int task_fork_from_frame(unsigned int frame_esp);
 void task_set_init_pid(int pid);
 /* Non-blocking: reap all zombie children of parent_id. Returns count reaped. */
 int  task_reap_zombies_for(int parent_id);
+/* arm a one-shot SIGALRM after `seconds`; 0 = cancel. Returns remaining secs. */
+unsigned int task_alarm(unsigned int seconds);
+/* arm/update ITIMER_REAL in microseconds; 0 value_us = disarm. Returns 0/-1. */
+int  task_setitimer(unsigned int value_us, unsigned int interval_us,
+                    unsigned int* old_value_us_out, unsigned int* old_interval_us_out);
+/* read current ITIMER_REAL state without modifying it */
+void task_getitimer(unsigned int* value_us_out, unsigned int* interval_us_out);
 /* Returns a pointer to the current task's fd table, or NULL if no task runs. */
 vfs_fd_entry_t* task_current_fd_table(void);
 /* Returns a pointer to the fd table of the task with the given ID, or NULL. */

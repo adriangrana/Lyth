@@ -56,7 +56,10 @@ enum {
     SYSCALL_VFS_CHOWN    = 47,
     SYSCALL_VFS_GETOWNER = 48,
     SYSCALL_GETGROUPS    = 49,
-    SYSCALL_SETGROUPS    = 50
+    SYSCALL_SETGROUPS    = 50,
+    SYSCALL_ALARM        = 51,  /* alarm(seconds)                       -> remaining_secs */
+    SYSCALL_SETITIMER    = 52,  /* setitimer(value_us, interval_us)     -> 0/-1 */
+    SYSCALL_GETITIMER    = 53   /* getitimer(*value_us_out,*interval_us_out) -> 0/-1 */
 };
 
 #define SYSCALL_POLLIN   0x0001U
@@ -166,5 +169,16 @@ int syscall_vfs_chown(const char* path, unsigned int uid, unsigned int gid);
 int syscall_vfs_getowner(const char* path, unsigned int* uid_out, unsigned int* gid_out);
 int syscall_getgroups(int max_groups, unsigned int* gids_out);
 int syscall_setgroups(int count, const unsigned int* gids);
+
+/* Timers per-process (ITIMER_REAL / alarm) */
+typedef struct {
+    unsigned int value_us;    /* time until next SIGALRM (0 = disarmed) */
+    unsigned int interval_us; /* periodic reload (0 = one-shot) */
+} syscall_itimerval_t;
+
+unsigned int syscall_alarm(unsigned int seconds);
+int syscall_setitimer(unsigned int value_us, unsigned int interval_us,
+                      syscall_itimerval_t* old_out);
+int syscall_getitimer(syscall_itimerval_t* out);
 
 #endif
