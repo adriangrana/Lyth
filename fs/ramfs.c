@@ -254,8 +254,19 @@ static vfs_node_t* ramfs_vdir_create(vfs_node_t* node, const char* name,
 static int ramfs_vdir_unlink(vfs_node_t* node, const char* name) {
     const char* prefix = (const char*)node->impl;
     char        key[VFS_PATH_MAX];
+    int         i;
 
     build_key(prefix, name, key, sizeof(key));
+
+    /* First try a nested virtual directory */
+    for (i = 0; i < RAMFS_MAX_DIRS; i++) {
+        if (ramfs_vdirs[i].used && str_equals(ramfs_vdirs[i].name, key)) {
+            ramfs_vdirs[i].used = 0;
+            return 0;
+        }
+    }
+
+    /* Fall back to flat file store */
     return fs_delete(key);
 }
 

@@ -4196,7 +4196,14 @@ static int cmd_tail(int argc, const char* argv[], int background) {
         unsigned int i; n = 0;
         for (i = 0; argv[2][i] >= '0' && argv[2][i] <= '9'; i++)
             n = n * 10 + (argv[2][i] - '0');
+        if (n == 0 && argv[2][0] != '0') { terminal_print_line("Uso: tail [-n N] <ruta>"); return 1; }
         arg_idx = 3;
+    } else if (argc >= 2 && argv[1][0] == '-' && argv[1][1] >= '1' && argv[1][1] <= '9') {
+        /* tail -3 file */
+        unsigned int i; n = 0;
+        for (i = 1; argv[1][i] >= '0' && argv[1][i] <= '9'; i++)
+            n = n * 10 + (argv[1][i] - '0');
+        arg_idx = 2;
     }
     if (arg_idx >= argc) { terminal_print_line("Uso: tail [-n N] <ruta>"); return 1; }
     shell_resolve_path(argv[arg_idx], path, sizeof(path));
