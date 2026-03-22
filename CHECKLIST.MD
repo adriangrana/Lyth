@@ -64,6 +64,13 @@
 - [x] wait (espera a task por id)
 - [x] getpid / sleep / kill
 - [x] errno por proceso (get_errno syscall)
+- [x] getuid / geteuid / getgid / getegid
+- [x] setuid / setgid
+- [x] getgroups / setgroups
+- [x] sigpending / sigprocmask
+- [x] pipe (syscall POSIX)
+- [x] lseek (seek por file descriptor)
+- [x] execve (con argv y envp)
 
 ## 9. Sistema de archivos
 - [x] FS en memoria
@@ -92,6 +99,8 @@
 - [x] Soporte de particiones MBR
 - [x] Soporte de particiones GPT
 - [x] Verificación básica de integridad del filesystem
+- [x] /dev/null, /dev/zero, /dev/tty, /dev/console
+- [x] vfs_chown (cambio de propietario por VFS)
 
 ## 10. Procesos
 - [x] Modo usuario
@@ -144,6 +153,13 @@
 - [x] Usuarios y grupos
 - [x] UID / GID por proceso
 - [x] Validación de acceso en syscalls
+- [x] euid / egid (identidad efectiva)
+- [x] setuid / setgid por proceso
+- [x] Contraseñas por usuario (passwd)
+- [x] Membresía de grupos (gpasswd)
+- [x] Administración de usuarios (useradd, userdel, usermod)
+- [x] Administración de grupos (groupadd, groupdel)
+- [x] login / logout explícito con autenticación
 
 ## 14. Debug
 - [x] Logs
@@ -167,8 +183,9 @@
 - [x] Tema visual
 - [x] Config persistente
 - [x] Persistencia por usuario
-- [ ] Utilidades básicas del sistema
-- [ ] Ayuda / man básico
+- [x] Utilidades básicas del sistema (cp, mv, grep, ulimit, nice, id, whoami, groups, chown, gfxdemo, elfinfo...)
+- [x] Ayuda integrada (help)
+- [x] who / users (sesiones activas)
 
 ## 17. Build & mantenimiento
 - [x] Makefile
