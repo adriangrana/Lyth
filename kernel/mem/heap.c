@@ -1,6 +1,6 @@
 #include "heap.h"
 
-#define HEAP_SIZE (64 * 1024)
+#define HEAP_SIZE (256 * 1024)
 #define HEAP_ALIGNMENT 8
 
 typedef struct heap_block {

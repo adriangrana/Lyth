@@ -12,7 +12,7 @@
 
 #define TASK_MAX_COUNT 16
 #define TASK_NAME_MAX 24
-#define TASK_STACK_SIZE 4096
+#define TASK_STACK_SIZE 16384
 #define TASK_USER_STACK_SIZE 4096
 
 typedef struct {
