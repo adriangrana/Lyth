@@ -149,7 +149,14 @@ Tabla interna de hasta 256 entradas (ruta → modo 9 bits). Modos por defecto: `
 
 ### Backends
 
-**ramfs** (`fs/ramfs.c` + `fs/fs.c`): almacenamiento clave-valor en memoria. Soporta `mkdir`, `touch`, `write` (truncado y append), `read`, `readdir`, `delete`, `rename`. Montado en `/` por defecto.
+**ramfs** (`fs/ramfs.c` + `fs/fs.c`): almacenamiento clave-valor en memoria. Soporta `mkdir`, `touch`, `write` (truncado y append), `read`, `readdir`, `delete`, `rename`. Montado en `/` por defecto. Archivos iniciales embebidos en el kernel:
+
+| Ruta | Contenido |
+|---|---|
+| `/etc/motd` | Mensaje de bienvenida (leído por la shell al arrancar) |
+| `/etc/os-release` | Identificación del OS en formato `KEY=Value` estándar |
+| `/home/user/demo.sh` | Script de ejemplo para la shell |
+| `/home/user/demo` | Binario ELF mínimo de demostración de usermode |
 
 **FAT16** (`fs/fat16.c`): lectura y escritura de archivos y directorios. Montaje automático sobre particiones detectadas como FAT16 en `blkdev`.
 

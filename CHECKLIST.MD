@@ -101,6 +101,7 @@
 - [x] Verificación básica de integridad del filesystem
 - [x] /dev/null, /dev/zero, /dev/tty, /dev/console
 - [x] vfs_chown (cambio de propietario por VFS)
+- [x] Estructura inicial Unix en ramfs (/etc/motd, /etc/os-release, /home/user/)
 
 ## 10. Procesos
 - [x] Modo usuario
