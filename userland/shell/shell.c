@@ -2743,8 +2743,8 @@ static int cmd_su(int argc, const char* argv[], int background) {
         return 1;
     }
 
-    /* Root can switch freely; others must provide the target user's password. */
-    if (task_current_euid() != 0U) {
+    /* Always require the target user's password when switching to a different account. */
+    if (user->uid != task_current_euid()) {
         if (!ugdb_check_password(user->uid, "")) {
             /* A password is set on the target account -- prompt for it */
             char su_pw[16];
@@ -2757,13 +2757,14 @@ static int cmd_su(int argc, const char* argv[], int background) {
         }
     }
 
-    /* Pre-create the home directory while we still have the current user's
-       privileges (typically root).  After task_force_identity the new UID
-       may lack write permission on /home, so this must happen first. */
+    /* Pre-create the home directory while we still have root privileges.
+       Also chown it to the new user so they can write files (e.g. .lythrc).
+       This MUST happen before task_force_identity; non-root cannot chown. */
     {
         char pre_home[VFS_PATH_MAX];
         shell_build_user_home_path(user->name, pre_home, sizeof(pre_home));
         shell_mkdir_p(pre_home); /* idempotent */
+        vfs_chown(pre_home, user->uid, user->gid);
     }
 
     task_force_identity(user->uid, user->gid);
@@ -4241,6 +4242,14 @@ static int cmd_login(int argc, const char* argv[], int background) {
             terminal_print_line("login: autenticación fallida"); return 1;
         }
     }
+    /* Prepare home dir as root before identity switch so the user can write to it */
+    {
+        char pre_home[VFS_PATH_MAX];
+        shell_build_user_home_path(u->name, pre_home, sizeof(pre_home));
+        shell_mkdir_p(pre_home);
+        vfs_chown(pre_home, u->uid, u->gid);
+    }
+
     task_force_identity(u->uid, u->gid);
     shell_apply_user_session(0);
     terminal_print("Sesión iniciada como '"); terminal_print(u->name);
