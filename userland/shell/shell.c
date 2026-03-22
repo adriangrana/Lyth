@@ -6796,7 +6796,13 @@ static int cmd_ping(int argc, const char* argv[], int background) {
         if (keyboard_poll_event(&ev) && ev.type == KEY_EVENT_CTRL_C) break;
 
         ping_got_reply = 0;
-        icmp_send_echo(iface, dst, 0x1234, (uint16_t)(i + 1), 0, 0);
+        int sent = icmp_send_echo(iface, dst, 0x1234, (uint16_t)(i + 1), 0, 0);
+        if (sent < 0) {
+            terminal_print("Error enviando seq=");
+            terminal_print_uint((uint32_t)(i + 1));
+            terminal_print_line("");
+            continue;
+        }
 
         uint32_t start = timer_get_ticks();
         while (!ping_got_reply && (timer_get_ticks() - start) < 200) {

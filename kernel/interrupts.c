@@ -285,7 +285,7 @@ void interrupts_init(void) {
         /* Route ISA IRQs through IOAPIC */
         ioapic_route_irq(0,  32, 0);   /* PIT timer */
         ioapic_route_irq(1,  33, 0);   /* keyboard */
-        ioapic_route_irq(11, 43, 0);   /* E1000 NIC */
+        ioapic_route_irq_level(11, 43, 0);   /* E1000 NIC — PCI level-triggered */
         ioapic_route_irq(12, 44, mouse_is_enabled() ? 0 : 1);   /* mouse */
         ioapic_route_irq(14, 46, 0);   /* ATA primary */
     } else {

@@ -44,7 +44,7 @@ typedef struct {
 	uint32_t gateway;
 	uint32_t dns_server;
 	uint32_t lease_time;
-	int      ok;
+	volatile int ok;
 } dhcp_result_t;
 
 int  dhcp_discover(netif_t* iface);

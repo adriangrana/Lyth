@@ -38,6 +38,7 @@ void apic_send_sipi(uint8_t dest_lapic_id, uint8_t vector);
 void apic_init_ap(void);
 
 void ioapic_route_irq(uint8_t irq, uint8_t vector, int masked);
+void ioapic_route_irq_level(uint8_t gsi, uint8_t vector, int masked);
 void ioapic_mask_irq(uint8_t irq);
 void ioapic_unmask_irq(uint8_t irq);
 

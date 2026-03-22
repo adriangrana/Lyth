@@ -11,8 +11,8 @@ static uint16_t dns_next_id;
 
 /* Pending query state (single outstanding) */
 static uint16_t pending_id;
-static uint32_t pending_result;
-static int      pending_done;
+static volatile uint32_t pending_result;
+static volatile int      pending_done;
 
 void dns_init(void) {
 	memset(cache, 0, sizeof(cache));

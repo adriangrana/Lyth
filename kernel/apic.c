@@ -214,6 +214,21 @@ void ioapic_route_irq(uint8_t irq, uint8_t vector, int masked) {
 	ioapic_write(reg_lo, lo);
 }
 
+void ioapic_route_irq_level(uint8_t gsi, uint8_t vector, int masked) {
+	if (!apic_enabled) return;
+	if ((int)gsi > ioapic_max_redir) return;
+
+	uint32_t reg_lo = IOAPIC_REG_REDIR + gsi * 2;
+	uint32_t lo = (uint32_t)vector;
+	lo |= (1U << 13);  /* active-low */
+	lo |= (1U << 15);  /* level-triggered */
+	if (masked) lo |= (1U << 16);
+
+	uint32_t hi = 0;  /* destination APIC ID 0 (BSP) */
+	ioapic_write(reg_lo + 1, hi);
+	ioapic_write(reg_lo, lo);
+}
+
 void ioapic_mask_irq(uint8_t irq) {
 	uint32_t gsi;
 	uint32_t reg_lo;
