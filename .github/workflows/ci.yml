@@ -21,3 +21,6 @@ jobs:
 
       - name: Smoke tests
         run: make test
+
+      - name: Reproducibility check
+        run: make repro-check

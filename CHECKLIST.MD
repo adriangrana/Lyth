@@ -194,10 +194,10 @@
 - [x] CI
 - [x] Tests
 - [x] Documentación
-- [ ] Builds reproducibles
+- [x] Builds reproducibles
 - [x] Versionado del kernel
 - [x] Imagen de prueba automatizada
-- [ ] Toolchain cruzada documentada
+- [x] Toolchain cruzada documentada
 
 ## 18. Componentes avanzados
 - [x] IPC (pipes avanzados)

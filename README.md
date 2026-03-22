@@ -86,6 +86,67 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 
 ---
 
+## Toolchain
+
+Hay dos formas soportadas de compilar:
+
+1. Toolchain host actual
+- Es la que usa la CI hoy.
+- Requiere `gcc` con soporte `-m32`, `binutils`, `grub-mkrescue`, `xorriso` y `qemu-system-i386`.
+- Flujo directo:
+
+```bash
+make run
+```
+
+2. Toolchain cruzada recomendada
+- Recomendable si quieres aislar el build de librerías y peculiaridades del host.
+- El Makefile acepta un prefijo cruzado vía `CROSS_PREFIX`.
+- Ejemplo con toolchain `i686-elf-`:
+
+```bash
+make compile CROSS_PREFIX=i686-elf-
+make create-iso CROSS_PREFIX=i686-elf-
+make run CROSS_PREFIX=i686-elf-
+```
+
+También puedes sobrescribir binarios concretos:
+
+```bash
+make compile CC=i686-elf-gcc AS=i686-elf-as LD=i686-elf-ld
+```
+
+Notas:
+- La CI sigue usando la toolchain host con `gcc -m32`.
+- `grub-mkrescue` y `grub-file` siguen siendo herramientas del host, aunque el compilador sea cruzado.
+
+---
+
+## Builds reproducibles
+
+El build exporta `SOURCE_DATE_EPOCH` por defecto usando la fecha del último commit disponible, con fallback fijo si no hay metadatos de git. Con eso:
+
+- `kernel.bin` evita variaciones de `build-id` del linker
+- la ISO usa timestamps estables al pasar por `grub-mkrescue`/`xorriso`
+- el árbol temporal `build/iso` se normaliza al mismo timestamp antes de empaquetar
+- las fechas de volumen ISO (creación/modificación/uuid) se fijan explícitamente
+- los mtimes Rock Ridge de toda la imagen se reescriben al mismo instante reproducible
+- las rutas del workspace no se filtran al binario vía `-ffile-prefix-map`
+
+Comprobación automática:
+
+```bash
+make repro-check
+```
+
+Si necesitas fijar explícitamente el timestamp reproducible:
+
+```bash
+make repro-check SOURCE_DATE_EPOCH=1700000000
+```
+
+---
+
 ## Compilar y ejecutar
 
 ```bash

@@ -1,7 +1,14 @@
-CC = gcc
-AS = as
-LD = ld
-PYTHON = python3
+CROSS_PREFIX ?=
+CC ?= $(CROSS_PREFIX)gcc
+AS ?= $(CROSS_PREFIX)as
+LD ?= $(CROSS_PREFIX)ld
+PYTHON ?= python3
+GRUB_MKRESCUE ?= grub-mkrescue
+GRUB_FILE ?= grub-file
+SOURCE_DATE_EPOCH ?= $(shell git log -1 --format=%ct 2>/dev/null || echo 1704067200)
+ISO_VOLUME_DATE = $(shell date -u -d "@$(SOURCE_DATE_EPOCH)" +%Y%m%d%H%M%S00)
+
+export SOURCE_DATE_EPOCH
 
 BUILD_DIR = build
 DIST_DIR = dist
@@ -17,7 +24,7 @@ QEMU_FLAGS = -boot d -cdrom $(ISO_IMAGE) -m 128 -no-reboot -no-shutdown -vga std
 DISK_IMG  ?= disk.img
 AUTOTEST_ISO_IMAGE = $(DIST_DIR)/lyth-autotest.iso
 
-.PHONY: help compile create-iso create-autotest-iso execute debug gdb-wait gdb-connect clean run disk-create disk-fat16 disk-fat32 harness-serial harness-image
+.PHONY: help compile create-iso create-autotest-iso execute debug gdb-wait gdb-connect clean run disk-create disk-fat16 disk-fat32 harness-serial harness-image repro-check
 
 BOOT_OBJ = $(BUILD_DIR)/boot.o
 GDT_ASM_OBJ = $(BUILD_DIR)/gdt_asm.o
@@ -66,6 +73,7 @@ BOOT_TESTS_OBJ = $(BUILD_DIR)/boot_tests.o
 RTC_OBJ        = $(BUILD_DIR)/rtc.o
 
 CFLAGS = -m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-frame-pointer -fno-optimize-sibling-calls \
+	-ffile-prefix-map=$(CURDIR)=. \
 	-DFB_MOUSE_CURSOR_ENABLED=$(FB_MOUSE_CURSOR) \
 	-DLYTH_AUTOTEST_ENABLED=$(AUTOTEST) \
 	-Iinclude \
@@ -81,7 +89,7 @@ CFLAGS = -m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-fr
 	-Iinclude/drivers/disk \
 	-Iinclude/drivers/rtc \
 	-Iinclude/kernel/tests
-LDFLAGS = -m elf_i386 -T arch/x86/linker.ld
+LDFLAGS = -m elf_i386 -T arch/x86/linker.ld --build-id=none
 
 FONT_PSF = assets/font.psf
 FONT_TOOL = tools/psf2h.py
@@ -102,6 +110,9 @@ $(DIST_DIR):
 help: ## muestra los targets publicos y una descripcion breve
 	@awk 'BEGIN {FS = ":.*## "; print "Targets disponibles:"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-12s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@printf "\nVariables utiles:\n"
+	@printf "  %-20s %s\n" "CROSS_PREFIX=..." "prefijo de toolchain cruzada, por ejemplo i686-elf-"
+	@printf "  %-20s %s\n" "CC/AS/LD=..." "sobrescribe binarios concretos del compilador/assembler/linker"
+	@printf "  %-20s %s\n" "SOURCE_DATE_EPOCH=..." "fija timestamps reproducibles del build/ISO"
 	@printf "  %-20s %s\n" "QEMU_DISPLAY=..." "sobrescribe el backend/opciones de video de QEMU"
 	@printf "  %-20s %s\n" "FB_MOUSE_CURSOR=0|1" "activa o desactiva el cursor software del guest"
 
@@ -158,7 +169,12 @@ create-iso: compile $(DIST_DIR) ## genera dist/lyth.iso lista para arrancar con 
 	mkdir -p $(ISO_DIR)/boot/grub
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.bin
 	cp $(GRUB_CFG) $(ISO_DIR)/boot/grub/grub.cfg
-	grub-mkrescue -o $(ISO_IMAGE) $(ISO_DIR)
+	find $(ISO_DIR) -exec touch -h -d "@$(SOURCE_DATE_EPOCH)" {} +
+	$(GRUB_MKRESCUE) -o $(ISO_IMAGE) $(ISO_DIR) -- \
+		-volume_date c $(ISO_VOLUME_DATE) \
+		-volume_date m $(ISO_VOLUME_DATE) \
+		-volume_date uuid $(ISO_VOLUME_DATE) \
+		-alter_date_r m $(ISO_VOLUME_DATE) /
 
 create-autotest-iso: AUTOTEST=1
 create-autotest-iso: compile $(DIST_DIR) ## genera dist/lyth-autotest.iso con autotest userland embebido
@@ -166,7 +182,12 @@ create-autotest-iso: compile $(DIST_DIR) ## genera dist/lyth-autotest.iso con au
 	mkdir -p $(ISO_DIR)/boot/grub
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.bin
 	cp $(GRUB_CFG) $(ISO_DIR)/boot/grub/grub.cfg
-	grub-mkrescue -o $(AUTOTEST_ISO_IMAGE) $(ISO_DIR)
+	find $(ISO_DIR) -exec touch -h -d "@$(SOURCE_DATE_EPOCH)" {} +
+	$(GRUB_MKRESCUE) -o $(AUTOTEST_ISO_IMAGE) $(ISO_DIR) -- \
+		-volume_date c $(ISO_VOLUME_DATE) \
+		-volume_date m $(ISO_VOLUME_DATE) \
+		-volume_date uuid $(ISO_VOLUME_DATE) \
+		-alter_date_r m $(ISO_VOLUME_DATE) /
 
 execute: create-iso ## arranca la ISO actual en QEMU con cursor del host oculto
 	$(QEMU) $(QEMU_FLAGS) $(shell [ -f "$(DISK_IMG)" ] && echo "-hda $(DISK_IMG)")
@@ -185,7 +206,7 @@ clean: ## borra build/, dist/ y la cabecera generada de la fuente PSF
 	rm -f $(FONT_HEADER)
 
 test: compile create-iso ## ejecuta comprobaciones basicas de compilacion e ISO
-	grub-file --is-x86-multiboot $(KERNEL_BIN)
+	$(GRUB_FILE) --is-x86-multiboot $(KERNEL_BIN)
 	test -s $(ISO_IMAGE)
 
 run: clean compile create-iso execute ## flujo completo: limpia, compila, crea ISO y ejecuta
@@ -229,3 +250,16 @@ harness-serial: ## ejecuta mini harness por serie y valida boot tests
 
 harness-image: ## ejecuta la imagen de autotest headless y valida boot + shell + stack tests
 	bash ./tools/harness_image.sh
+
+repro-check: ## recompila dos veces y comprueba que kernel.bin e ISO sean identicos
+	@set -eu; \
+	tmpdir=$$(mktemp -d); \
+	$(MAKE) clean >/dev/null; \
+	$(MAKE) create-iso >/dev/null; \
+	cp $(KERNEL_BIN) $$tmpdir/kernel.first; \
+	cp $(ISO_IMAGE) $$tmpdir/iso.first; \
+	$(MAKE) clean >/dev/null; \
+	$(MAKE) create-iso >/dev/null; \
+	cmp -s $$tmpdir/kernel.first $(KERNEL_BIN); \
+	cmp -s $$tmpdir/iso.first $(ISO_IMAGE); \
+	echo "Reproducible outputs OK (SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH))"

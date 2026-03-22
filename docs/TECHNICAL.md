@@ -313,8 +313,27 @@ Capa de abstracción sobre ATA. Al registrar una unidad:
 | `make disk-fat16` | Crea `disk.img` (32 MB) con partición FAT16 |
 | `make disk-fat32` | Crea `disk.img` con partición FAT32 y LFN |
 | `make harness-image` | Arranca la imagen de autotest headless y valida boot + shell + stack tests |
+| `make repro-check` | Recompila dos veces y comprueba que `build/kernel.bin` y `dist/lyth.iso` son idénticos |
 | `make clean` | Borra `build/` y `dist/` |
 | `make test` | Compila, genera ISO y valida multiboot con `grub-file` |
+
+### Toolchain host y cruzada
+- Flujo actualmente validado en CI: toolchain host con `gcc -m32`, `as`, `ld`, `grub-mkrescue` y `grub-file` del sistema.
+- Flujo recomendado para desarrollo aislado: toolchain cruzada ELF i386, por ejemplo `i686-elf-gcc`, `i686-elf-as`, `i686-elf-ld`.
+- El Makefile admite ambas rutas:
+    - host: `make run`
+    - cruzada por prefijo: `make run CROSS_PREFIX=i686-elf-`
+    - cruzada por binario explícito: `make compile CC=i686-elf-gcc AS=i686-elf-as LD=i686-elf-ld`
+- Las utilidades de GRUB y QEMU siguen siendo herramientas del host; no van detrás de `CROSS_PREFIX`.
+
+### Reproducibilidad
+- `SOURCE_DATE_EPOCH` se exporta desde el Makefile; por defecto toma la fecha del último commit y cae a un valor fijo si no hay metadata de git.
+- `ld` se invoca con `--build-id=none` para evitar variaciones no funcionales en `kernel.bin`.
+- `gcc` usa `-ffile-prefix-map=$(CURDIR)=.` para no incrustar rutas absolutas del workspace.
+- antes de generar la ISO, los mtimes de `build/iso` se fijan al mismo `SOURCE_DATE_EPOCH`.
+- `grub-mkrescue` recibe fechas de volumen ISO explícitas (`c`, `m`, `uuid`) derivadas del mismo instante reproducible.
+- `xorriso` reescribe recursivamente la fecha de modificación Rock Ridge de toda la imagen con `-alter_date_r m ... /`.
+- `make repro-check` recompila dos veces desde limpio y exige identidad byte a byte de `build/kernel.bin` y `dist/lyth.iso`.
 
 ### Flags de compilación relevantes
 - `-m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector`
