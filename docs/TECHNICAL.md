@@ -156,7 +156,7 @@ Tabla interna de hasta 256 entradas (ruta → modo 9 bits). Modos por defecto: `
 | Ruta | Contenido |
 |---|---|
 | `/etc/motd` | Mensaje de bienvenida (leído por la shell al arrancar) |
-| `/etc/os-release` | Identificación del OS en formato `KEY=Value` estándar |
+| `/etc/os-release` | Identificación del OS en formato `KEY=Value` estándar, incluida versión y flavor del build |
 | `/home/user/demo.sh` | Script de ejemplo para la shell |
 | `/home/user/demo` | Binario ELF mínimo de demostración de usermode |
 

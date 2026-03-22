@@ -195,7 +195,7 @@
 - [x] Tests
 - [x] Documentación
 - [ ] Builds reproducibles
-- [ ] Versionado del kernel
+- [x] Versionado del kernel
 - [x] Imagen de prueba automatizada
 - [ ] Toolchain cruzada documentada
 

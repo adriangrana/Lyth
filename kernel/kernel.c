@@ -26,6 +26,7 @@
 #include "rtc.h"
 #include "ktest.h"
 #include "boot_tests.h"
+#include "version.h"
 #include "ugdb.h"
 
 static void terminal_write_uint(uint32_t value) {
@@ -51,7 +52,7 @@ static void terminal_write_uint(uint32_t value) {
 }
 
 static void print_framebuffer_info(void) {
-    terminal_print("Lyth OS\n");
+    terminal_print(LYTH_KERNEL_PRETTY_NAME "\n");
 
     if (!fb_active()) {
         terminal_print("Framebuffer: no disponible\n\n");
@@ -109,7 +110,7 @@ void kernel_main(unsigned long mbi_ptr) {
     klog_write(KLOG_LEVEL_INFO, "boot", "GDT inicializada");
     terminal_init();
         serial_init();
-        serial_print("[boot] Lyth OS serial activo\n");
+        serial_print("[boot] " LYTH_KERNEL_PRETTY_NAME " serial activo\n");
     if (fb_init(mbi)) {
         terminal_clear();
         klog_write(KLOG_LEVEL_INFO, "video", "Framebuffer activado");

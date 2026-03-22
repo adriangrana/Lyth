@@ -22,6 +22,7 @@
 #include "fat32.h"
 #include "rtc.h"
 #include "rlimit.h"
+#include "version.h"
 #include "ugdb.h"
 
 #define SHELL_MAX_ARGS 8
@@ -1538,9 +1539,11 @@ static int cmd_about(int argc, const char* argv[], int background) {
     (void)argc;
     (void)argv;
     (void)background;
-    terminal_print_line("Lyth OS v0.4");
+    terminal_print_line(LYTH_KERNEL_PRETTY_NAME);
     terminal_print_line("Kernel hobby en C + ASM");
     terminal_print_line("PIT, scheduler, heap, syscalls y FS en memoria");
+    terminal_print("Build: ");
+    terminal_print_line(LYTH_KERNEL_BUILD_FLAVOR);
     return 1;
 }
 

@@ -1,5 +1,6 @@
 #include "fs.h"
 #include "string.h"
+#include "kernel/version.h"
 #include "kernel/mem/heap.h"
 
 #define FS_WRITE_MAX 32
@@ -15,13 +16,15 @@ typedef struct {
 static fs_writable_entry_t writable[FS_WRITE_MAX];
 
 static const unsigned char motd_text[] =
-    "Bienvenido a Lyth OS v0.4.\n";
+    "Bienvenido a " LYTH_KERNEL_PRETTY_NAME ".\n";
 
 static const unsigned char version_text[] =
     "NAME=Lyth\n"
-    "VERSION=0.4\n"
-    "ID=lyth\n"
-    "PRETTY_NAME=Lyth OS 0.4\n"
+    "VERSION=" LYTH_KERNEL_VERSION "\n"
+    "VERSION_ID=" LYTH_KERNEL_VERSION "\n"
+    "ID=" LYTH_KERNEL_ID "\n"
+    "PRETTY_NAME=" LYTH_KERNEL_PRETTY_NAME "\n"
+    "BUILD_FLAVOR=" LYTH_KERNEL_BUILD_FLAVOR "\n"
     "ARCH=i386\n";
 
 static const unsigned char demo_script_text[] =
