@@ -77,6 +77,19 @@ ACPI_OBJ       = $(BUILD_DIR)/acpi.o
 APIC_OBJ       = $(BUILD_DIR)/apic.o
 SMP_OBJ        = $(BUILD_DIR)/smp.o
 AP_TRAMP_OBJ   = $(BUILD_DIR)/ap_trampoline.o
+PCI_OBJ        = $(BUILD_DIR)/pci.o
+E1000_OBJ      = $(BUILD_DIR)/e1000.o
+NETBUF_OBJ     = $(BUILD_DIR)/netbuf.o
+NETIF_OBJ      = $(BUILD_DIR)/netif.o
+ETHERNET_OBJ   = $(BUILD_DIR)/ethernet.o
+ARP_OBJ        = $(BUILD_DIR)/arp.o
+IPV4_OBJ       = $(BUILD_DIR)/ipv4.o
+ICMP_OBJ       = $(BUILD_DIR)/icmp.o
+UDP_NET_OBJ    = $(BUILD_DIR)/udp.o
+TCP_NET_OBJ    = $(BUILD_DIR)/tcp.o
+SOCKET_OBJ     = $(BUILD_DIR)/socket.o
+DHCP_OBJ       = $(BUILD_DIR)/dhcp.o
+DNS_OBJ        = $(BUILD_DIR)/dns.o
 
 CFLAGS = -m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-frame-pointer -fno-optimize-sibling-calls \
 	-ffile-prefix-map=$(CURDIR)=. \
@@ -94,6 +107,8 @@ CFLAGS = -m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-fr
 	-Iinclude/lib \
 	-Iinclude/drivers/disk \
 	-Iinclude/drivers/rtc \
+	-Iinclude/drivers/net \
+	-Iinclude/net \
 	-Iinclude/kernel/tests
 LDFLAGS = -m elf_i386 -T arch/x86/linker.ld --build-id=none
 
@@ -102,7 +117,7 @@ FONT_TOOL = tools/psf2h.py
 FONT_HEADER = include/font_psf.h
 GRUB_CFG = arch/x86/boot/grub.cfg
 
-OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ)
+OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ) $(PCI_OBJ) $(E1000_OBJ) $(NETBUF_OBJ) $(NETIF_OBJ) $(ETHERNET_OBJ) $(ARP_OBJ) $(IPV4_OBJ) $(ICMP_OBJ) $(UDP_NET_OBJ) $(TCP_NET_OBJ) $(SOCKET_OBJ) $(DHCP_OBJ) $(DNS_OBJ)
 
 $(FONT_HEADER): $(FONT_PSF) $(FONT_TOOL)
 	$(PYTHON) $(FONT_TOOL) $(FONT_PSF) $(FONT_HEADER)
@@ -170,6 +185,19 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(CC) $(CFLAGS) -c kernel/acpi.c -o $(ACPI_OBJ)
 	$(CC) $(CFLAGS) -c kernel/apic.c -o $(APIC_OBJ)
 	$(CC) $(CFLAGS) -c kernel/smp.c -o $(SMP_OBJ)
+	$(CC) $(CFLAGS) -c drivers/net/pci.c -o $(PCI_OBJ)
+	$(CC) $(CFLAGS) -c drivers/net/e1000.c -o $(E1000_OBJ)
+	$(CC) $(CFLAGS) -c net/netbuf.c -o $(NETBUF_OBJ)
+	$(CC) $(CFLAGS) -c net/netif.c -o $(NETIF_OBJ)
+	$(CC) $(CFLAGS) -c net/ethernet.c -o $(ETHERNET_OBJ)
+	$(CC) $(CFLAGS) -c net/arp.c -o $(ARP_OBJ)
+	$(CC) $(CFLAGS) -c net/ipv4.c -o $(IPV4_OBJ)
+	$(CC) $(CFLAGS) -c net/icmp.c -o $(ICMP_OBJ)
+	$(CC) $(CFLAGS) -c net/udp.c -o $(UDP_NET_OBJ)
+	$(CC) $(CFLAGS) -c net/tcp.c -o $(TCP_NET_OBJ)
+	$(CC) $(CFLAGS) -c net/socket.c -o $(SOCKET_OBJ)
+	$(CC) $(CFLAGS) -c net/dhcp.c -o $(DHCP_OBJ)
+	$(CC) $(CFLAGS) -c net/dns.c -o $(DNS_OBJ)
 	$(AS) --32 arch/x86/gdt.s -o $(GDT_ASM_OBJ)
 	$(AS) --32 arch/x86/interrupts.s -o $(INTERRUPTS_ASM_OBJ)
 	$(AS) --32 arch/x86/boot/boot.s -o $(BOOT_OBJ)

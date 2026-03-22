@@ -135,17 +135,21 @@
 - [x] Capa de dispositivo de bloques
 - [x] Disco
 - [ ] USB
-- [ ] Red
+- [x] Red (E1000)
+- [x] PCI
 - [x] RTC
 - [x] Serie (COM1) para debug
 
 ## 12. Red
-- [ ] ARP
-- [ ] ICMP
-- [ ] UDP
-- [ ] TCP/IP
-- [ ] Sockets
-- [ ] DHCP / DNS
+- [x] ARP
+- [x] ICMP
+- [x] UDP
+- [x] TCP/IP
+- [x] Sockets
+- [x] DHCP / DNS
+- [x] Ethernet
+- [x] IPv4 (routing, checksum)
+- [x] Driver E1000 (Intel 82540EM)
 
 ## 13. Seguridad
 - [x] Separación kernel/user

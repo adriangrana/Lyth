@@ -31,6 +31,9 @@
 #include "acpi.h"
 #include "apic.h"
 #include "smp.h"
+#include "pci.h"
+#include "e1000.h"
+#include "socket.h"
 
 static void terminal_write_uint(uint32_t value) {
     char buffer[16];
@@ -154,6 +157,11 @@ void kernel_main(unsigned long mbi_ptr) {
     rtc_init();
     klog_write(KLOG_LEVEL_INFO, "rtc",  "RTC CMOS inicializado");
     klog_write(KLOG_LEVEL_INFO, "irq",  "IDT/PIC/PIT inicializados");
+
+    pci_init();
+    net_init();
+    e1000_init();
+    klog_write(KLOG_LEVEL_INFO, "net",  "Stack de red inicializado");
 
     ata_init();
     if (ata_is_present(ATA_DRIVE_MASTER))

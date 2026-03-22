@@ -24,6 +24,17 @@
 #include "rlimit.h"
 #include "version.h"
 #include "ugdb.h"
+#include "pci.h"
+#include "e1000.h"
+#include "netif.h"
+#include "ipv4.h"
+#include "icmp.h"
+#include "arp.h"
+#include "udp.h"
+#include "socket.h"
+#include "dhcp.h"
+#include "dns.h"
+#include "endian.h"
 
 #define SHELL_MAX_ARGS 8
 #define SHELL_TOKEN_MAX 64
@@ -192,6 +203,13 @@ static int cmd_file(int argc, const char* argv[], int background);
 static int cmd_du(int argc, const char* argv[], int background);
 static int cmd_df(int argc, const char* argv[], int background);
 static int cmd_sync(int argc, const char* argv[], int background);
+static int cmd_ping(int argc, const char* argv[], int background);
+static int cmd_ifconfig(int argc, const char* argv[], int background);
+static int cmd_netstat(int argc, const char* argv[], int background);
+static int cmd_arp_cmd(int argc, const char* argv[], int background);
+static int cmd_dhcpc(int argc, const char* argv[], int background);
+static int cmd_nslookup(int argc, const char* argv[], int background);
+static int cmd_nc(int argc, const char* argv[], int background);
 static void shell_resolve_path(const char* input, char* out, unsigned int out_size);
 
 /* Current working directory (always an absolute VFS path). */
@@ -305,6 +323,14 @@ static command_t commands[] = {
     {"df",      cmd_df,      "espacio libre por filesystem: df"},
     {"sync",    cmd_sync,    "fuerza escritura pendiente a disco: sync"},
     {"alarm",   cmd_alarm,   "arma/cancela SIGALRM: alarm [segundos]"},
+    /* --- networking --- */
+    {"ping",    cmd_ping,    "envia ICMP echo: ping <ip> [count]"},
+    {"ifconfig",cmd_ifconfig,"muestra/configura interfaces de red"},
+    {"netstat", cmd_netstat, "muestra estado de red y sockets"},
+    {"arp",     cmd_arp_cmd, "muestra la tabla ARP: arp"},
+    {"dhcp",    cmd_dhcpc,   "obtiene configuracion IP por DHCP: dhcp"},
+    {"nslookup",cmd_nslookup,"resuelve DNS: nslookup <hostname>"},
+    {"nc",      cmd_nc,      "netcat UDP: nc <ip> <port> <mensaje>"},
 };
 
 static const int command_count = sizeof(commands) / sizeof(commands[0]);
@@ -6667,6 +6693,246 @@ static int cmd_disk(int argc, const char* argv[], int background) {
     }
 
     terminal_print_line("Uso: disk [read <lba> [nombre]] [mount <dev> <ruta>] [fsck <dev>] [gpt <dev>]");
+    return 1;
+}
+
+/* ---- networking commands ---- */
+
+static volatile int ping_got_reply;
+static volatile uint32_t ping_reply_ms;
+
+static void ping_reply_cb(uint32_t src_ip, uint16_t id, uint16_t seq, uint16_t data_len) {
+    (void)id; (void)data_len;
+    char ip_str[16];
+    ip4_to_str(src_ip, ip_str);
+    terminal_print("Respuesta de ");
+    terminal_print(ip_str);
+    terminal_print(": seq=");
+    terminal_print_uint((uint32_t)seq);
+    terminal_print_line("");
+    ping_got_reply = 1;
+}
+
+static uint32_t parse_ip(const char* s) {
+    uint8_t parts[4] = {0, 0, 0, 0};
+    int p = 0;
+    while (*s && p < 4) {
+        uint32_t v = 0;
+        while (*s >= '0' && *s <= '9') { v = v * 10 + (uint32_t)(*s - '0'); s++; }
+        parts[p++] = (uint8_t)v;
+        if (*s == '.') s++;
+    }
+    return ip4_addr(parts[0], parts[1], parts[2], parts[3]);
+}
+
+static int cmd_ping(int argc, const char* argv[], int background) {
+    (void)background;
+    if (argc < 2) {
+        terminal_print_line("Uso: ping <ip> [count]");
+        return 1;
+    }
+    uint32_t dst = parse_ip(argv[1]);
+    int count = 4;
+    if (argc >= 3) count = (int)parse_positive_or_default(argv[2], 4);
+
+    netif_t* iface = netif_get_default();
+    if (!iface || !iface->up) {
+        terminal_print_line("Sin interfaz de red activa");
+        return 1;
+    }
+
+    icmp_set_reply_callback(ping_reply_cb);
+
+    char ip_str[16];
+    ip4_to_str(dst, ip_str);
+    terminal_print("PING ");
+    terminal_print(ip_str);
+    terminal_print_line("");
+
+    for (int i = 0; i < count; i++) {
+        ping_got_reply = 0;
+        icmp_send_echo(iface, dst, 0x1234, (uint16_t)(i + 1), 0, 0);
+
+        uint32_t start = timer_get_ticks();
+        while (!ping_got_reply && (timer_get_ticks() - start) < 200);
+
+        if (!ping_got_reply) {
+            terminal_print("Timeout seq=");
+            terminal_print_uint((uint32_t)(i + 1));
+            terminal_print_line("");
+        }
+    }
+
+    icmp_set_reply_callback(0);
+    return 1;
+}
+
+static void print_mac(const uint8_t mac[6]) {
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 6; i++) {
+        char s[3];
+        s[0] = hex[(mac[i] >> 4) & 0xF];
+        s[1] = hex[mac[i] & 0xF];
+        s[2] = '\0';
+        terminal_print(s);
+        if (i < 5) terminal_print(":");
+    }
+}
+
+static int cmd_ifconfig(int argc, const char* argv[], int background) {
+    (void)argc; (void)argv; (void)background;
+    int n = netif_count();
+    if (n == 0) {
+        terminal_print_line("Sin interfaces de red");
+        return 1;
+    }
+    for (int i = 0; i < n; i++) {
+        netif_t* iface = netif_get(i);
+        if (!iface) continue;
+        terminal_print(iface->name);
+        terminal_print("  HWaddr ");
+        print_mac(iface->mac);
+        terminal_print_line("");
+
+        char ip_str[16];
+        terminal_print("  inet ");
+        ip4_to_str(iface->ip_addr, ip_str);
+        terminal_print(ip_str);
+        terminal_print("  mask ");
+        ip4_to_str(iface->netmask, ip_str);
+        terminal_print(ip_str);
+        terminal_print("  gw ");
+        ip4_to_str(iface->gateway, ip_str);
+        terminal_print(ip_str);
+        terminal_print_line("");
+
+        terminal_print("  ");
+        terminal_print(iface->up ? "UP" : "DOWN");
+        terminal_print_line("");
+    }
+    return 1;
+}
+
+static int cmd_netstat(int argc, const char* argv[], int background) {
+    (void)argc; (void)argv; (void)background;
+    const dhcp_result_t* dhcp = dhcp_get_result();
+    terminal_print("DHCP: ");
+    terminal_print(dhcp->ok ? "configurado" : "no configurado");
+    terminal_print_line("");
+    if (dhcp->ok) {
+        char ip_str[16];
+        terminal_print("  IP:      "); ip4_to_str(dhcp->ip_addr, ip_str); terminal_print_line(ip_str);
+        terminal_print("  Mascara: "); ip4_to_str(dhcp->netmask, ip_str); terminal_print_line(ip_str);
+        terminal_print("  Gateway: "); ip4_to_str(dhcp->gateway, ip_str); terminal_print_line(ip_str);
+        terminal_print("  DNS:     "); ip4_to_str(dhcp->dns_server, ip_str); terminal_print_line(ip_str);
+    }
+
+    int nif = netif_count();
+    terminal_print("Interfaces: ");
+    terminal_print_uint((uint32_t)nif);
+    terminal_print_line("");
+
+    int ndev = pci_device_count();
+    terminal_print("PCI dispositivos: ");
+    terminal_print_uint((uint32_t)ndev);
+    terminal_print_line("");
+
+    return 1;
+}
+
+static int cmd_arp_cmd(int argc, const char* argv[], int background) {
+    (void)argc; (void)argv; (void)background;
+    terminal_print_line("Tabla ARP:");
+    terminal_print_line("IP              MAC");
+    for (int i = 0; i < ARP_CACHE_SIZE; i++) {
+        const arp_entry_t* e = arp_cache_get(i);
+        if (!e || !e->valid) continue;
+        char ip_str[16];
+        ip4_to_str(e->ip, ip_str);
+        terminal_print(ip_str);
+        /* pad to 16 chars */
+        int l = 0; while (ip_str[l]) l++;
+        for (int j = l; j < 16; j++) terminal_print(" ");
+        print_mac(e->mac);
+        terminal_print_line("");
+    }
+    return 1;
+}
+
+static int cmd_dhcpc(int argc, const char* argv[], int background) {
+    (void)argc; (void)argv; (void)background;
+    netif_t* iface = netif_get_default();
+    if (!iface) {
+        terminal_print_line("Sin interfaz de red");
+        return 1;
+    }
+    terminal_print_line("Enviando DHCP Discover...");
+    dhcp_discover(iface);
+
+    /* Wait for DHCP response */
+    uint32_t start = timer_get_ticks();
+    const dhcp_result_t* res = dhcp_get_result();
+    while (!res->ok && (timer_get_ticks() - start) < 500);
+
+    res = dhcp_get_result();
+    if (res->ok) {
+        char ip_str[16];
+        terminal_print("IP obtenida: ");
+        ip4_to_str(res->ip_addr, ip_str);
+        terminal_print_line(ip_str);
+    } else {
+        terminal_print_line("DHCP timeout");
+    }
+    return 1;
+}
+
+static int cmd_nslookup(int argc, const char* argv[], int background) {
+    (void)background;
+    if (argc < 2) {
+        terminal_print_line("Uso: nslookup <hostname>");
+        return 1;
+    }
+    terminal_print("Resolviendo ");
+    terminal_print(argv[1]);
+    terminal_print_line("...");
+
+    uint32_t ip = dns_resolve(argv[1]);
+    if (ip) {
+        char ip_str[16];
+        ip4_to_str(ip, ip_str);
+        terminal_print(argv[1]);
+        terminal_print(" -> ");
+        terminal_print_line(ip_str);
+    } else {
+        terminal_print_line("No se pudo resolver");
+    }
+    return 1;
+}
+
+static int cmd_nc(int argc, const char* argv[], int background) {
+    (void)background;
+    if (argc < 4) {
+        terminal_print_line("Uso: nc <ip> <port> <mensaje>");
+        return 1;
+    }
+    uint32_t dst = parse_ip(argv[1]);
+    uint16_t port = (uint16_t)parse_positive_or_default(argv[2], 0);
+    const char* msg = argv[3];
+
+    netif_t* iface = netif_get_default();
+    if (!iface) {
+        terminal_print_line("Sin interfaz de red");
+        return 1;
+    }
+
+    int len = 0;
+    while (msg[len]) len++;
+
+    if (udp_send(iface, dst, 12345, port, (const uint8_t*)msg, (uint16_t)len) == 0) {
+        terminal_print_line("Enviado");
+    } else {
+        terminal_print_line("Error al enviar");
+    }
     return 1;
 }
 

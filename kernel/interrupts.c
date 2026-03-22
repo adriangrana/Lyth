@@ -10,6 +10,7 @@
 #include "terminal.h"
 #include "panic.h"
 #include "apic.h"
+#include "e1000.h"
 
 static const char* exception_names[32] = {
     "Division by zero",
@@ -52,6 +53,7 @@ static inline void outb(unsigned short port, unsigned char value) {
 
 extern void irq0_stub(void);
 extern void irq1_stub(void);
+extern void irq11_stub(void);
 extern void irq12_stub(void);
 extern void irq14_stub(void);
 extern void syscall_stub(void);
@@ -171,6 +173,11 @@ unsigned int mouse_interrupt_handler(unsigned int current_esp) {
     return current_esp;
 }
 
+void e1000_interrupt_handler(void) {
+    e1000_irq_handler();
+    send_eoi(11);
+}
+
 unsigned int syscall_interrupt_handler(unsigned int current_esp) {
     panic_frame_t* frame = (panic_frame_t*)current_esp;
 
@@ -269,6 +276,7 @@ void interrupts_init(void) {
 
     idt_set_gate(32, (unsigned int)irq0_stub,  code_selector, 0x8E);
     idt_set_gate(33, (unsigned int)irq1_stub,  code_selector, 0x8E);
+    idt_set_gate(43, (unsigned int)irq11_stub, code_selector, 0x8E);
     idt_set_gate(44, (unsigned int)irq12_stub, code_selector, 0x8E);
     idt_set_gate(46, (unsigned int)irq14_stub, code_selector, 0x8E);
     idt_set_gate(0x80, (unsigned int)syscall_stub, code_selector, 0xEE);
@@ -277,6 +285,7 @@ void interrupts_init(void) {
         /* Route ISA IRQs through IOAPIC */
         ioapic_route_irq(0,  32, 0);   /* PIT timer */
         ioapic_route_irq(1,  33, 0);   /* keyboard */
+        ioapic_route_irq(11, 43, 0);   /* E1000 NIC */
         ioapic_route_irq(12, 44, mouse_is_enabled() ? 0 : 1);   /* mouse */
         ioapic_route_irq(14, 46, 0);   /* ATA primary */
     } else {

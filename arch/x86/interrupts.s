@@ -33,6 +33,7 @@
 .global isr31_stub
 .global irq0_stub
 .global irq1_stub
+.global irq11_stub
 .global irq12_stub
 .global irq14_stub
 .global syscall_stub
@@ -41,6 +42,7 @@
 .extern exception_interrupt_handler
 .extern timer_interrupt_handler
 .extern keyboard_interrupt_handler
+.extern e1000_interrupt_handler
 .extern mouse_interrupt_handler
 .extern syscall_interrupt_handler
 .extern ata_irq14_handler
@@ -150,6 +152,12 @@ irq14_stub:
     call ata_irq14_handler
     add $4, %esp
     mov %eax, %esp
+    popa
+    iret
+
+irq11_stub:
+    pusha
+    call e1000_interrupt_handler
     popa
     iret
 

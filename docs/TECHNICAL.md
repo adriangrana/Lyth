@@ -18,6 +18,9 @@ Subsistemas principales y sus archivos:
 | IDT / PIC / PIT | `kernel/idt.c`, `kernel/interrupts.c`, `arch/x86/interrupts.s` |
 | ACPI / APIC | `kernel/acpi.c`, `kernel/apic.c` |
 | SMP | `kernel/smp.c`, `arch/x86/boot/ap_trampoline.s`, `include/kernel/spinlock.h` |
+| PCI | `drivers/net/pci.c` |
+| Red (E1000) | `drivers/net/e1000.c` |
+| Stack de red | `net/ethernet.c`, `net/arp.c`, `net/ipv4.c`, `net/icmp.c`, `net/udp.c`, `net/tcp.c`, `net/socket.c`, `net/dhcp.c`, `net/dns.c` |
 | Scheduler | `kernel/task/task.c`, `kernel/task/timer.c` |
 | Memoria física | `kernel/mem/physmem.c` |
 | Paginación | `kernel/mem/paging.c` |
@@ -437,3 +440,110 @@ Capa de abstracción sobre ATA. Al registrar una unidad:
 - `-m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector`
 - `-fno-omit-frame-pointer -fno-optimize-sibling-calls` (para backtraces fiables)
 - `FB_MOUSE_CURSOR=0` deshabilita el cursor software del guest (diagnóstico)
+
+## Red (Networking)
+
+### Arquitectura de la pila de red
+
+```
+Aplicación (shell: ping, nc, dhcp, nslookup, arp, ifconfig, netstat)
+        │
+   net/socket.c  ─── capa BSD-like (net_socket / net_send / net_recv …)
+        │
+   ┌────┴────┐
+net/udp.c  net/tcp.c  ─── transporte
+        │
+   net/ipv4.c  ─── red (routing, checksum, fragmentación básica)
+        │
+   net/arp.c   ─── resolución MAC
+        │
+   net/ethernet.c  ─── enlace (Ethernet II)
+        │
+   drivers/net/e1000.c  ─── driver NIC
+        │
+   drivers/net/pci.c  ─── enumeración PCI
+```
+
+### PCI
+- Acceso por puertos I/O (0xCF8 / 0xCFC).
+- Escaneo de hasta 256 buses × 32 slots × 8 funciones.
+- `pci_find_device(vendor, device)` busca en la tabla enumerada.
+- `pci_enable_bus_mastering()` habilita DMA en el dispositivo.
+
+### Driver E1000 (Intel 82540EM)
+- Dispositivo PCI 0x8086:0x100E (adaptador por defecto de QEMU `-netdev user`).
+- Acceso MMIO: BAR0 se mapea con `paging_map_mmio()`.
+- RX: 32 descriptores DMA de 2048 bytes cada uno, en anillo circular.
+- TX: 8 descriptores DMA en anillo circular.
+- IRQ11 → vector 43 vía IOAPIC. El handler lee ICR y procesa descriptores RX pendientes.
+- MAC se obtiene primero del EEPROM; si falla, se lee de RAL/RAH.
+- `e1000_send(data, len)` copia al buffer DMA y avanza el tail del anillo TX.
+- `e1000_irq_handler()` itera RX descriptores completados, entrega a `netif_rx()`.
+
+### Ethernet (`net/ethernet.c`)
+- `eth_rx()`: desmultiplexa por EtherType → ARP (0x0806) o IPv4 (0x0800).
+- `eth_send()`: construye trama Ethernet II (dst MAC + src MAC + EtherType + payload).
+
+### ARP (`net/arp.c`)
+- Caché estática de 32 entradas con política LRU para evicción.
+- `arp_rx()`: procesa REQUEST (responde si la IP destino es la local) y REPLY (actualiza caché).
+- `arp_resolve()`: busca en caché; si no hay entrada, envía ARP request broadcast.
+- Detección de broadcast: si la IP destino coincide con la broadcast de la subred, devuelve FF:FF:FF:FF:FF:FF.
+
+### IPv4 (`net/ipv4.c`)
+- Tabla de rutas estática (8 entradas), longest-prefix match.
+- `ip4_send()`: calcula checksum, resuelve MAC vía ARP, encapsula en Ethernet.
+- `ip4_rx()`: valida versión/IHL/checksum, despacha a ICMP (proto 1), UDP (proto 17), TCP (proto 6).
+- `ip4_checksum()`: ones' complement estándar RFC 1071.
+- `ip4_to_str()`: formatea dirección a cadena legible.
+
+### ICMP (`net/icmp.c`)
+- Echo Reply automático (tipo 0) ante Echo Request (tipo 8).
+- `icmp_send_echo()`: construye paquete ICMP Echo Request con id/seq configurables.
+- Callback registrable para respuestas (usado por el comando `ping`).
+
+### UDP (`net/udp.c`)
+- 16 sockets estáticos con binding por puerto.
+- `udp_send()`: construye datagrama UDP, envía por `ip4_send()`.
+- `udp_rx()`: despacha a socket local por puerto destino; puertos especiales (DHCP 68, DNS client) se entregan directamente.
+- `udp_recvfrom()`: bloquea (spin) hasta que llega un paquete o se alcanza timeout.
+
+### TCP (`net/tcp.c`)
+- 16 sockets estáticos con máquina de estados completa (RFC 793):
+  CLOSED → SYN_SENT → ESTABLISHED → FIN_WAIT_1 → FIN_WAIT_2 → TIME_WAIT,
+  CLOSED → LISTEN → SYN_RECEIVED → ESTABLISHED → CLOSE_WAIT → LAST_ACK.
+- MSS = 1460, window = 8192 bytes.
+- Checksum con pseudo-header (src IP, dst IP, proto, TCP length).
+- `tcp_connect()`: three-way handshake activo.
+- `tcp_listen()` / `tcp_accept()`: servidor pasivo.
+- `tcp_send()` / `tcp_recv()`: transferencia sobre conexión establecida.
+- `tcp_close()`: cierre ordenado con FIN.
+- `tcp_tick()`: limpieza de sockets en TIME_WAIT (llamado periódicamente).
+
+### Sockets (`net/socket.c`)
+- Capa BSD-like unificada: `net_socket()`, `net_bind()`, `net_connect()`, `net_listen()`, `net_accept()`, `net_send()`, `net_recv()`, `net_sendto()`, `net_recvfrom()`, `net_close()`.
+- 32 sockets kernel; cada uno referencia un socket UDP o TCP interno.
+- `net_init()`: inicializa todos los subsistemas (ARP, IPv4, UDP, TCP, DHCP, DNS).
+
+### DHCP (`net/dhcp.c`)
+- Discover → Offer → Request → Ack (RFC 2131).
+- Configura automáticamente IP, máscara, gateway y servidor DNS de la interfaz.
+- Inserta rutas (red local + default gateway) en la tabla IPv4.
+
+### DNS (`net/dns.c`)
+- Stub resolver: envía query tipo A al servidor DNS configurado (puerto 53).
+- Caché estática de 16 entradas.
+- Codificación de nombres DNS (labels con longitud prefijada).
+- Timeout de 3 segundos.
+
+### Comandos de shell
+
+| Comando | Descripción |
+|---|---|
+| `ping <ip>` | Envía ICMP Echo Request y espera Reply |
+| `ifconfig` | Muestra interfaces de red registradas |
+| `netstat` | Lista sockets UDP y TCP abiertos |
+| `arp` | Muestra la tabla de caché ARP |
+| `dhcp` | Ejecuta DHCP en la interfaz por defecto |
+| `nslookup <host>` | Resuelve nombre de dominio vía DNS |
+| `nc <ip> <port> <msg>` | Envía mensaje UDP a destino |
