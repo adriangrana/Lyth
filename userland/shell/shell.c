@@ -88,6 +88,12 @@ static int cmd_date(int argc, const char* argv[], int background);
 static int cmd_ps(int argc, const char* argv[], int background);
 static int cmd_kill(int argc, const char* argv[], int background);
 static int cmd_nice(int argc, const char* argv[], int background);
+static int cmd_renice(int argc, const char* argv[], int background);
+static int cmd_killall(int argc, const char* argv[], int background);
+static int cmd_pidof(int argc, const char* argv[], int background);
+static int cmd_fg(int argc, const char* argv[], int background);
+static int cmd_bg(int argc, const char* argv[], int background);
+static int cmd_time(int argc, const char* argv[], int background);
 static int cmd_task(int argc, const char* argv[], int background);
 static int cmd_mem(int argc, const char* argv[], int background);
 static int cmd_wait(int argc, const char* argv[], int background);
@@ -179,7 +185,13 @@ static command_t commands[] = {
     {"ps",      cmd_ps,      "lista tareas activas"},
     {"jobs",    cmd_ps,      "alias de ps"},
     {"kill",    cmd_kill,    "envia señal: kill <id> [signum] (default SIGTERM=15)"},
+    {"killall", cmd_killall, "mata tareas por nombre: killall <nombre> [signum]"},
+    {"pidof",   cmd_pidof,   "muestra PIDs por nombre: pidof <nombre>"},
     {"nice",    cmd_nice,    "cambia prioridad: nice <id> <high|normal|low>"},
+    {"renice",  cmd_renice,  "cambia prioridad: renice <high|normal|low> <id>"},
+    {"fg",      cmd_fg,      "trae tarea al foreground: fg [id]"},
+    {"bg",      cmd_bg,      "lista/mueve tareas al background: bg [id]"},
+    {"time",    cmd_time,    "mide tiempo de ejecucion: time <comando> [args...]"},
     {"task",    cmd_task,    "muestra la tarea actual y foreground"},
     {"mem",     cmd_mem,     "estadisticas de heap, memoria fisica y paging"},
     {"wait",    cmd_wait,    "bloquea una tarea en evento: wait <id> [&]"},
@@ -1843,6 +1855,200 @@ static int cmd_nice(int argc, const char* argv[], int background) {
     return 1;
 }
 
+/* ---- cmd_renice ---- */
+static int cmd_renice(int argc, const char* argv[], int background) {
+    unsigned int id;
+    task_priority_t priority;
+    (void)background;
+    if (argc < 3) { terminal_print_line("Uso: renice <high|normal|low> <id>"); return 1; }
+    if (!parse_priority_value(argv[1], &priority)) {
+        terminal_print("[error] Prioridad desconocida: "); terminal_print_line(argv[1]);
+        return 1;
+    }
+    id = parse_positive_or_default(argv[2], 0);
+    if (id == 0 || !task_set_priority((int)id, priority)) {
+        terminal_print_line("[error] No existe esa tarea");
+        return 1;
+    }
+    terminal_print("PID "); terminal_print_uint(id);
+    terminal_print(" -> "); terminal_print_line(task_priority_name(priority));
+    return 1;
+}
+
+/* ---- cmd_killall ---- */
+static int cmd_killall(int argc, const char* argv[], int background) {
+    task_snapshot_t snaps[32];
+    int count, i, killed = 0;
+    int signum = LYTH_SIGTERM;
+    const char* target_name;
+    (void)background;
+    if (argc < 2) { terminal_print_line("Uso: killall <nombre> [signum]"); return 1; }
+    target_name = argv[1];
+    if (argc >= 3) {
+        signum = parser_parse_integer(argv[2], LYTH_SIGTERM);
+        if (signum <= 0 || signum > LYTH_SIGNAL_MAX) {
+            terminal_print_line("[error] Signum invalido"); return 1;
+        }
+    }
+    count = task_list(snaps, 32);
+    for (i = 0; i < count; i++) {
+        /* skip shell itself */
+        if (snaps[i].id == task_current_id()) continue;
+        if (!str_equals(snaps[i].name, target_name)) continue;
+        if (task_send_signal(snaps[i].id, signum)) {
+            terminal_print("Señal enviada a PID ");
+            terminal_print_uint((unsigned int)snaps[i].id);
+            terminal_put_char('\n');
+            killed++;
+        }
+    }
+    if (killed == 0) { terminal_print(target_name); terminal_print_line(": no encontrado"); }
+    return 1;
+}
+
+/* ---- cmd_pidof ---- */
+static int cmd_pidof(int argc, const char* argv[], int background) {
+    task_snapshot_t snaps[32];
+    int count, i, found = 0;
+    (void)background;
+    if (argc < 2) { terminal_print_line("Uso: pidof <nombre>"); return 1; }
+    count = task_list(snaps, 32);
+    for (i = 0; i < count; i++) {
+        if (!str_equals(snaps[i].name, argv[1])) continue;
+        if (found) terminal_put_char(' ');
+        terminal_print_uint((unsigned int)snaps[i].id);
+        found++;
+    }
+    if (found) terminal_put_char('\n');
+    else { terminal_print(argv[1]); terminal_print_line(": no encontrado"); }
+    return 1;
+}
+
+/* ---- cmd_fg ---- */
+static int cmd_fg(int argc, const char* argv[], int background) {
+    task_snapshot_t snaps[32];
+    int count, i;
+    int target_id = -1;
+    (void)background;
+
+    if (argc >= 2) {
+        target_id = (int)parse_positive_or_default(argv[1], 0);
+        if (target_id == 0) { terminal_print_line("[error] PID invalido"); return 1; }
+    } else {
+        /* Pick the most recently spawned non-shell BG task */
+        count = task_list(snaps, 32);
+        for (i = count - 1; i >= 0; i--) {
+            if (snaps[i].id == task_current_id()) continue;
+            if (snaps[i].foreground) continue;
+            if (snaps[i].state == TASK_STATE_FINISHED ||
+                snaps[i].state == TASK_STATE_ZOMBIE   ||
+                snaps[i].state == TASK_STATE_CANCELLED) continue;
+            target_id = snaps[i].id;
+            break;
+        }
+        if (target_id < 0) { terminal_print_line("No hay tareas en background"); return 1; }
+    }
+
+    if (!task_set_foreground(target_id)) {
+        terminal_print_line("[error] No existe o ya terminó esa tarea");
+        return 1;
+    }
+    terminal_print("Foreground -> PID "); terminal_print_uint((unsigned int)target_id);
+    terminal_put_char('\n');
+    task_wait_id(target_id);
+    return 1;
+}
+
+/* ---- cmd_bg ---- */
+static int cmd_bg(int argc, const char* argv[], int background) {
+    task_snapshot_t snaps[32];
+    int count, i, found = 0;
+    (void)background;
+
+    if (argc >= 2) {
+        /* Move specified FG task to BG — get the current FG and check it matches */
+        int req_id = (int)parse_positive_or_default(argv[1], 0);
+        if (req_id == 0) { terminal_print_line("[error] PID invalido"); return 1; }
+        if (task_foreground_task_id() == req_id) {
+            /* Demote it: mark as background by bringing no task to FG */
+            task_set_foreground(-1);   /* -1 = just clear current FG */
+            terminal_print("PID "); terminal_print_uint((unsigned int)req_id);
+            terminal_print_line(" enviado a background");
+        } else {
+            terminal_print("[error] PID ");
+            terminal_print_uint((unsigned int)req_id);
+            terminal_print_line(" no es la tarea foreground actual");
+        }
+        return 1;
+    }
+
+    /* No arg: list background tasks */
+    count = task_list(snaps, 32);
+    for (i = 0; i < count; i++) {
+        if (snaps[i].foreground) continue;
+        if (snaps[i].id == task_current_id()) continue;
+        if (snaps[i].state == TASK_STATE_FINISHED ||
+            snaps[i].state == TASK_STATE_ZOMBIE   ||
+            snaps[i].state == TASK_STATE_CANCELLED) continue;
+        terminal_print("[");
+        terminal_print_uint((unsigned int)snaps[i].id);
+        terminal_print("] ");
+        terminal_print(snaps[i].name);
+        terminal_print(" ");
+        terminal_print_line(task_state_name(snaps[i].state));
+        found++;
+    }
+    if (!found) terminal_print_line("No hay tareas en background");
+    return 1;
+}
+
+/* ---- cmd_time ---- */
+static int cmd_time(int argc, const char* argv[], int background) {
+    unsigned int t0, t1, elapsed_ms;
+    int i, sub_argc;
+    const char* sub_argv[16];
+    int found = 0;
+    (void)background;
+
+    if (argc < 2) { terminal_print_line("Uso: time <comando> [args...]"); return 1; }
+
+    /* Build sub-command argv */
+    sub_argc = argc - 1;
+    if (sub_argc > 16) sub_argc = 16;
+    for (i = 0; i < sub_argc; i++) sub_argv[i] = argv[i + 1];
+
+    /* Find and run the sub-command */
+    t0 = timer_get_uptime_ms();
+    for (i = 0; i < command_count; i++) {
+        if (str_equals(commands[i].name, sub_argv[0])) {
+            commands[i].fn(sub_argc, sub_argv, 0);
+            found = 1;
+            break;
+        }
+    }
+    t1 = timer_get_uptime_ms();
+
+    if (!found) {
+        terminal_print("[error] Comando no encontrado: "); terminal_print_line(sub_argv[0]);
+        return 1;
+    }
+
+    elapsed_ms = (t1 >= t0) ? (t1 - t0) : 0;
+    terminal_print("\nreal\t");
+    terminal_print_uint(elapsed_ms / 1000U);
+    terminal_put_char('.');
+    {
+        unsigned int ms = elapsed_ms % 1000U;
+        /* 3-digit zero-padded ms */
+        terminal_put_char((char)('0' + ms / 100U));
+        terminal_put_char((char)('0' + (ms % 100U) / 10U));
+        terminal_put_char((char)('0' + ms % 10U));
+    }
+    terminal_print_line("s");
+    return 1;
+}
+
+/* ---- cmd_task ---- */
 static int cmd_task(int argc, const char* argv[], int background) {
     (void)argc;
     (void)argv;

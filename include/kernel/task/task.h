@@ -73,6 +73,7 @@ int task_current_id(void);
 void* task_current_data(void);
 int task_has_foreground_task(void);
 int task_foreground_task_id(void);
+int task_set_foreground(int id);
 int task_set_priority(int id, task_priority_t priority);
 task_priority_t task_current_priority(void);
 const char* task_priority_name(task_priority_t priority);

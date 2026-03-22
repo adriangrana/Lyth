@@ -1426,6 +1426,42 @@ void task_set_foreground_complete_handler(void (*handler)(int id, const char* na
     foreground_complete_handler = handler;
 }
 
+int task_set_foreground(int id) {
+    unsigned int flags;
+    task_entry_t* old_task;
+    task_entry_t* new_task;
+
+    flags = interrupt_save();
+
+    /* Clear old foreground task */
+    if (foreground_task_id != -1) {
+        old_task = find_task_by_id(foreground_task_id);
+        if (old_task)
+            old_task->foreground = 0;
+        foreground_task_id = -1;
+    }
+
+    /* id < 0 means "just clear FG, no new owner" */
+    if (id < 0) {
+        interrupt_restore(flags);
+        return 1;
+    }
+
+    new_task = find_task_by_id(id);
+    if (!new_task || new_task->state == TASK_STATE_FREE ||
+        new_task->state == TASK_STATE_FINISHED ||
+        new_task->state == TASK_STATE_ZOMBIE ||
+        new_task->state == TASK_STATE_CANCELLED) {
+        interrupt_restore(flags);
+        return 0;
+    }
+
+    new_task->foreground = 1;
+    foreground_task_id   = id;
+    interrupt_restore(flags);
+    return 1;
+}
+
 int task_list(task_snapshot_t* out, int max_tasks) {
     int count = 0;
 
