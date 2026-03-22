@@ -461,6 +461,16 @@ static void shell_apply_user_session(int load_global_rc) {
         }
     }
 
+    /* Assign the home directory to the current user so they can write to it.
+       This must happen while euid=0 (boot context or su before identity drop). */
+    {
+        const ugdb_user_t* u = ugdb_find_by_name(username);
+        unsigned int home_uid = u ? u->uid : task_current_uid();
+        unsigned int home_gid = u ? u->gid : task_current_gid();
+        if (shell_home_path[0] != '\0' && !str_equals(shell_home_path, "/"))
+            vfs_chown(shell_home_path, home_uid, home_gid);
+    }
+
     copy_bounded(shell_cwd, shell_home_path, VFS_PATH_MAX);
     shell_env_set("HOME", shell_home_path);
     shell_env_set("USER", username);
@@ -2514,6 +2524,8 @@ void shell_init(void) {
                 char pre_home[VFS_PATH_MAX];
                 shell_build_user_home_path(u->name, pre_home, sizeof(pre_home));
                 shell_mkdir_p(pre_home);
+                /* Assign ownership while still root */
+                vfs_chown(pre_home, u->uid, u->gid);
             }
         }
     }
