@@ -123,6 +123,18 @@ static int cmd_whoami(int argc, const char* argv[], int background);
 static int cmd_id(int argc, const char* argv[], int background);
 static int cmd_su(int argc, const char* argv[], int background);
 static int cmd_groups(int argc, const char* argv[], int background);
+static int cmd_passwd(int argc, const char* argv[], int background);
+static int cmd_useradd(int argc, const char* argv[], int background);
+static int cmd_userdel(int argc, const char* argv[], int background);
+static int cmd_usermod(int argc, const char* argv[], int background);
+static int cmd_groupadd(int argc, const char* argv[], int background);
+static int cmd_groupdel(int argc, const char* argv[], int background);
+static int cmd_gpasswd(int argc, const char* argv[], int background);
+static int cmd_login(int argc, const char* argv[], int background);
+static int cmd_logout(int argc, const char* argv[], int background);
+static int cmd_who(int argc, const char* argv[], int background);
+static int cmd_users(int argc, const char* argv[], int background);
+static int shell_read_secret_line(char* buf, unsigned int max);
 static void shell_resolve_path(const char* input, char* out, unsigned int out_size);
 
 /* Current working directory (always an absolute VFS path). */
@@ -191,6 +203,23 @@ static command_t commands[] = {
     {"cp",      cmd_cp,      "copia archivo: cp <origen> <destino>"},
     {"mv",      cmd_mv,      "mueve/renombra archivo: mv <origen> <destino>"},
     {"rename",  cmd_rename,  "renombra archivo: rename <origen> <destino>"},
+    /* --- user/group administration --- */
+    {"passwd",  cmd_passwd,  "cambia contraseña: passwd [usuario]"},
+    {"useradd", cmd_useradd, "crea usuario: useradd <nombre> [-u uid] [-g gid]"},
+    {"adduser", cmd_useradd, "alias de useradd"},
+    {"userdel", cmd_userdel, "elimina usuario: userdel [-r] <usuario>"},
+    {"deluser", cmd_userdel, "alias de userdel"},
+    {"usermod", cmd_usermod, "modifica usuario: usermod -n <nombre>|-g <gid>|-p <pass>  <usuario>"},
+    {"groupadd",cmd_groupadd,"crea grupo: groupadd <nombre> [-g gid]"},
+    {"addgroup",cmd_groupadd,"alias de groupadd"},
+    {"groupdel",cmd_groupdel,"elimina grupo: groupdel <nombre>"},
+    {"delgroup",cmd_groupdel,"alias de groupdel"},
+    {"gpasswd", cmd_gpasswd, "miembros de grupo: gpasswd -a|-d <usuario> <grupo>"},
+    {"groupmem",cmd_gpasswd, "alias de gpasswd"},
+    {"login",   cmd_login,   "inicia sesión: login <usuario>"},
+    {"logout",  cmd_logout,  "cierra sesión actual y vuelve a root"},
+    {"who",     cmd_who,     "muestra usuarios activos"},
+    {"users",   cmd_users,   "lista nombres de usuarios conectados"},
 };
 
 static const int command_count = sizeof(commands) / sizeof(commands[0]);
@@ -2470,10 +2499,18 @@ static int cmd_su(int argc, const char* argv[], int background) {
         return 1;
     }
 
-    /* No passwords yet: only root can switch identity freely. */
-    if (task_current_euid() != 0U && user->uid != task_current_uid()) {
-        terminal_print_line("su: permiso denegado (solo root puede cambiar a otro usuario)");
-        return 1;
+    /* Root can switch freely; others must provide the target user's password. */
+    if (task_current_euid() != 0U) {
+        if (!ugdb_check_password(user->uid, "")) {
+            /* A password is set on the target account -- prompt for it */
+            char su_pw[16];
+            terminal_print("Contraseña: ");
+            shell_read_secret_line(su_pw, sizeof(su_pw));
+            if (!ugdb_check_password(user->uid, su_pw)) {
+                terminal_print_line("su: autenticación fallida");
+                return 1;
+            }
+        }
     }
 
     /* Pre-create the home directory while we still have the current user's
@@ -3642,6 +3679,354 @@ static int cmd_mv(int argc, const char* argv[], int background) {
 /* ---- cmd_rename ---- */
 static int cmd_rename(int argc, const char* argv[], int background) {
     return cmd_mv(argc, argv, background);
+}
+
+/* ================================================================
+ *  User/group administration helpers and commands
+ * ================================================================ */
+
+/* Read a line from keyboard, echoing '*' for each character typed.
+   Returns the number of characters stored (0 on Ctrl+C). */
+static int shell_read_secret_line(char* buf, unsigned int max) {
+    unsigned int pos = 0;
+    input_event_t ev;
+    if (!buf || max == 0) return 0;
+    buf[0] = '\0';
+    while (1) {
+        if (!input_poll_event(&ev)) { task_yield(); continue; }
+        if (ev.device_type != INPUT_DEVICE_KEYBOARD) continue;
+        if (ev.type == INPUT_EVENT_ENTER || ev.type == INPUT_EVENT_CTRL_C) {
+            if (ev.type == INPUT_EVENT_CTRL_C) buf[0] = '\0';
+            break;
+        }
+        if (ev.type == INPUT_EVENT_BACKSPACE) {
+            if (pos > 0) { pos--; terminal_print("\b \b"); }
+            continue;
+        }
+        if (ev.type == INPUT_EVENT_CHAR && pos + 1U < max) {
+            buf[pos++] = ev.character;
+            terminal_put_char('*');
+        }
+    }
+    buf[pos] = '\0';
+    terminal_put_char('\n');
+    return (int)pos;
+}
+
+static int cmd_passwd(int argc, const char* argv[], int background) {
+    unsigned int target_uid;
+    const ugdb_user_t* u;
+    char old_pw[16];
+    char new_pw[16];
+    char confirm[16];
+    (void)background;
+
+    if (argc >= 2 && task_current_euid() == 0U) {
+        u = ugdb_find_by_name(argv[1]);
+        if (!u) { terminal_print_line("passwd: usuario no encontrado"); return 1; }
+        target_uid = u->uid;
+    } else {
+        target_uid = task_current_euid();
+        u = ugdb_find_by_uid(target_uid);
+        if (!u) { terminal_print_line("passwd: usuario no encontrado"); return 1; }
+    }
+
+    if (task_current_euid() != 0U) {
+        terminal_print("Contraseña actual: ");
+        shell_read_secret_line(old_pw, sizeof(old_pw));
+        if (!ugdb_check_password(target_uid, old_pw)) {
+            terminal_print_line("passwd: contraseña incorrecta");
+            return 1;
+        }
+    }
+
+    terminal_print("Nueva contraseña: ");
+    shell_read_secret_line(new_pw, sizeof(new_pw));
+    terminal_print("Confirmar contraseña: ");
+    shell_read_secret_line(confirm, sizeof(confirm));
+
+    if (!str_equals(new_pw, confirm)) {
+        terminal_print_line("passwd: las contraseñas no coinciden");
+        return 1;
+    }
+    if (ugdb_set_password(target_uid, new_pw) < 0) {
+        terminal_print_line("passwd: error al actualizar");
+        return 1;
+    }
+    terminal_print("passwd: contraseña de '");
+    terminal_print(u->name);
+    terminal_print_line("' actualizada");
+    return 1;
+}
+
+static int cmd_useradd(int argc, const char* argv[], int background) {
+    unsigned int new_uid, new_gid;
+    const char* name;
+    char home[VFS_PATH_MAX];
+    int i;
+    (void)background;
+
+    if (task_current_euid() != 0U) {
+        terminal_print_line("[error] useradd: se requiere root"); return 1;
+    }
+    if (argc < 2) {
+        terminal_print_line("Uso: useradd <nombre> [-u uid] [-g gid]"); return 1;
+    }
+    name = argv[1];
+    if (ugdb_find_by_name(name)) {
+        terminal_print("useradd: usuario ya existe: ");
+        terminal_print_line(name); return 1;
+    }
+    new_uid = ugdb_next_uid();
+    new_gid = ugdb_next_gid();
+    for (i = 2; i < argc - 1; i++) {
+        if (str_equals(argv[i], "-u") && i + 1 < argc) {
+            new_uid = (unsigned int)parser_parse_integer(argv[++i], (int)new_uid);
+        } else if (str_equals(argv[i], "-g") && i + 1 < argc) {
+            new_gid = (unsigned int)parser_parse_integer(argv[++i], (int)new_gid);
+        }
+    }
+    if (new_uid == 0xFFFFFFFFU) {
+        terminal_print_line("useradd: tabla de usuarios llena"); return 1;
+    }
+    if (ugdb_find_by_uid(new_uid)) {
+        terminal_print("useradd: uid "); terminal_print_uint(new_uid);
+        terminal_print_line(" ya en uso"); return 1;
+    }
+    if (!ugdb_find_group_by_gid(new_gid))
+        ugdb_add_group(new_gid, name);
+    if (ugdb_add_user(new_uid, new_gid, name) < 0) {
+        terminal_print_line("useradd: tabla de usuarios llena"); return 1;
+    }
+    shell_build_user_home_path(name, home, sizeof(home));
+    shell_mkdir_p(home);
+    vfs_chown(home, new_uid, new_gid);
+    terminal_print("useradd: '"); terminal_print(name);
+    terminal_print("' creado (uid="); terminal_print_uint(new_uid);
+    terminal_print(", gid="); terminal_print_uint(new_gid);
+    terminal_print_line(")");
+    return 1;
+}
+
+static int cmd_userdel(int argc, const char* argv[], int background) {
+    const ugdb_user_t* u;
+    int remove_home = 0;
+    int i;
+    (void)background;
+
+    if (task_current_euid() != 0U) {
+        terminal_print_line("[error] userdel: se requiere root"); return 1;
+    }
+    if (argc < 2) { terminal_print_line("Uso: userdel [-r] <usuario>"); return 1; }
+    for (i = 1; i < argc; i++) {
+        if (str_equals(argv[i], "-r")) remove_home = 1;
+    }
+    u = ugdb_find_by_name(argv[argc - 1]);
+    if (!u) {
+        terminal_print("userdel: usuario no encontrado: ");
+        terminal_print_line(argv[argc - 1]); return 1;
+    }
+    if (u->uid == 0U) { terminal_print_line("userdel: no se puede eliminar root"); return 1; }
+    if (u->uid == task_current_euid()) {
+        terminal_print_line("userdel: no puedes eliminarte a ti mismo"); return 1;
+    }
+    {
+        char home[VFS_PATH_MAX];
+        shell_build_user_home_path(u->name, home, sizeof(home));
+        ugdb_del_user(u->uid);
+        terminal_print("userdel: '"); terminal_print(argv[argc - 1]);
+        terminal_print_line("' eliminado");
+        if (remove_home) {
+            vfs_delete(home);
+            terminal_print("userdel: home "); terminal_print(home);
+            terminal_print_line(" eliminado (best effort)");
+        }
+    }
+    return 1;
+}
+
+static int cmd_usermod(int argc, const char* argv[], int background) {
+    const ugdb_user_t* u;
+    int i;
+    (void)background;
+
+    if (task_current_euid() != 0U) {
+        terminal_print_line("[error] usermod: se requiere root"); return 1;
+    }
+    if (argc < 4) {
+        terminal_print_line("Uso: usermod -n <nombre>|-g <gid>|-p <pass>  <usuario>"); return 1;
+    }
+    u = ugdb_find_by_name(argv[argc - 1]);
+    if (!u) {
+        terminal_print("usermod: usuario no encontrado: ");
+        terminal_print_line(argv[argc - 1]); return 1;
+    }
+    for (i = 1; i < argc - 1; i++) {
+        if (str_equals(argv[i], "-n") && i + 1 < argc - 1) {
+            char old_home[VFS_PATH_MAX], new_home[VFS_PATH_MAX];
+            shell_build_user_home_path(u->name,      old_home, sizeof(old_home));
+            shell_build_user_home_path(argv[i + 1],  new_home, sizeof(new_home));
+            ugdb_set_user_name(u->uid, argv[i + 1]);
+            vfs_rename(old_home, new_home);
+            i++;
+        } else if (str_equals(argv[i], "-g") && i + 1 < argc - 1) {
+            unsigned int ng = (unsigned int)parser_parse_integer(argv[i + 1], -1);
+            if (!ugdb_find_group_by_gid(ng)) {
+                terminal_print("usermod: grupo no encontrado: ");
+                terminal_print_line(argv[i + 1]); return 1;
+            }
+            ugdb_set_user_gid(u->uid, ng);
+            i++;
+        } else if (str_equals(argv[i], "-p") && i + 1 < argc - 1) {
+            ugdb_set_password(u->uid, argv[i + 1]);
+            i++;
+        }
+    }
+    terminal_print("usermod: '"); terminal_print(argv[argc - 1]);
+    terminal_print_line("' actualizado");
+    return 1;
+}
+
+static int cmd_groupadd(int argc, const char* argv[], int background) {
+    unsigned int new_gid;
+    (void)background;
+
+    if (task_current_euid() != 0U) {
+        terminal_print_line("[error] groupadd: se requiere root"); return 1;
+    }
+    if (argc < 2) { terminal_print_line("Uso: groupadd <nombre> [-g gid]"); return 1; }
+    if (ugdb_find_group_by_name(argv[1])) {
+        terminal_print("groupadd: grupo ya existe: ");
+        terminal_print_line(argv[1]); return 1;
+    }
+    new_gid = ugdb_next_gid();
+    if (argc >= 4 && str_equals(argv[2], "-g"))
+        new_gid = (unsigned int)parser_parse_integer(argv[3], (int)new_gid);
+    if (ugdb_find_group_by_gid(new_gid)) {
+        terminal_print("groupadd: gid "); terminal_print_uint(new_gid);
+        terminal_print_line(" ya en uso"); return 1;
+    }
+    if (ugdb_add_group(new_gid, argv[1]) < 0) {
+        terminal_print_line("groupadd: tabla de grupos llena"); return 1;
+    }
+    terminal_print("groupadd: '"); terminal_print(argv[1]);
+    terminal_print("' creado (gid="); terminal_print_uint(new_gid);
+    terminal_print_line(")");
+    return 1;
+}
+
+static int cmd_groupdel(int argc, const char* argv[], int background) {
+    const ugdb_group_t* g;
+    (void)background;
+
+    if (task_current_euid() != 0U) {
+        terminal_print_line("[error] groupdel: se requiere root"); return 1;
+    }
+    if (argc < 2) { terminal_print_line("Uso: groupdel <nombre>"); return 1; }
+    g = ugdb_find_group_by_name(argv[1]);
+    if (!g) {
+        terminal_print("groupdel: grupo no encontrado: ");
+        terminal_print_line(argv[1]); return 1;
+    }
+    if (ugdb_del_group(g->gid) < 0) {
+        terminal_print("groupdel: no se puede eliminar '");
+        terminal_print(argv[1]); terminal_print_line("'"); return 1;
+    }
+    terminal_print("groupdel: '"); terminal_print(argv[1]);
+    terminal_print_line("' eliminado");
+    return 1;
+}
+
+static int cmd_gpasswd(int argc, const char* argv[], int background) {
+    const ugdb_group_t* g;
+    const ugdb_user_t* u;
+    int adding;
+    (void)background;
+
+    if (argc < 4 || (!str_equals(argv[1], "-a") && !str_equals(argv[1], "-d"))) {
+        terminal_print_line("Uso: gpasswd -a|-d <usuario> <grupo>"); return 1;
+    }
+    if (task_current_euid() != 0U) {
+        terminal_print_line("[error] gpasswd: se requiere root"); return 1;
+    }
+    adding = str_equals(argv[1], "-a");
+    u = ugdb_find_by_name(argv[2]);
+    if (!u) {
+        terminal_print("gpasswd: usuario no encontrado: ");
+        terminal_print_line(argv[2]); return 1;
+    }
+    g = ugdb_find_group_by_name(argv[3]);
+    if (!g) {
+        terminal_print("gpasswd: grupo no encontrado: ");
+        terminal_print_line(argv[3]); return 1;
+    }
+    if (adding) {
+        if (ugdb_group_add_member(g->gid, u->uid) < 0) {
+            terminal_print_line("gpasswd: no se pudo añadir (¿tabla llena?)"); return 1;
+        }
+        terminal_print(u->name); terminal_print(" añadido al grupo ");
+        terminal_print_line(g->name);
+    } else {
+        if (ugdb_group_remove_member(g->gid, u->uid) < 0) {
+            terminal_print(u->name); terminal_print(" no era miembro de ");
+            terminal_print_line(g->name); return 1;
+        }
+        terminal_print(u->name); terminal_print(" eliminado del grupo ");
+        terminal_print_line(g->name);
+    }
+    terminal_print_line("(cambios efectivos en el siguiente login)");
+    return 1;
+}
+
+static int cmd_login(int argc, const char* argv[], int background) {
+    const ugdb_user_t* u;
+    char pw[16];
+    (void)background;
+
+    if (argc < 2) { terminal_print_line("Uso: login <usuario>"); return 1; }
+    u = ugdb_find_by_name(argv[1]);
+    if (!u) {
+        terminal_print("login: usuario desconocido: ");
+        terminal_print_line(argv[1]); return 1;
+    }
+    /* Prompt only if the account has a password set */
+    if (!ugdb_check_password(u->uid, "")) {
+        terminal_print("Contraseña: ");
+        shell_read_secret_line(pw, sizeof(pw));
+        if (!ugdb_check_password(u->uid, pw)) {
+            terminal_print_line("login: autenticación fallida"); return 1;
+        }
+    }
+    task_force_identity(u->uid, u->gid);
+    shell_apply_user_session(0);
+    terminal_print("Sesión iniciada como '"); terminal_print(u->name);
+    terminal_print("' (uid="); terminal_print_uint(u->uid);
+    terminal_print_line(")");
+    return 1;
+}
+
+static int cmd_logout(int argc, const char* argv[], int background) {
+    (void)argc; (void)argv; (void)background;
+    if (task_current_euid() == UGDB_UID_ROOT) {
+        terminal_print_line("logout: ya estás en la sesión root"); return 1;
+    }
+    task_force_identity(UGDB_UID_ROOT, UGDB_GID_WHEEL);
+    shell_apply_user_session(0);
+    terminal_print_line("Sesión cerrada. Sesión root restaurada.");
+    return 1;
+}
+
+static int cmd_who(int argc, const char* argv[], int background) {
+    (void)argc; (void)argv; (void)background;
+    terminal_print(ugdb_username(task_current_euid()));
+    terminal_print_line("     tty0");
+    return 1;
+}
+
+static int cmd_users(int argc, const char* argv[], int background) {
+    (void)argc; (void)argv; (void)background;
+    terminal_print_line(ugdb_username(task_current_euid()));
+    return 1;
 }
 
 /* ---- cmd_disk ---- */
