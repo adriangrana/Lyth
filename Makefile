@@ -20,7 +20,8 @@ QEMU = qemu-system-i386
 QEMU_DISPLAY ?= sdl,show-cursor=off
 FB_MOUSE_CURSOR ?= 0
 AUTOTEST ?= 0
-QEMU_FLAGS = -boot d -cdrom $(ISO_IMAGE) -m 128 -no-reboot -no-shutdown -vga std -display $(QEMU_DISPLAY)
+QEMU_NET = -netdev user,id=net0 -device e1000,netdev=net0
+QEMU_FLAGS = -boot d -cdrom $(ISO_IMAGE) -m 128 -no-reboot -no-shutdown -vga std -display $(QEMU_DISPLAY) $(QEMU_NET)
 DISK_IMG  ?= disk.img
 AUTOTEST_ISO_IMAGE = $(DIST_DIR)/lyth-autotest.iso
 

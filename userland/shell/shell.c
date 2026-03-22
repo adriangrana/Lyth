@@ -324,7 +324,7 @@ static command_t commands[] = {
     {"sync",    cmd_sync,    "fuerza escritura pendiente a disco: sync"},
     {"alarm",   cmd_alarm,   "arma/cancela SIGALRM: alarm [segundos]"},
     /* --- networking --- */
-    {"ping",    cmd_ping,    "envia ICMP echo: ping <ip> [count]"},
+    {"ping",    cmd_ping,    "envia ICMP echo: ping [-t] <ip|host> [count]"},
     {"ifconfig",cmd_ifconfig,"muestra/configura interfaces de red"},
     {"netstat", cmd_netstat, "muestra estado de red y sockets"},
     {"arp",     cmd_arp_cmd, "muestra la tabla ARP: arp"},
@@ -6713,6 +6713,14 @@ static void ping_reply_cb(uint32_t src_ip, uint16_t id, uint16_t seq, uint16_t d
     ping_got_reply = 1;
 }
 
+static int is_numeric_ip(const char* s) {
+    while (*s) {
+        if ((*s < '0' || *s > '9') && *s != '.') return 0;
+        s++;
+    }
+    return 1;
+}
+
 static uint32_t parse_ip(const char* s) {
     uint8_t parts[4] = {0, 0, 0, 0};
     int p = 0;
@@ -6725,20 +6733,48 @@ static uint32_t parse_ip(const char* s) {
     return ip4_addr(parts[0], parts[1], parts[2], parts[3]);
 }
 
+static uint32_t resolve_host(const char* arg) {
+    if (is_numeric_ip(arg)) return parse_ip(arg);
+    uint32_t ip = dns_resolve(arg);
+    if (!ip) {
+        terminal_print("No se pudo resolver: ");
+        terminal_print_line(arg);
+    }
+    return ip;
+}
+
 static int cmd_ping(int argc, const char* argv[], int background) {
     (void)background;
     if (argc < 2) {
-        terminal_print_line("Uso: ping <ip> [count]");
+        terminal_print_line("Uso: ping [-t] <ip|host> [count]");
         return 1;
     }
-    uint32_t dst = parse_ip(argv[1]);
-    int count = 4;
-    if (argc >= 3) count = (int)parse_positive_or_default(argv[2], 4);
+
+    int continuous = 0;
+    int arg_idx = 1;
+    if (str_equals(argv[1], "-t")) {
+        continuous = 1;
+        arg_idx = 2;
+    }
+    if (arg_idx >= argc) {
+        terminal_print_line("Uso: ping [-t] <ip|host> [count]");
+        return 1;
+    }
 
     netif_t* iface = netif_get_default();
     if (!iface || !iface->up) {
         terminal_print_line("Sin interfaz de red activa");
         return 1;
+    }
+
+    uint32_t dst = resolve_host(argv[arg_idx]);
+    if (!dst) return 1;
+
+    int count = 4;
+    if (continuous) {
+        count = 0x7FFFFFFF; /* quasi-infinito, Ctrl+C para parar */
+    } else if (arg_idx + 1 < argc) {
+        count = (int)parse_positive_or_default(argv[arg_idx + 1], 4);
     }
 
     icmp_set_reply_callback(ping_reply_cb);
@@ -6747,16 +6783,27 @@ static int cmd_ping(int argc, const char* argv[], int background) {
     ip4_to_str(dst, ip_str);
     terminal_print("PING ");
     terminal_print(ip_str);
+    if (!is_numeric_ip(argv[arg_idx])) {
+        terminal_print(" (");
+        terminal_print(argv[arg_idx]);
+        terminal_print(")");
+    }
     terminal_print_line("");
 
     for (int i = 0; i < count; i++) {
+        /* Ctrl+C para interrumpir */
+        keyboard_event_t ev;
+        if (keyboard_poll_event(&ev) && ev.type == KEY_EVENT_CTRL_C) break;
+
         ping_got_reply = 0;
         icmp_send_echo(iface, dst, 0x1234, (uint16_t)(i + 1), 0, 0);
 
         uint32_t start = timer_get_ticks();
-        while (!ping_got_reply && (timer_get_ticks() - start) < 200);
+        while (!ping_got_reply && (timer_get_ticks() - start) < 200) {
+            if (keyboard_poll_event(&ev) && ev.type == KEY_EVENT_CTRL_C) { i = count; break; }
+        }
 
-        if (!ping_got_reply) {
+        if (!ping_got_reply && i < count) {
             terminal_print("Timeout seq=");
             terminal_print_uint((uint32_t)(i + 1));
             terminal_print_line("");
@@ -6915,7 +6962,8 @@ static int cmd_nc(int argc, const char* argv[], int background) {
         terminal_print_line("Uso: nc <ip> <port> <mensaje>");
         return 1;
     }
-    uint32_t dst = parse_ip(argv[1]);
+    uint32_t dst = resolve_host(argv[1]);
+    if (!dst) return 1;
     uint16_t port = (uint16_t)parse_positive_or_default(argv[2], 0);
     const char* msg = argv[3];
 
