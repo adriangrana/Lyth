@@ -1,4 +1,5 @@
 #include "heap.h"
+#include "slab.h"
 #include "spinlock.h"
 #include "physmem.h"
 #include "string.h"
@@ -131,6 +132,7 @@ void heap_init(void) {
     }
 
     heap_add_region(phys, HEAP_INITIAL_SIZE);
+    slab_init();
 }
 
 void* kmalloc(unsigned int size) {
@@ -139,6 +141,13 @@ void* kmalloc(unsigned int size) {
 
     if (size == 0 || heap_head == 0) {
         return 0;
+    }
+
+    /* Small allocations go through the slab allocator */
+    if (size <= SLAB_MAX_OBJ) {
+        result = slab_alloc(size);
+        if (result)
+            return result;
     }
 
     size = align_up(size);
@@ -181,6 +190,12 @@ void kfree(void* ptr) {
     heap_block_t* block;
 
     if (ptr == 0) {
+        return;
+    }
+
+    /* If it belongs to a slab page, free through slab */
+    if (slab_owns(ptr)) {
+        slab_free(ptr);
         return;
     }
 

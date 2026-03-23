@@ -48,10 +48,10 @@
 - [x] Paging
 - [x] Heap
 - [x] Espacio por proceso
-- [ ] Protección avanzada
-- [ ] Kernel heap robusto
+- [x] Protección avanzada
+- [x] Kernel heap robusto
 - [x] Copy-on-write
-- [ ] mmap / regiones mapeadas
+- [x] mmap / regiones mapeadas
 - [x] Guard pages para stacks
 - [x] Shared memory (shm)
 - [x] Message queues (mqueue)

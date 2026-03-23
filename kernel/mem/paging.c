@@ -87,7 +87,7 @@ void paging_init(multiboot_info_t* mbi) {
         "mov %%eax, %%cr4\n"
         "mov %0, %%cr3\n"
         "mov %%cr0, %%eax\n"
-        "or $0x80000000, %%eax\n"
+        "or $0x80010000, %%eax\n"   /* PG (bit 31) + WP (bit 16) */
         "mov %%eax, %%cr0\n"
         :
         : "r"(page_directory)

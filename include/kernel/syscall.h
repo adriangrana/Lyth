@@ -70,7 +70,9 @@ enum {
     SYSCALL_MQ_UNLINK    = 61,
     SYSCALL_MQ_OPEN      = 62,
     SYSCALL_MQ_SEND_TIMED = 63,
-    SYSCALL_MQ_RECV_TIMED = 64
+    SYSCALL_MQ_RECV_TIMED = 64,
+    SYSCALL_MMAP          = 65,  /* mmap(length, flags)     -> vaddr / 0 */
+    SYSCALL_MUNMAP        = 66   /* munmap(addr, length)    -> 0 / -1    */
 };
 
 #define SYSCALL_POLLIN   0x0001U
@@ -202,5 +204,9 @@ int syscall_mq_recv(int queue_id, void* buffer, unsigned int buffer_size, unsign
 int syscall_mq_send_timed(int queue_id, const void* message, unsigned int size, unsigned int timeout_ms);
 int syscall_mq_recv_timed(int queue_id, void* buffer, unsigned int buffer_size, unsigned int timeout_ms);
 int syscall_mq_unlink(int queue_id);
+
+/* mmap / munmap */
+void* syscall_mmap(unsigned int length, unsigned int flags);
+int   syscall_munmap(void* addr, unsigned int length);
 
 #endif

@@ -6,6 +6,7 @@
 #include "signal.h"
 #include "shm.h"
 #include "mqueue.h"
+#include "mmap.h"
 
 typedef enum {
 	TASK_STATE_FREE = 0,
@@ -187,5 +188,10 @@ int task_mq_unlink(int queue_id);
 int task_mq_list(mqueue_info_t* out, int max_queues);
 int task_mq_read_event_id(int queue_id);
 int task_mq_write_event_id(int queue_id);
+
+/* ---- mmap per-process ---- */
+uint32_t task_mmap(uint32_t length, uint32_t flags);
+int      task_munmap(uint32_t addr, uint32_t length);
+mmap_region_t* task_current_mmap_regions(void);
 
 #endif

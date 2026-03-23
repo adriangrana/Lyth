@@ -91,6 +91,7 @@ typedef struct {
     unsigned int supp_groups[TASK_MAX_SUPP_GROUPS]; /* supplementary groups */
     int supp_group_count;
     shm_mapping_t shm_mappings[SHM_MAX_MAPPINGS];
+    mmap_region_t mmap_regions[MMAP_MAX_REGIONS]; /* per-task VMA table */
     /* alarm()/setitimer() state */
     unsigned int alarm_tick;             /* tick at which SIGALRM fires (0 = not armed) */
     unsigned int itimer_interval_ticks; /* ITIMER_REAL reload interval (0 = one-shot) */
@@ -935,6 +936,7 @@ void task_system_init(void) {
         vfs_task_fd_init(tasks[i].fd_table);
         task_signal_handlers_init(&tasks[i]);
         task_reset_shm_mappings(&tasks[i]);
+        mmap_init_regions(tasks[i].mmap_regions);
     }
 
     shm_init();
@@ -2026,6 +2028,7 @@ int task_exec_current_user_from_frame(unsigned int frame_esp,
     if (old_page_directory != 0) {
         shm_detach_all(old_page_directory, task->shm_mappings, SHM_MAX_MAPPINGS);
         task_reset_shm_mappings(task);
+        mmap_init_regions(task->mmap_regions);
         if (old_user_physical_base != 0) {
             physmem_free_region(old_user_physical_base, PAGING_USER_SIZE);
         } else {
@@ -2521,6 +2524,7 @@ int task_fork_from_frame(unsigned int frame_esp) {
         interrupt_restore(flags);
         return -1;
     }
+    mmap_clone_regions(parent->mmap_regions, tasks[slot].mmap_regions);
     vfs_task_fd_inherit(tasks[slot].fd_table, parent->fd_table);  /* inherit open FDs */
     task_install_signal_trampoline(&tasks[slot]);
 
@@ -2734,4 +2738,47 @@ unsigned int task_schedule_on_syscall(unsigned int current_esp) {
 
     interrupt_restore(flags);
     return next_esp;
+}
+
+/* ── mmap per-process ─────────────────────────────────────────────────── */
+
+mmap_region_t* task_current_mmap_regions(void) {
+    if (current_task_index < 0)
+        return 0;
+    return tasks[current_task_index].mmap_regions;
+}
+
+uint32_t task_mmap(uint32_t length, uint32_t flags) {
+    task_entry_t* task;
+    uint32_t mmap_top;
+    uint32_t mmap_low;
+
+    (void)flags; /* only MAP_ANONYMOUS|MAP_PRIVATE supported */
+
+    if (current_task_index < 0)
+        return MMAP_FAILED;
+
+    task = &tasks[current_task_index];
+    if (!task->user_mode)
+        return MMAP_FAILED;
+
+    /*
+     * mmap region sits between the end of the user heap and the SHM base.
+     * We split the available space: lower half stays for the heap allocator,
+     * upper half is the mmap arena.
+     */
+    mmap_top = PAGING_USER_SHM_BASE;
+    mmap_low = task->user_heap_base + task->user_heap_size / 2;
+    mmap_low = (mmap_low + MMAP_PAGE_SIZE - 1U) & ~(MMAP_PAGE_SIZE - 1U);
+
+    if (mmap_low >= mmap_top)
+        return MMAP_FAILED;
+
+    return mmap_anonymous(task->mmap_regions, mmap_top, mmap_low, length);
+}
+
+int task_munmap(uint32_t addr, uint32_t length) {
+    if (current_task_index < 0)
+        return -1;
+    return mmap_unmap(tasks[current_task_index].mmap_regions, addr, length);
 }

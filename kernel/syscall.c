@@ -9,6 +9,7 @@
 #include "vfs.h"
 #include "pipe.h"
 #include "paging.h"
+#include "mmap.h"
 #include "string.h"
 #include "ugdb.h"
 #include <stdint.h>
@@ -1395,6 +1396,38 @@ unsigned int syscall_callback(unsigned int number,
             return 0;
         }
 
+        case SYSCALL_MMAP: {
+            /* arg0 = length, arg1 = flags */
+            uint32_t addr;
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1);
+                return MMAP_FAILED;
+            }
+            addr = task_mmap(arg0, arg1);
+            if (addr == MMAP_FAILED) {
+                task_set_errno(12); /* ENOMEM */
+                return MMAP_FAILED;
+            }
+            return addr;
+        }
+
+        case SYSCALL_MUNMAP: {
+            /* arg0 = addr, arg1 = length */
+            if (!task_current_is_user_mode()) {
+                task_set_errno(1);
+                return (unsigned int)-1;
+            }
+            if (!paging_address_is_user_accessible(arg0, arg1)) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+            if (task_munmap(arg0, arg1) != 0) {
+                task_set_errno(22); /* EINVAL */
+                return (unsigned int)-1;
+            }
+            return 0;
+        }
+
         default:
             return 0;
     }
@@ -1806,4 +1839,15 @@ int syscall_mq_unlink(int queue_id) {
     return (int)syscall_invoke(SYSCALL_MQ_UNLINK,
                                (unsigned int)queue_id,
                                0U, 0U, 0U);
+}
+
+void* syscall_mmap(unsigned int length, unsigned int flags) {
+    return (void*)(uintptr_t)syscall_invoke(SYSCALL_MMAP,
+                                            length, flags, 0U, 0U);
+}
+
+int syscall_munmap(void* addr, unsigned int length) {
+    return (int)syscall_invoke(SYSCALL_MUNMAP,
+                               (unsigned int)(uintptr_t)addr,
+                               length, 0U, 0U);
 }
