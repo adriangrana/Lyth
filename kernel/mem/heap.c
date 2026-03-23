@@ -1,18 +1,40 @@
 #include "heap.h"
 #include "spinlock.h"
+#include "physmem.h"
+#include "string.h"
 
-#define HEAP_SIZE (256 * 1024)
-#define HEAP_ALIGNMENT 8
+/*
+ * Dynamic kernel heap.
+ *
+ * Strategy: first-fit free-list with splitting and coalescing.
+ * Memory comes from physmem_alloc_region() (identity-mapped).
+ * Starts with HEAP_INITIAL_SIZE and grows in HEAP_GROW_SIZE chunks.
+ * Maximum HEAP_MAX_REGIONS expansion regions.
+ */
+
+#define HEAP_INITIAL_SIZE  (4 * 1024 * 1024)   /* 4 MB */
+#define HEAP_GROW_SIZE     (2 * 1024 * 1024)    /* 2 MB per expansion */
+#define HEAP_MAX_REGIONS   32
+#define HEAP_ALIGNMENT     16
+#define HEAP_BLOCK_MAGIC   0x4B484550           /* "KHEP" */
 
 typedef struct heap_block {
+    unsigned int magic;
     unsigned int size;
     int free;
     struct heap_block* next;
 } heap_block_t;
 
-static unsigned char heap_area[HEAP_SIZE];
+typedef struct {
+    uint32_t phys_addr;
+    uint32_t size;
+} heap_region_t;
+
 static heap_block_t* heap_head = 0;
 static spinlock_t heap_lock = SPINLOCK_INIT;
+static heap_region_t regions[HEAP_MAX_REGIONS];
+static int region_count = 0;
+static unsigned int heap_total_size = 0;
 
 static unsigned int align_up(unsigned int size) {
     unsigned int mask = HEAP_ALIGNMENT - 1;
@@ -22,13 +44,15 @@ static unsigned int align_up(unsigned int size) {
 static void split_block(heap_block_t* block, unsigned int size) {
     heap_block_t* next_block;
     unsigned int remaining;
+    unsigned int min_split = sizeof(heap_block_t) + HEAP_ALIGNMENT;
 
-    if (block == 0 || block->size <= size + sizeof(heap_block_t) + HEAP_ALIGNMENT) {
+    if (block == 0 || block->size <= size + min_split) {
         return;
     }
 
     remaining = block->size - size - sizeof(heap_block_t);
     next_block = (heap_block_t*)((unsigned char*)(block + 1) + size);
+    next_block->magic = HEAP_BLOCK_MAGIC;
     next_block->size = remaining;
     next_block->free = 1;
     next_block->next = block->next;
@@ -46,21 +70,72 @@ static void coalesce_blocks(void) {
             block->next = block->next->next;
             continue;
         }
-
         block = block->next;
     }
 }
 
+/* Add a new memory region to the heap free list */
+static int heap_add_region(uint32_t phys, uint32_t size) {
+    heap_block_t* new_block;
+    heap_block_t* last;
+
+    if (region_count >= HEAP_MAX_REGIONS || size <= sizeof(heap_block_t)) {
+        return 0;
+    }
+
+    regions[region_count].phys_addr = phys;
+    regions[region_count].size = size;
+    region_count++;
+
+    new_block = (heap_block_t*)(uint32_t)phys;
+    new_block->magic = HEAP_BLOCK_MAGIC;
+    new_block->size = size - sizeof(heap_block_t);
+    new_block->free = 1;
+    new_block->next = 0;
+
+    heap_total_size += size;
+
+    if (!heap_head) {
+        heap_head = new_block;
+        return 1;
+    }
+
+    /* Append to end of list */
+    last = heap_head;
+    while (last->next != 0) {
+        last = last->next;
+    }
+    last->next = new_block;
+
+    coalesce_blocks();
+    return 1;
+}
+
+/* Try to grow the heap by allocating more physical memory */
+static int heap_grow(void) {
+    uint32_t phys = physmem_alloc_region(HEAP_GROW_SIZE, 4096);
+    if (!phys) return 0;
+    return heap_add_region(phys, HEAP_GROW_SIZE);
+}
+
 void heap_init(void) {
-    heap_head = (heap_block_t*)heap_area;
-    heap_head->size = HEAP_SIZE - sizeof(heap_block_t);
-    heap_head->free = 1;
-    heap_head->next = 0;
+    uint32_t phys;
+
+    heap_head = 0;
+    region_count = 0;
+    heap_total_size = 0;
+
+    phys = physmem_alloc_region(HEAP_INITIAL_SIZE, 4096);
+    if (!phys) {
+        return;
+    }
+
+    heap_add_region(phys, HEAP_INITIAL_SIZE);
 }
 
 void* kmalloc(unsigned int size) {
     heap_block_t* block;
-    void *result = 0;
+    void* result = 0;
 
     if (size == 0 || heap_head == 0) {
         return 0;
@@ -69,8 +144,9 @@ void* kmalloc(unsigned int size) {
     size = align_up(size);
 
     uint32_t flags = spinlock_acquire_irqsave(&heap_lock);
-    block = heap_head;
 
+    /* First-fit search */
+    block = heap_head;
     while (block != 0) {
         if (block->free && block->size >= size) {
             split_block(block, size);
@@ -78,11 +154,26 @@ void* kmalloc(unsigned int size) {
             result = (void*)(block + 1);
             break;
         }
-
         block = block->next;
     }
-    spinlock_release_irqrestore(&heap_lock, flags);
 
+    /* Try to grow if allocation failed */
+    if (!result) {
+        if (heap_grow()) {
+            block = heap_head;
+            while (block != 0) {
+                if (block->free && block->size >= size) {
+                    split_block(block, size);
+                    block->free = 0;
+                    result = (void*)(block + 1);
+                    break;
+                }
+                block = block->next;
+            }
+        }
+    }
+
+    spinlock_release_irqrestore(&heap_lock, flags);
     return result;
 }
 
@@ -95,6 +186,13 @@ void kfree(void* ptr) {
 
     uint32_t flags = spinlock_acquire_irqsave(&heap_lock);
     block = ((heap_block_t*)ptr) - 1;
+
+    if (block->magic != HEAP_BLOCK_MAGIC) {
+        /* Corrupt or invalid pointer — do nothing */
+        spinlock_release_irqrestore(&heap_lock, flags);
+        return;
+    }
+
     block->free = 1;
     coalesce_blocks();
     spinlock_release_irqrestore(&heap_lock, flags);
@@ -111,6 +209,7 @@ void heap_get_stats(heap_stats_t* stats) {
         return;
     }
 
+    uint32_t flags = spinlock_acquire_irqsave(&heap_lock);
     block = heap_head;
     while (block != 0) {
         blocks++;
@@ -122,8 +221,9 @@ void heap_get_stats(heap_stats_t* stats) {
         }
         block = block->next;
     }
+    spinlock_release_irqrestore(&heap_lock, flags);
 
-    stats->total_size = HEAP_SIZE;
+    stats->total_size = heap_total_size;
     stats->used_size = used;
     stats->free_size = free_size;
     stats->block_count = blocks;

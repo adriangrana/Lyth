@@ -4,14 +4,12 @@
 #include "font_psf.h"
 #include "input.h"
 #include "mouse.h"
-#include "physmem.h"
+#include "heap.h"
 #include "string.h"
 #include "timer.h"
 
 /* ---- screen state ---- */
 static uint32_t* back_buffer;
-static uint32_t back_buffer_phys;
-static uint32_t back_buffer_size;
 static int scr_w, scr_h;
 static uint32_t scr_pitch;
 static int gui_running;
@@ -444,11 +442,9 @@ void gui_init(void) {
     scr_h = (int)fb_height();
     scr_pitch = fb_pitch();
 
-    back_buffer_size = (uint32_t)(scr_w * scr_h * 4);
-    back_buffer_phys = physmem_alloc_region(back_buffer_size, 4096);
-    if (!back_buffer_phys) return;
-    back_buffer = (uint32_t*)back_buffer_phys;
-    memset(back_buffer, 0, back_buffer_size);
+    back_buffer = (uint32_t*)kmalloc(scr_w * scr_h * 4);
+    if (!back_buffer) return;
+    memset(back_buffer, 0, scr_w * scr_h * 4);
 
     mouse_x = scr_w / 2;
     mouse_y = scr_h / 2;
@@ -599,9 +595,8 @@ void gui_run(void) {
         }
     }
     if (back_buffer) {
-        physmem_free_region(back_buffer_phys, back_buffer_size);
+        kfree(back_buffer);
         back_buffer = 0;
-        back_buffer_phys = 0;
     }
 
     /* restore terminal display */
