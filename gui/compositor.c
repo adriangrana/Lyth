@@ -510,9 +510,9 @@ void gui_run(void) {
             }
 
             if (ev.device_type == INPUT_DEVICE_MOUSE) {
-                /* update mouse position */
-                mouse_x += ev.delta_x;
-                mouse_y += ev.delta_y;
+                /* update mouse position (deltas match mouse_state convention) */
+                mouse_x -= ev.delta_x;
+                mouse_y -= ev.delta_y;
                 if (mouse_x < 0) mouse_x = 0;
                 if (mouse_y < 0) mouse_y = 0;
                 if (mouse_x >= scr_w) mouse_x = scr_w - 1;
