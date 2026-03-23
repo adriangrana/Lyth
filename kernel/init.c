@@ -18,6 +18,7 @@
 #include "fbconsole.h"
 #include "terminal.h"
 #include "shell_input.h"
+#include "compositor.h"
 
 static int init_task_pid = -1;
 
@@ -44,12 +45,14 @@ static void init_step(void) {
     while (input_poll_event(&event)) {
         got_event = 1;
 
-        if (event.device_type == INPUT_DEVICE_MOUSE && fb_active()) {
+        if (event.device_type == INPUT_DEVICE_MOUSE && fb_active()
+            && !gui_is_active()) {
             mouse_get_state(&mouse_state);
             fb_move_mouse_cursor(mouse_state.x, mouse_state.y);
         }
 
-        shell_input_handle_event(&event);
+        if (!gui_is_active())
+            shell_input_handle_event(&event);
     }
 
     terminal_update_cursor();

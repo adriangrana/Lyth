@@ -470,6 +470,10 @@ void gui_request_redraw(void) {
     need_redraw = 1;
 }
 
+int gui_is_active(void) {
+    return gui_running;
+}
+
 void gui_run(void) {
     input_event_t ev;
     int desktop_h;
@@ -508,7 +512,7 @@ void gui_run(void) {
             if (ev.device_type == INPUT_DEVICE_MOUSE) {
                 /* update mouse position */
                 mouse_x += ev.delta_x;
-                mouse_y -= ev.delta_y; /* PS/2 y is inverted */
+                mouse_y += ev.delta_y;
                 if (mouse_x < 0) mouse_x = 0;
                 if (mouse_y < 0) mouse_y = 0;
                 if (mouse_x >= scr_w) mouse_x = scr_w - 1;
