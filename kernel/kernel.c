@@ -37,6 +37,31 @@
 #include "socket.h"
 #include "ahci.h"
 
+/* from lib/string.c — avoid including string.h (size_t conflict) */
+extern int str_starts_with(const char* str, const char* prefix);
+extern const char* str_after_prefix(const char* str, const char* prefix);
+
+static const char* boot_mode_str = "desconocido";
+
+static void parse_boot_mode(multiboot_info_t* mbi) {
+    if (!(mbi->flags & (1U << 2)) || !mbi->cmdline)
+        return;
+    const char* cmdline = (const char*)(uintptr_t)mbi->cmdline;
+    /* buscar boot_mode=uefi o boot_mode=bios en la cmdline */
+    for (const char* p = cmdline; *p; p++) {
+        if (str_starts_with(p, "boot_mode=")) {
+            const char* val = str_after_prefix(p, "boot_mode=");
+            if (val) {
+                if (str_starts_with(val, "uefi"))
+                    boot_mode_str = "UEFI";
+                else if (str_starts_with(val, "bios"))
+                    boot_mode_str = "BIOS";
+            }
+            return;
+        }
+    }
+}
+
 static void terminal_write_uint(uint32_t value) {
     char buffer[16];
     int index = 0;
@@ -61,6 +86,9 @@ static void terminal_write_uint(uint32_t value) {
 
 static void print_framebuffer_info(void) {
     terminal_print(LYTH_KERNEL_PRETTY_NAME "\n");
+    terminal_print("Boot: ");
+    terminal_print(boot_mode_str);
+    terminal_print("\n");
 
     if (!fb_active()) {
         terminal_print("Framebuffer: no disponible\n\n");
@@ -119,6 +147,10 @@ void kernel_main(unsigned long mbi_ptr) {
     terminal_init();
         serial_init();
         serial_print("[boot] " LYTH_KERNEL_PRETTY_NAME " serial activo\n");
+    parse_boot_mode(mbi);
+    serial_print("[boot] Boot: ");
+    serial_print(boot_mode_str);
+    serial_print("\n");
     if (fb_init(mbi)) {
         terminal_clear();
         klog_write(KLOG_LEVEL_INFO, "video", "Framebuffer activado");

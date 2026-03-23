@@ -39,4 +39,5 @@ dist/
 # OS-generated files
 # =========================
 .DS_Store
-Thumbs.db*.bak
+Thumbs.db
+*.bak

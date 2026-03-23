@@ -141,6 +141,7 @@
 - [x] Capa de dispositivo de bloques
 - [x] Disco
 - [ ] USB
+- [ ] Video
 - [x] Red (E1000)
 - [x] PCI
 - [x] RTC
