@@ -65,6 +65,8 @@ typedef struct {
 /* ── State ──────────────────────────────────────────────────────── */
 
 static acpi_madt_info_t madt_info;
+static const rsdt_t*    cached_rsdt = 0;
+static uint32_t         cached_entry_count = 0;
 
 /* ── Helpers ────────────────────────────────────────────────────── */
 
@@ -210,6 +212,10 @@ void acpi_init(void) {
 	entry_count = (rsdt->header.length - sizeof(acpi_sdt_header_t))
 		/ sizeof(uint32_t);
 
+	/* Cache for acpi_find_table() */
+	cached_rsdt = rsdt;
+	cached_entry_count = entry_count;
+
 	for (uint32_t i = 0; i < entry_count; i++) {
 		const acpi_sdt_header_t* hdr =
 			(const acpi_sdt_header_t*)(uintptr_t)rsdt->entries[i];
@@ -219,13 +225,33 @@ void acpi_init(void) {
 			parse_madt((const madt_header_t*)hdr);
 			madt_info.found = 1;
 			klog_write(KLOG_LEVEL_INFO, "acpi", "MADT encontrada");
-			return;
+			break;
 		}
 	}
 
-	klog_write(KLOG_LEVEL_WARN, "acpi", "MADT no encontrada en RSDT");
+	if (!madt_info.found) {
+		klog_write(KLOG_LEVEL_WARN, "acpi", "MADT no encontrada en RSDT");
+	}
 }
 
 const acpi_madt_info_t* acpi_get_madt_info(void) {
 	return &madt_info;
+}
+
+const void* acpi_find_table(const char* signature) {
+	if (!cached_rsdt || !signature) {
+		return 0;
+	}
+
+	for (uint32_t i = 0; i < cached_entry_count; i++) {
+		const acpi_sdt_header_t* hdr =
+			(const acpi_sdt_header_t*)(uintptr_t)cached_rsdt->entries[i];
+
+		if (mem_compare(hdr->signature, signature, 4) == 0 &&
+		    checksum_valid(hdr, hdr->length)) {
+			return hdr;
+		}
+	}
+
+	return 0;
 }

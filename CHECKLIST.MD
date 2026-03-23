@@ -3,6 +3,7 @@
 ## 1. Arranque y arquitectura base
 - [x] GRUB + Multiboot
 - [x] Kernel ELF32
+- [ ] Compatibilidad con 64-bits
 - [x] Stack inicial
 - [x] ACPI (MADT, LAPIC/IOAPIC discovery)
 - [ ] Soporte hardware real
@@ -18,7 +19,7 @@
 ## 3. Interrupciones y tiempo
 - [x] IDT / PIC
 - [x] APIC / IOAPIC
-- [ ] HPET
+- [x] HPET
 - [x] Timers por proceso
 - [x] RTC / reloj del sistema
 - [x] sleep por syscall

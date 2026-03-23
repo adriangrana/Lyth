@@ -1,8 +1,25 @@
 #include "timer.h"
 #include "task.h"
+#include "hpet.h"
 
 static volatile unsigned int timer_ticks = 0;
 static unsigned int timer_frequency = 100;
+
+/* 64÷32 → 32 division using x86 div instruction */
+static uint32_t div64_32(uint64_t dividend, uint32_t divisor) {
+    uint32_t hi = (uint32_t)(dividend >> 32);
+    uint32_t lo = (uint32_t)dividend;
+    uint32_t q_lo, r;
+
+    if (hi == 0)
+        return lo / divisor;
+
+    r = hi % divisor;
+    __asm__ volatile ("divl %2"
+        : "=a"(q_lo), "=d"(r)
+        : "r"(divisor), "a"(lo), "d"(r));
+    return q_lo;
+}
 
 static inline void outb(unsigned short port, unsigned char value) {
     __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
@@ -49,9 +66,23 @@ unsigned int timer_get_uptime_ms(void) {
 }
 
 unsigned int timer_get_monotonic_us(void) {
-    /* Each PIT tick at 100 Hz = 10 ms = 10 000 µs.
-       At 100 Hz this wraps after ~11.9 hours; sufficient for an
-       educational kernel.  No 64-bit needed given current uptime. */
+    /* If HPET is available, use it for sub-tick precision.
+       HPET counter at ~14 MHz gives ~70 ns resolution.
+       We combine PIT-based seconds with HPET sub-tick offset. */
+    if (hpet_is_available()) {
+        uint32_t freq = hpet_get_frequency();
+        if (freq > 0) {
+            uint32_t counter = hpet_read_counter();
+            /* counter / freq = seconds.  We want microseconds.
+               Split to avoid overflow: us = (counter / freq) * 10^6
+                                            + ((counter % freq) * 10^6) / freq */
+            uint32_t sec = counter / freq;
+            uint32_t rem = counter % freq;
+            return sec * 1000000U + div64_32((uint64_t)rem * 1000000ULL, freq);
+        }
+    }
+
+    /* Fallback: PIT ticks */
     if (timer_frequency == 0U) {
         return 0U;
     }

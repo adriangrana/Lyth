@@ -4,13 +4,14 @@
 #include <stdint.h>
 
 /* ---- layout constants ---- */
-#define GUI_TITLEBAR_HEIGHT  20
-#define GUI_BORDER_WIDTH      2
+#define GUI_TITLEBAR_HEIGHT  32
+#define GUI_BORDER_WIDTH      1
 #define GUI_MAX_WINDOWS      16
 #define GUI_MAX_TITLE        64
 #define GUI_MAX_WIDGETS      32
-#define GUI_TASKBAR_HEIGHT   28
-#define GUI_CLOSE_BTN_SIZE   14
+#define GUI_TASKBAR_HEIGHT   48
+#define GUI_CLOSE_BTN_SIZE   12
+#define GUI_CORNER_RADIUS     6
 
 /* ---- colours (0xRRGGBB) ---- */
 #define GUI_COL_DESKTOP      0x008080
@@ -93,6 +94,9 @@ gui_window_t* gui_window_create(const char* title, int x, int y,
 void gui_window_destroy(gui_window_t* win);
 void gui_window_focus(gui_window_t* win);
 void gui_window_move(gui_window_t* win, int x, int y);
+void gui_window_fit_to_content(gui_window_t* win, int padding_right,
+                               int padding_bottom, int min_width,
+                               int min_height);
 int  gui_window_content_x(gui_window_t* win);
 int  gui_window_content_y(gui_window_t* win);
 int  gui_window_content_w(gui_window_t* win);

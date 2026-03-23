@@ -45,4 +45,11 @@ typedef struct {
 void acpi_init(void);
 const acpi_madt_info_t* acpi_get_madt_info(void);
 
+/*
+ * acpi_find_table  –  Search RSDT for a table with the given 4-char signature.
+ *                     Returns pointer to the SDT header, or 0 if not found.
+ *                     Must be called after acpi_init().
+ */
+const void* acpi_find_table(const char* signature);
+
 #endif

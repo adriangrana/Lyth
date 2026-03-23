@@ -31,6 +31,7 @@
 #include "acpi.h"
 #include "apic.h"
 #include "smp.h"
+#include "hpet.h"
 #include "pci.h"
 #include "e1000.h"
 #include "socket.h"
@@ -151,6 +152,7 @@ void kernel_main(unsigned long mbi_ptr) {
         klog_write(KLOG_LEVEL_WARN, "mouse", "Ratón PS/2 no disponible");
     }
     acpi_init();
+    hpet_init();
     apic_init();
     smp_init();
     interrupts_init();
