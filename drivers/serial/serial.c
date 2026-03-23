@@ -7,6 +7,7 @@
  * ============================================================ */
 
 #include "serial.h"
+#include <stdint.h>
 
 #define COM1_DATA   0x3F8
 #define COM1_IER    0x3F9   /* Interrupt Enable Register  */
@@ -39,7 +40,8 @@ void serial_init(void) {
 }
 
 static void serial_wait_ready(void) {
-    while (!(inb(COM1_LSR) & LSR_THRE))
+    int timeout = 100000;
+    while (!(inb(COM1_LSR) & LSR_THRE) && --timeout > 0)
         ;
 }
 
@@ -75,5 +77,13 @@ void serial_print_hex(unsigned int n) {
     int i;
     serial_print("0x");
     for (i = 28; i >= 0; i -= 4)
+        serial_putc(hex[(n >> i) & 0xF]);
+}
+
+void serial_print_hex64(uint64_t n) {
+    static const char hex[] = "0123456789abcdef";
+    int i;
+    serial_print("0x");
+    for (i = 60; i >= 0; i -= 4)
         serial_putc(hex[(n >> i) & 0xF]);
 }

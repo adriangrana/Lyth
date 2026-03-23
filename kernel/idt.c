@@ -32,6 +32,12 @@ void idt_set_gate(unsigned char num, uintptr_t base, unsigned short sel, unsigne
     idt[num].reserved  = 0;
 }
 
+void idt_set_gate_ist(unsigned char num, uintptr_t base, unsigned short sel,
+                      unsigned char flags, unsigned char ist) {
+    idt_set_gate(num, base, sel, flags);
+    idt[num].ist = ist & 0x07;
+}
+
 void idt_load_table(void) {
     idt_load((uintptr_t)&idtp);
 }

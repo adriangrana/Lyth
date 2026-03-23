@@ -36,6 +36,8 @@
 #include "e1000.h"
 #include "socket.h"
 #include "ahci.h"
+#include "video.h"
+#include "paging.h"
 
 /* from lib/string.c — avoid including string.h (size_t conflict) */
 extern int str_starts_with(const char* str, const char* prefix);
@@ -142,23 +144,62 @@ void kernel_main(unsigned long mbi_ptr) {
     mouse_state_t mouse_state;
 
     gdt_init();
+    interrupts_init_early();  /* IDT + exception handlers — catch faults early */
     klog_clear();
     klog_write(KLOG_LEVEL_INFO, "boot", "GDT inicializada");
     terminal_init();
-        serial_init();
-        serial_print("[boot] " LYTH_KERNEL_PRETTY_NAME " serial activo\n");
+    serial_init();
+    serial_print("[boot] " LYTH_KERNEL_PRETTY_NAME " serial activo\n");
     parse_boot_mode(mbi);
     serial_print("[boot] Boot: ");
     serial_print(boot_mode_str);
     serial_print("\n");
-    if (fb_init(mbi)) {
-        terminal_clear();
-        klog_write(KLOG_LEVEL_INFO, "video", "Framebuffer activado");
+
+    /* ── Early framebuffer mapping ──────────────────────────────── *
+     * On real hardware (especially UEFI) the framebuffer physical
+     * address may be above the 4 GB identity map set up in boot64.s.
+     * Map it now BEFORE any code tries to write pixels.             */
+    serial_print("[boot] MBI flags: ");
+    serial_print_hex(mbi->flags);
+    serial_print("\n");
+    if (mbi->flags & (1u << 12)) {
+        uint64_t fb_addr = mbi->framebuffer_addr;
+        uint64_t fb_size = (uint64_t)mbi->framebuffer_pitch
+                           * mbi->framebuffer_height;
+        serial_print("[boot] Framebuffer addr: ");
+        serial_print_hex64(fb_addr);
+        serial_print(" size: ");
+        serial_print_hex64(fb_size);
+        serial_print(" ");
+        serial_print_uint(mbi->framebuffer_width);
+        serial_print("x");
+        serial_print_uint(mbi->framebuffer_height);
+        serial_print("x");
+        serial_print_uint((unsigned int)mbi->framebuffer_bpp);
+        serial_print(" type=");
+        serial_print_uint((unsigned int)mbi->framebuffer_type);
+        serial_print("\n");
+        if (fb_addr != 0 && fb_size != 0) {
+            paging_map_region_early(fb_addr, fb_size);
+            serial_print("[boot] Framebuffer mapped in page tables\n");
+        }
     } else {
-        klog_write(KLOG_LEVEL_WARN, "video", "Framebuffer no disponible");
+        serial_print("[boot] WARN: No framebuffer info from bootloader\n");
     }
 
+    serial_print("[boot] Calling video_init...\n");
+    if (video_init(mbi)) {
+        terminal_clear();
+        klog_write(KLOG_LEVEL_INFO, "video", "Driver de video activado");
+        serial_print("[boot] Video OK\n");
+    } else {
+        klog_write(KLOG_LEVEL_WARN, "video", "Driver de video no disponible");
+        serial_print("[boot] WARN: video_init failed\n");
+    }
+
+    serial_print("[boot] physmem_init...\n");
     physmem_init(mbi);
+    serial_print("[boot] paging_init...\n");
     paging_init(mbi);
     heap_init();
     ugdb_init();
@@ -184,20 +225,39 @@ void kernel_main(unsigned long mbi_ptr) {
     } else {
         klog_write(KLOG_LEVEL_WARN, "mouse", "Ratón PS/2 no disponible");
     }
+    terminal_print("Init: ACPI...");
+    serial_print("[boot] acpi_init...\n");
     acpi_init();
+    terminal_print(" HPET...");
+    serial_print("[boot] hpet_init...\n");
     hpet_init();
+    terminal_print(" APIC...");
+    serial_print("[boot] apic_init...\n");
     apic_init();
+    terminal_print(" SMP...");
+    serial_print("[boot] smp_init...\n");
     smp_init();
+    serial_print("[boot] smp_init done\n");
+    terminal_print(" IRQ...");
     interrupts_init();
+    terminal_print(" RTC...");
     rtc_init();
+    terminal_print_line(" OK");
     klog_write(KLOG_LEVEL_INFO, "rtc",  "RTC CMOS inicializado");
     klog_write(KLOG_LEVEL_INFO, "irq",  "IDT/PIC/PIT inicializados");
 
+    terminal_print("Init: PCI...");
+    serial_print("[boot] pci_init...\n");
     pci_init();
+    terminal_print(" NET...");
+    serial_print("[boot] net/e1000_init...\n");
     net_init();
     e1000_init();
+    terminal_print_line(" OK");
     klog_write(KLOG_LEVEL_INFO, "net",  "Stack de red inicializado");
 
+    terminal_print("Init: ATA...");
+    serial_print("[boot] ata_init...\n");
     ata_init();
     if (ata_is_present(ATA_DRIVE_MASTER))
         klog_write(KLOG_LEVEL_INFO, "ata", "Disco 0 (master) detectado");
@@ -206,6 +266,8 @@ void kernel_main(unsigned long mbi_ptr) {
     if (ata_is_present(ATA_DRIVE_SLAVE))
         klog_write(KLOG_LEVEL_INFO, "ata", "Disco 1 (slave) detectado");
 
+    terminal_print(" BLKDEV...");
+    serial_print("[boot] blkdev_init...\n");
     blkdev_init();
     {
         int idx;
@@ -224,8 +286,11 @@ void kernel_main(unsigned long mbi_ptr) {
         klog_write(KLOG_LEVEL_INFO, "blkdev", "Capa de bloques lista");
     }
 
+    terminal_print(" AHCI...");
+    serial_print("[boot] ahci_init...\n");
     /* AHCI/SATA controller ---------------------------------------- */
     ahci_init();
+    terminal_print_line(" OK");
 
     /* Auto-mount FAT16 / FAT32 partitions ------------------------- */
     {

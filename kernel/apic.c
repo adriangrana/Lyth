@@ -207,8 +207,8 @@ void ioapic_route_irq(uint8_t irq, uint8_t vector, int masked) {
 		lo |= (1U << 16);
 	}
 
-	/* Destination: LAPIC ID 0 (BSP), physical destination mode */
-	hi = 0;  /* destination APIC ID = 0 (bits 24-31) */
+	/* Destination: BSP LAPIC ID, physical destination mode */
+	hi = (uint32_t)apic_get_id() << 24;
 
 	ioapic_write(reg_lo + 1, hi);
 	ioapic_write(reg_lo, lo);
@@ -224,7 +224,7 @@ void ioapic_route_irq_level(uint8_t gsi, uint8_t vector, int masked) {
 	lo |= (1U << 15);  /* level-triggered */
 	if (masked) lo |= (1U << 16);
 
-	uint32_t hi = 0;  /* destination APIC ID 0 (BSP) */
+	uint32_t hi = (uint32_t)apic_get_id() << 24;  /* BSP LAPIC ID */
 	ioapic_write(reg_lo + 1, hi);
 	ioapic_write(reg_lo, lo);
 }
@@ -275,8 +275,9 @@ uint8_t apic_get_id(void) {
 }
 
 static void lapic_wait_icr(void) {
-	/* Wait for delivery status bit (12) to clear */
-	while (lapic_read(LAPIC_ICR_LOW) & (1U << 12)) {
+	/* Wait for delivery status bit (12) to clear, with hard timeout */
+	int timeout = 1000000;
+	while ((lapic_read(LAPIC_ICR_LOW) & (1U << 12)) && --timeout > 0) {
 		__asm__ volatile ("pause");
 	}
 }

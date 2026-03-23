@@ -1,7 +1,9 @@
 #include "fbconsole.h"
 #include "font_psf.h"
 #include "terminal.h"
+#include "serial.h"
 #include <stdint.h>
+#include <string.h>
 
 #define FONT_BITMAP_WIDTH   FONT_PSF_WIDTH
 #define FONT_BITMAP_HEIGHT  FONT_PSF_HEIGHT
@@ -245,6 +247,7 @@ static void fb_copy_rect_up(int x, int y, int width, int height, int delta_y) {
 
 int fb_init(multiboot_info_t* mbi) {
     if (!mbi) {
+        serial_print("[fb] init: mbi=NULL\n");
         fb_is_active = 0;
         return 0;
     }
@@ -253,11 +256,15 @@ int fb_init(multiboot_info_t* mbi) {
         mbi->framebuffer_addr == 0 ||
         mbi->framebuffer_width == 0 ||
         mbi->framebuffer_height == 0) {
+        serial_print("[fb] init: no framebuffer in MBI\n");
         fb_is_active = 0;
         return 0;
     }
 
     if (mbi->framebuffer_bpp != 16 && mbi->framebuffer_bpp != 24 && mbi->framebuffer_bpp != 32) {
+        serial_print("[fb] init: unsupported bpp=\n");
+        serial_print_uint((unsigned int)mbi->framebuffer_bpp);
+        serial_print("\n");
         fb_is_active = 0;
         return 0;
     }
@@ -269,8 +276,26 @@ int fb_init(multiboot_info_t* mbi) {
     fbinfo.bpp    = mbi->framebuffer_bpp;
     fbinfo.type   = mbi->framebuffer_type;
 
+    /* Read RGB channel layout reported by the bootloader.
+     * Type 1 = RGB; for any other type (indexed, EGA-text) fall back to
+     * the conventional 0xRRGGBB layout so the rest of the driver works. */
+    if (mbi->framebuffer_type == 1) {
+        fbinfo.red_pos    = mbi->framebuffer_red_field_position;
+        fbinfo.red_size   = mbi->framebuffer_red_mask_size;
+        fbinfo.green_pos  = mbi->framebuffer_green_field_position;
+        fbinfo.green_size = mbi->framebuffer_green_mask_size;
+        fbinfo.blue_pos   = mbi->framebuffer_blue_field_position;
+        fbinfo.blue_size  = mbi->framebuffer_blue_mask_size;
+    } else {
+        fbinfo.red_pos    = 16; fbinfo.red_size   = 8;
+        fbinfo.green_pos  =  8; fbinfo.green_size  = 8;
+        fbinfo.blue_pos   =  0; fbinfo.blue_size   = 8;
+    }
+
     fb_is_active = 1;
+    serial_print("[fb] active, clearing screen...\n");
     fb_clear();
+    serial_print("[fb] init done\n");
     return 1;
 }
 
@@ -284,6 +309,42 @@ int fb_rows(void) {
 
 int fb_columns(void) {
     return fb_is_active ? (fb_text_area_width() / FONT_WIDTH) : 0;
+}
+
+void fb_present_rgb32(const uint32_t* buffer, uint32_t width, uint32_t height,
+                      uint32_t src_pitch_pixels) {
+    uint8_t* fb;
+    uint32_t y;
+    uint32_t x;
+
+    if (!fb_is_active || !buffer || width == 0 || height == 0 || src_pitch_pixels < width) {
+        return;
+    }
+
+    if (width > fbinfo.width) {
+        width = fbinfo.width;
+    }
+    if (height > fbinfo.height) {
+        height = fbinfo.height;
+    }
+
+    fb = (uint8_t*)fbinfo.addr;
+
+    if (fbinfo.bpp == 32) {
+        for (y = 0; y < height; y++) {
+            memcpy(fb + y * fbinfo.pitch,
+                   buffer + y * src_pitch_pixels,
+                   width * sizeof(uint32_t));
+        }
+        return;
+    }
+
+    for (y = 0; y < height; y++) {
+        const uint32_t* row = buffer + y * src_pitch_pixels;
+        for (x = 0; x < width; x++) {
+            fb_write_pixel((int)x, (int)y, row[x]);
+        }
+    }
 }
 
 void fb_clear(void) {
@@ -591,6 +652,30 @@ uint8_t fb_type(void) {
     return fb_is_active ? fbinfo.type : 0;
 }
 
+const char* fb_type_name(void) {
+    if (!fb_is_active) {
+        return "none";
+    }
+
+    switch (fbinfo.type) {
+    case 0:
+        return "indexed";
+    case 1:
+        return "rgb";
+    case 2:
+        return "ega-text";
+    default:
+        return "unknown";
+    }
+}
+
 void* fb_get_buffer(void) {
     return fb_is_active ? fbinfo.addr : 0;
 }
+
+uint8_t fb_red_pos(void)   { return fb_is_active ? fbinfo.red_pos   : 16; }
+uint8_t fb_red_size(void)  { return fb_is_active ? fbinfo.red_size  :  8; }
+uint8_t fb_green_pos(void) { return fb_is_active ? fbinfo.green_pos :  8; }
+uint8_t fb_green_size(void){ return fb_is_active ? fbinfo.green_size:  8; }
+uint8_t fb_blue_pos(void)  { return fb_is_active ? fbinfo.blue_pos  :  0; }
+uint8_t fb_blue_size(void) { return fb_is_active ? fbinfo.blue_size :  8; }

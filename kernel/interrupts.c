@@ -263,7 +263,7 @@ uintptr_t exception_interrupt_handler(uintptr_t current_esp) {
     return current_esp;
 }
 
-void interrupts_init(void) {
+void interrupts_init_early(void) {
     unsigned short code_selector = gdt_kernel_code_selector();
 
     idt_init();
@@ -271,6 +271,22 @@ void interrupts_init(void) {
     for (int vector = 0; vector < 32; vector++) {
         idt_set_gate((unsigned char)vector, exception_stubs[vector], code_selector, 0x8E);
     }
+
+    /* Use IST1 for double fault (vector 8) so it gets a clean stack
+       even if the kernel stack is corrupted.  This converts a silent
+       triple-fault/reboot into a visible kernel panic. */
+    idt_set_gate_ist(8, exception_stubs[8], code_selector, 0x8E, 1);
+
+    idt_load_table();
+    /* Interrupts stay disabled (CLI) — only exceptions are caught now. */
+}
+
+void interrupts_init(void) {
+    unsigned short code_selector = gdt_kernel_code_selector();
+
+    /* Do NOT call idt_init() again — early phase already set exception
+     * handlers, and apic_init() has installed the spurious handler at 0xFF.
+     * Re-zeroing would wipe those entries and cause triple faults. */
 
     timer_init(100);
 

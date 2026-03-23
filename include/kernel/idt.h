@@ -5,6 +5,8 @@
 
 void idt_init(void);
 void idt_set_gate(unsigned char num, uintptr_t base, unsigned short sel, unsigned char flags);
+void idt_set_gate_ist(unsigned char num, uintptr_t base, unsigned short sel,
+                      unsigned char flags, unsigned char ist);
 void idt_load_table(void);
 
 #endif

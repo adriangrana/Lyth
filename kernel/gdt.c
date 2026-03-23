@@ -43,6 +43,7 @@ static uint64_t gdt[GDT_ENTRY_COUNT];
 static struct gdt_ptr gdtp;
 static tss64_t tss;
 static uint8_t tss_stack[8192] __attribute__((aligned(16)));
+static uint8_t ist1_stack[8192] __attribute__((aligned(16)));
 
 extern void gdt_flush(uintptr_t gdt_ptr_address);
 extern void tss_flush(void);
@@ -66,6 +67,9 @@ static void tss_init(uint64_t rsp0) {
         ((uint8_t*)&tss)[i] = 0;
 
     tss.rsp0 = rsp0;
+    /* IST1: dedicated stack for double fault (vector 8) so it can
+       display a panic instead of silently triple-faulting. */
+    tss.ist1 = (uint64_t)(uintptr_t)(ist1_stack + sizeof(ist1_stack));
     tss.iomap_base = sizeof(tss64_t);
 }
 

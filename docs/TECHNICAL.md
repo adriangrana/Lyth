@@ -18,8 +18,9 @@ Subsistemas principales y sus archivos:
 | Kernel init | `kernel/kernel.c` |
 | GDT / TSS | `kernel/gdt.c`, `arch/x86/gdt64.s` |
 | IDT / PIC / PIT | `kernel/idt.c`, `kernel/interrupts.c`, `arch/x86/interrupts64.s` |
+| Vídeo | `drivers/video/video.c`, `include/drivers/video/video.h` |
 | ACPI / APIC | `kernel/acpi.c`, `kernel/apic.c` |
-| SMP | `kernel/smp.c`, `arch/x86/boot/ap_trampoline.s`, `include/kernel/spinlock.h` |
+| SMP | `kernel/smp.c`, `arch/x86/boot/ap_trampoline64.s`, `include/kernel/spinlock.h` |
 | PCI | `drivers/net/pci.c` |
 | Red (E1000) | `drivers/net/e1000.c` |
 | Stack de red | `net/ethernet.c`, `net/arp.c`, `net/ipv4.c`, `net/icmp.c`, `net/udp.c`, `net/tcp.c`, `net/socket.c`, `net/dhcp.c`, `net/dns.c` |
@@ -60,12 +61,12 @@ Subsistemas principales y sus archivos:
 3. GRUB sale de EFI Boot Services, conmuta a modo protegido 32-bit y entra en el entry point del kernel — el mismo código que en BIOS.
 
 ### Común (post-GRUB)
-2. `kernel_main()` inicializa en orden: GDT + TSS (64-bit), consola (detecta framebuffer 16/24/32 bpp o VGA), memoria física (bitmap Multiboot), heap, VFS (monta ramfs en `/`), ugdb (usuarios/grupos), scheduler.
+2. `kernel_main()` inicializa en orden: GDT + TSS (64-bit), **IDT temprana** (excepciones + IST1 para double fault), consola (detecta framebuffer 16/24/32 bpp o VGA), mapeo temprano del framebuffer (regiones MMIO >4 GB), video init, memoria física (bitmap Multiboot), heap, VFS (monta ramfs en `/`), ugdb (usuarios/grupos), scheduler.
 3. `ata_init()` detecta unidades ATA; `ahci_init()` detecta controladores AHCI/SATA vía PCI; `blkdev` escanea MBR/GPT; las particiones FAT16/FAT32 se montan automáticamente.
 4. `acpi_init()` busca el RSDP (EBDA + ROM BIOS), valida el RSDT y parsea la tabla MADT para obtener la dirección del Local APIC, las entradas IOAPIC y los Interrupt Source Overrides. También parsea la FADT para obtener los puertos PM1a/PM1b (shutdown) y el reset register (reboot).
 5. `apic_init()` comprueba CPUID, mapea las regiones MMIO (LAPIC en 0xFEE00000, IOAPIC en 0xFEC00000) con `paging_map_mmio()`, deshabilita el PIC 8259A, inicializa el LAPIC (spurious vector 0xFF, TPR a 0) y el IOAPIC (enmascara todas las líneas).
-6. `smp_init()` enumera CPUs de la MADT, copia el trampoline a 0x8000, y arranca cada AP con INIT/SIPI. Los APs cargan su GDT/TSS, IDT y LAPIC propios y entran en halt.
-7. `interrupts_init()` instala la IDT, y rutea las IRQs 0, 1, 12 y 14 por el IOAPIC (si APIC está activo) o remapea el PIC 8259A como fallback. Configura el PIT a 100 Hz y habilita IRQs.
+6. `smp_init()` enumera CPUs de la MADT. *(Bootstrap de APs desactivado temporalmente — se mantiene detección y conteo.)*
+7. `interrupts_init()` instala gates de IRQ en la IDT (sin re-inicializar para no borrar el handler spurious del APIC), y rutea las IRQs 0, 1, 12 y 14 por el IOAPIC **al LAPIC ID real del BSP** (si APIC está activo) o remapea el PIC 8259A como fallback. Configura el PIT a 100 Hz y habilita IRQs.
 8. El scheduler arranca la tarea `init` (PID 1), que inicializa la shell y entra en el bucle de eventos.
 9. El loop principal del kernel ejecuta `hlt`; toda la actividad ocurre desde interrupciones y la tarea init.
 
@@ -95,7 +96,7 @@ A partir del RSDP, valida el RSDT (Root System Description Table) y recorre sus 
 
 ### Ruteo de IRQs
 `interrupts_init()` comprueba `apic_is_enabled()`:
-- **Con APIC**: rutea IRQ 0 (PIT), 1 (teclado), 12 (ratón) y 14 (ATA) mediante `ioapic_route_irq()`, que aplica el mapeo GSI y los flags de polaridad/trigger de la MADT.
+- **Con APIC**: rutea IRQ 0 (PIT), 1 (teclado), 12 (ratón) y 14 (ATA) mediante `ioapic_route_irq()`, que aplica el mapeo GSI, los flags de polaridad/trigger de la MADT, y dirige la interrupción al **LAPIC ID real del BSP** (obtenido dinámicamente con `apic_get_id()`).
 - **Sin APIC**: remapea el PIC 8259A clásico (IRQ 0→vector 32, IRQ 8→vector 40).
 
 ### EOI
@@ -111,20 +112,25 @@ El kernel detecta todos los procesadores lógicos y arranca los APs (Application
 `acpi_init()` parsea las entradas Local APIC (tipo 0) de la MADT. Cada entrada contiene el ACPI processor ID, el LAPIC ID y un flag de habilitado. Solo se consideran procesadores con el flag enabled.
 
 ### Trampoline de arranque
-`ap_trampoline.s` contiene código 16-bit que se copia a la dirección física `0x8000` en runtime. El BSP parchea los campos de datos (GDTR, stack, CR3, entry point) antes de enviar el SIPI.
+`ap_trampoline64.s` contiene código que transita real→protected→long mode y se copia a la dirección física `0x8000` en runtime. El BSP parchea los campos de datos (kernel GDT descriptor, stack, CR3, entry point) antes de enviar el SIPI.
 
 Flujo del trampoline:
-1. **Real mode**: `cli`, carga GDT parcheado, activa PE en CR0.
-2. **Protected mode**: carga segmentos de kernel, carga CR3 del BSP (misma tabla de páginas), activa paginación.
-3. **Call**: salta a `ap_main()` en C.
+1. **Real mode**: `cli`, carga GDT local de 32-bit, activa PE en CR0.
+2. **Protected mode (32-bit GDT)**: carga segmentos 32-bit, carga CR3 del BSP, activa PAE + LME + paging.
+3. **Compatibility → Long mode**: far jump via selector de código de 64-bit en la GDT local.
+4. **Long mode**: recarga la GDT real del kernel (64-bit descriptor completo con `lgdt`), recarga CS con `lretq`, carga stack y salta a `ap_main()` en C.
+
+> **Nota**: La GDT local de 32-bit es necesaria porque la GDT del kernel tiene el bit L=1 en el segmento de código, lo cual causa #GP en `ljmpl` de 32-bit en hardware real (QEMU lo tolera).
 
 ### Secuencia INIT/SIPI
 Para cada AP detectado:
 1. `apic_send_init()` — envía INIT IPI vía ICR (offset `0x300`/`0x310`).
-2. Espera 10 ms (PIT channel 2 one-shot).
+2. Espera 10 ms (port 0x80 I/O delay).
 3. `apic_send_sipi()` — envía Startup IPI con vector `0x08` (página `0x8000`).
 4. Si no responde en 200 μs, reintenta un segundo SIPI.
 5. Espera hasta 100 ms a que el AP señalice `ap_ready`.
+
+> **Estado actual**: el bootstrap de APs está desactivado temporalmente mientras se depura la compatibilidad con arquitecturas híbridas (P-core/E-core en Intel 12th/13th Gen). La detección y conteo de CPUs permanece activa.
 
 ### Estado per-CPU
 Cada AP recibe:

@@ -20,6 +20,13 @@
 
 void paging_init(multiboot_info_t* mbi);
 int paging_is_enabled(void);
+
+/* Map a physical region into the boot identity-map page tables using 2 MB
+ * pages.  Safe to call before paging_init() / physmem_init() because it
+ * uses a static pool of pre-allocated PDs reserved in boot64.s.
+ * Intended for the framebuffer which may reside above the initial 4 GB map. */
+void paging_map_region_early(uint64_t phys_start, uint64_t size);
+
 uintptr_t paging_mapped_bytes(void);
 uintptr_t paging_user_base(void);
 uintptr_t paging_user_size(void);

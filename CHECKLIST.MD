@@ -8,7 +8,9 @@
 - [x] ACPI (MADT, LAPIC/IOAPIC discovery, FADT shutdown/reboot)
 - [x] Soporte hardware real (AHCI/SATA, ACPI power, framebuffer flexible)
 - [x] UEFI (arranque híbrido BIOS + UEFI via GRUB EFI)
-- [x] SMP (multicore)
+- [x] SMP (multicore) *(detección activa, bootstrap desactivado temporalmente)*
+- [x] Probado en hardware real (Intel 13th Gen, UEFI, 64 GB RAM)
+- [x] IDT temprana con IST1 para double fault
 
 ## 2. Consola y salida
 - [x] VGA + framebuffer
@@ -18,7 +20,7 @@
 
 ## 3. Interrupciones y tiempo
 - [x] IDT / PIC
-- [x] APIC / IOAPIC
+- [x] APIC / IOAPIC (ruteo dinámico al BSP real)
 - [x] HPET
 - [x] Timers por proceso
 - [x] RTC / reloj del sistema
@@ -135,6 +137,7 @@
 
 ## 11. Drivers
 - [x] VGA / framebuffer
+- [x] Capa de abstracción de vídeo
 - [x] Teclado / ratón
 - [x] ATA PIO
 - [x] AHCI/SATA (DMA, LBA48)

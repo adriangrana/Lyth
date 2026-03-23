@@ -13,12 +13,16 @@ Lyth OS cubre los subsistemas clásicos de un kernel real: arranque, gestión de
 ### Arranque y arquitectura
 - Arranque Multiboot con GRUB, solicita modo gráfico `1024×768×32` con fallback a VGA
 - **ISO híbrida BIOS + UEFI**: boot legacy vía El Torito, boot UEFI vía GRUB EFI (`BOOTX64.EFI`)
+- **Probado en hardware real** (Intel 13th Gen Raptor Lake, UEFI, 64 GB RAM)
 - Kernel ELF64 x86_64 en long mode con paginación de 4 niveles (PML4), GDT de 64 bits y TSS
-- SMP: detección de CPUs vía MADT, boot de APs con INIT/SIPI, GDT/TSS per-CPU
+- SMP: detección de CPUs vía MADT, boot de APs con INIT/SIPI, GDT/TSS per-CPU *(bootstrap desactivado temporalmente)*
 - ACPI: MADT (APIC/IOAPIC), FADT (shutdown, reboot), parseo de DSDT para S5 sleep type
+- IDT temprana: excepciones capturadas desde el inicio del arranque; IST1 dedicado para double fault
 
 ### Consola y vídeo
+- **Capa de abstracción de vídeo** (`video.c`): backend framebuffer con detección de capabilities
 - Framebuffer con fuente PSF 8×16, márgenes y scroll propio
+- Mapeo temprano de framebuffer para regiones MMIO sobre 4 GB (UEFI)
 - Backend VGA de fallback completamente funcional
 - Cursor de ratón software sobre framebuffer; cursor hardware en VGA
 - Temas visuales: `default`, `matrix`, `amber`, `ice`
@@ -75,7 +79,8 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 - Comandos de administración: `useradd/del/mod`, `groupadd/del`, `gpasswd`, `passwd`, `su`, `login`, `logout`
 
 ### Interrupciones y tiempo
-- APIC/IOAPIC con detección automática vía ACPI MADT; fallback a PIC 8259A si no hay APIC
+- APIC/IOAPIC con detección automática vía ACPI MADT; ruteo de IRQs al BSP real (LAPIC ID dinámico); fallback a PIC 8259A si no hay APIC
+- IDT temprana (excepciones capturadas antes de cualquier init); IST1 para double fault → kernel panic visible en lugar de triple fault silencioso
 - PIT a 100 Hz como fuente de tick del scheduler (IRQ 0 ruteada por IOAPIC o PIC)
 - Timers por proceso, RTC CMOS, `sleep` por syscall, reloj monotónico
 
@@ -214,6 +219,7 @@ kernel/             núcleo: init, IDT, interrupciones, syscalls, scheduler, mem
 drivers/
   console/          terminal lógica, backends VGA y framebuffer, fuente PSF
   input/            teclado PS/2, ratón PS/2, eventos genéricos
+  video/            capa de abstracción de vídeo (framebuffer)
   disk/             driver ATA PIO, AHCI/SATA, capa blkdev (MBR/GPT)
   rtc/              reloj en tiempo real (CMOS)
   serial/           salida de debug por COM1

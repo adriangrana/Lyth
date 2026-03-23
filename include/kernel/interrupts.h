@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+void interrupts_init_early(void);
 void interrupts_init(void);
 uintptr_t timer_interrupt_handler(uintptr_t current_rsp);
 uintptr_t keyboard_interrupt_handler(uintptr_t current_rsp);

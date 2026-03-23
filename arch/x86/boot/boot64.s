@@ -13,7 +13,7 @@
 .section .multiboot, "a"
 .align 4
 .set MB_MAGIC,    0x1BADB002
-.set MB_FLAGS,    0x4           /* video mode info */
+.set MB_FLAGS,    0x6           /* bit 1: memory info, bit 2: video mode */
 .set MB_CHECKSUM, -(MB_MAGIC + MB_FLAGS)
 
 .long MB_MAGIC
@@ -42,6 +42,14 @@ boot_pd0:    .skip 4096         /* 0 GB – 1 GB */
 boot_pd1:    .skip 4096         /* 1 GB – 2 GB */
 boot_pd2:    .skip 4096         /* 2 GB – 3 GB */
 boot_pd3:    .skip 4096         /* 3 GB – 4 GB */
+
+/* ---- Early-map page-table pool (for framebuffer above 4 GB) ------ */
+.section .bss
+.align 4096
+.global early_extra_pds
+early_extra_pds:  .skip 4096 * 16    /* 16 PD tables for dynamic mapping   */
+.global early_extra_pdpt
+early_extra_pdpt: .skip 4096          /* 1 extra PDPT (PML4 entry != 0)    */
 
 /* ---- saved multiboot pointer ------------------------------------- */
 .section .data

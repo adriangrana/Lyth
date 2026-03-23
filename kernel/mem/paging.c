@@ -35,6 +35,14 @@
 /* ── Boot page tables (set up in boot64.s) ──────────────────────── */
 extern uint64_t boot_pml4[];
 
+/* Extra page-table pool reserved in boot64.s for early framebuffer mapping */
+extern uint64_t early_extra_pds[];   /* 16 × 4 KB PD tables */
+extern uint64_t early_extra_pdpt[];  /* 1  × 4 KB PDPT      */
+
+#define EARLY_EXTRA_PD_MAX 16
+static int early_pd_next = 0;
+static int early_pdpt_used = 0;
+
 static uint64_t* kernel_pml4 = 0;
 static uint64_t* current_pml4 = 0;
 static int paging_enabled = 0;
@@ -64,6 +72,71 @@ static uint64_t* entry_subtable(uint64_t entry) {
 /* ── Kernel PD pointers (derived from boot tables at init) ────── */
 static uint64_t* kernel_pdpt = 0;   /* boot PDPT covering first 512 GB */
 static uint64_t* kernel_pd0  = 0;   /* boot PD covering first 1 GB */
+
+/* ── Early mapping (before paging_init / physmem_init) ──────────── */
+
+static uint64_t* early_alloc_pd(void) {
+    uint64_t* pd;
+    int i;
+    if (early_pd_next >= EARLY_EXTRA_PD_MAX) return 0;
+    pd = early_extra_pds + (uint64_t)early_pd_next * ENTRIES_PER_TABLE;
+    for (i = 0; i < (int)ENTRIES_PER_TABLE; i++) pd[i] = 0;
+    early_pd_next++;
+    return pd;
+}
+
+void paging_map_region_early(uint64_t phys_start, uint64_t size) {
+    uint64_t aligned_start, aligned_end, addr;
+    if (size == 0) return;
+
+    aligned_start = phys_start & ~(PAGE_SIZE_2MB - 1UL);
+    aligned_end   = (phys_start + size + PAGE_SIZE_2MB - 1UL)
+                    & ~(PAGE_SIZE_2MB - 1UL);
+
+    for (addr = aligned_start; addr < aligned_end; addr += PAGE_SIZE_2MB) {
+        unsigned pml4_idx = (unsigned)((addr >> 39) & 0x1FFU);
+        unsigned pdpt_idx = (unsigned)((addr >> 30) & 0x1FFU);
+        unsigned pd_idx   = (unsigned)((addr >> 21) & 0x1FFU);
+        uint64_t *pdpt, *pd;
+
+        /* Get or create PDPT for this PML4 entry */
+        if (boot_pml4[pml4_idx] & PG_PRESENT) {
+            pdpt = (uint64_t*)(uintptr_t)(boot_pml4[pml4_idx] & PG_ADDR_MASK);
+        } else {
+            if (early_pdpt_used) {
+                /* Only one spare PDPT — cannot map a second 512 GB region */
+                return;
+            }
+            pdpt = early_extra_pdpt;
+            for (int i = 0; i < (int)ENTRIES_PER_TABLE; i++) pdpt[i] = 0;
+            early_pdpt_used = 1;
+            boot_pml4[pml4_idx] =
+                (uint64_t)(uintptr_t)pdpt | PG_PRESENT | PG_WRITABLE;
+        }
+
+        /* Get or create PD for this PDPT entry */
+        if (pdpt[pdpt_idx] & PG_PRESENT) {
+            pd = (uint64_t*)(uintptr_t)(pdpt[pdpt_idx] & PG_ADDR_MASK);
+        } else {
+            pd = early_alloc_pd();
+            if (!pd) return;
+            pdpt[pdpt_idx] =
+                (uint64_t)(uintptr_t)pd | PG_PRESENT | PG_WRITABLE;
+        }
+
+        /* Map 2 MB identity page (skip if already present) */
+        if (!(pd[pd_idx] & PG_PRESENT)) {
+            pd[pd_idx] = addr | PG_PRESENT | PG_WRITABLE | PG_PS;
+        }
+    }
+
+    /* Flush TLB by reloading CR3 */
+    __asm__ volatile(
+        "mov %%cr3, %%rax\n\t"
+        "mov %%rax, %%cr3"
+        : : : "rax", "memory"
+    );
+}
 
 /* ── Initialisation ─────────────────────────────────────────────── */
 
@@ -355,10 +428,11 @@ void paging_switch_directory(uint64_t* pml4) {
 
 int paging_map_mmio(uintptr_t physical_address) {
     /* In our 4 GB identity map, all MMIO below 4 GB is already mapped */
-    if (physical_address < paging_bytes_mapped)
+    if (physical_address < 0x100000000UL)
         return 1;
-    /* TODO: for addresses > 4 GB, build new page table entries */
-    return 0;
+    /* For addresses > 4 GB, use the early mapping pool */
+    paging_map_region_early((uint64_t)physical_address, PAGE_SIZE_2MB);
+    return 1;
 }
 
 /* ── COW support ────────────────────────────────────────────────── */

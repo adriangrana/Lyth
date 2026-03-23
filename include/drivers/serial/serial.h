@@ -1,6 +1,8 @@
 #ifndef SERIAL_H
 #define SERIAL_H
 
+#include <stdint.h>
+
 /* Minimal COM1 serial output driver for kernel debugging.
    Run QEMU with -serial stdio (or -serial file:serial.log) to capture output. */
 
@@ -10,5 +12,6 @@ void serial_print(const char* s);
 void serial_print_int(int n);
 void serial_print_uint(unsigned int n);
 void serial_print_hex(unsigned int n);
+void serial_print_hex64(uint64_t n);
 
 #endif

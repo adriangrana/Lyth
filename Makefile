@@ -102,6 +102,7 @@ HPET_OBJ       = $(BUILD_DIR)/hpet.o
 SLAB_OBJ       = $(BUILD_DIR)/slab.o
 MMAP_OBJ       = $(BUILD_DIR)/mmap.o
 AHCI_OBJ       = $(BUILD_DIR)/ahci.o
+VIDEO_OBJ      = $(BUILD_DIR)/video.o
 
 CFLAGS = -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx -mno-sse2 \
 	-ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-frame-pointer -fno-optimize-sibling-calls \
@@ -121,6 +122,7 @@ CFLAGS = -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx -mno-sse2 \
 	-Iinclude/drivers/disk \
 	-Iinclude/drivers/rtc \
 	-Iinclude/drivers/net \
+	-Iinclude/drivers/video \
 	-Iinclude/net \
 	-Iinclude/kernel/tests \
 	-Iinclude/drivers/hpet \
@@ -132,7 +134,7 @@ FONT_TOOL = tools/psf2h.py
 FONT_HEADER = include/font_psf.h
 GRUB_CFG = arch/x86/boot/grub.cfg
 
-OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ) $(PCI_OBJ) $(E1000_OBJ) $(NETBUF_OBJ) $(NETIF_OBJ) $(ETHERNET_OBJ) $(ARP_OBJ) $(IPV4_OBJ) $(ICMP_OBJ) $(UDP_NET_OBJ) $(TCP_NET_OBJ) $(SOCKET_OBJ) $(DHCP_OBJ) $(DNS_OBJ) $(WINDOW_OBJ) $(COMPOSITOR_OBJ) $(HPET_OBJ) $(SLAB_OBJ) $(MMAP_OBJ) $(AHCI_OBJ)
+OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(VIDEO_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ) $(PCI_OBJ) $(E1000_OBJ) $(NETBUF_OBJ) $(NETIF_OBJ) $(ETHERNET_OBJ) $(ARP_OBJ) $(IPV4_OBJ) $(ICMP_OBJ) $(UDP_NET_OBJ) $(TCP_NET_OBJ) $(SOCKET_OBJ) $(DHCP_OBJ) $(DNS_OBJ) $(WINDOW_OBJ) $(COMPOSITOR_OBJ) $(HPET_OBJ) $(SLAB_OBJ) $(MMAP_OBJ) $(AHCI_OBJ)
 
 $(FONT_HEADER): $(FONT_PSF) $(FONT_TOOL)
 	$(PYTHON) $(FONT_TOOL) $(FONT_PSF) $(FONT_HEADER)
@@ -184,6 +186,7 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(CC) $(CFLAGS) -c fs/pipe.c -o $(PIPE_OBJ)
 	$(CC) $(CFLAGS) -c kernel/syscall.c -o $(SYSCALL_OBJ)
 	$(CC) $(CFLAGS) -c drivers/console/fbconsole.c -o $(FBCONSOLE_OBJ)
+	$(CC) $(CFLAGS) -c drivers/video/video.c -o $(VIDEO_OBJ)
 	$(CC) $(CFLAGS) -c drivers/console/tty_vfs.c -o $(TTY_VFS_OBJ)
 	$(CC) $(CFLAGS) -c drivers/serial/serial.c -o $(SERIAL_OBJ)
 	$(CC) $(CFLAGS) -c kernel/elf.c -o $(ELF_OBJ)

@@ -39,6 +39,7 @@
 #include "window.h"
 #include "acpi.h"
 #include "serial.h"
+#include "video.h"
 
 #define SHELL_MAX_ARGS 8
 #define SHELL_TOKEN_MAX 64
@@ -155,6 +156,7 @@ static int cmd_signal(int argc, const char* argv[], int background);
 static int cmd_mouse(int argc, const char* argv[], int background);
 static int cmd_dmesg(int argc, const char* argv[], int background);
 static int cmd_gfxdemo(int argc, const char* argv[], int background);
+static int cmd_video(int argc, const char* argv[], int background);
 static int cmd_ulimit(int argc, const char* argv[], int background);
 static int cmd_ls(int argc, const char* argv[], int background);
 static int cmd_cat(int argc, const char* argv[], int background);
@@ -269,6 +271,7 @@ static command_t commands[] = {
     {"mouse",   cmd_mouse,   "muestra estado del raton PS/2"},
     {"dmesg",   cmd_dmesg,   "muestra o limpia logs del kernel: dmesg [clear]"},
     {"gfxdemo", cmd_gfxdemo, "dibuja primitivas graficas en framebuffer"},
+    {"video",   cmd_video,   "driver de video: estado, modo actual y capacidades"},
     {"ls",      cmd_ls,      "lista directorio VFS: ls [ruta]"},
     {"cat",     cmd_cat,     "muestra un archivo VFS: cat <ruta>"},
     {"grep",    cmd_grep,    "filtra lineas: grep <patron> [ruta]"},
@@ -3445,6 +3448,94 @@ static int cmd_gfxdemo(int argc, const char* argv[], int background) {
     fb_draw_line(x + 167, y + 52, x + 12, y + 107, 0xFF77AA);
 
     terminal_print_line("Demo grafica dibujada en framebuffer");
+    return 1;
+}
+
+static int cmd_video(int argc, const char* argv[], int background) {
+    video_mode_t mode;
+
+    (void)argc;
+    (void)background;
+
+    terminal_print("Video: ");
+    terminal_print_line(video_active() ? "activo" : "no activo");
+
+    if (!video_active()) {
+        return 1;
+    }
+
+    video_get_mode(&mode);
+
+    if (argc >= 2 && str_equals_ignore_case(argv[1], "set")) {
+        if (argc < 5) {
+            terminal_print_line("uso: video set <ancho> <alto> <bpp>");
+            return 1;
+        }
+
+        terminal_print("Backend actual: ");
+        terminal_print_line(video_backend_name());
+        terminal_print_line("modeset en caliente no soportado por multiboot-framebuffer");
+        terminal_print_line("para modeset real hace falta un backend GOP/VBE nativo");
+        return 1;
+    }
+
+    if (argc >= 2 && str_equals_ignore_case(argv[1], "caps")) {
+        uint32_t caps = video_caps();
+
+        terminal_print("Backend: ");
+        terminal_print_line(video_backend_name());
+        terminal_print("present_rgb32: ");
+        terminal_print_line((caps & VIDEO_CAP_PRESENT_RGB32) ? "si" : "no");
+        terminal_print("fill_rect: ");
+        terminal_print_line((caps & VIDEO_CAP_FILL_RECT) ? "si" : "no");
+        terminal_print("draw_rect: ");
+        terminal_print_line((caps & VIDEO_CAP_DRAW_RECT) ? "si" : "no");
+        terminal_print("draw_line: ");
+        terminal_print_line((caps & VIDEO_CAP_DRAW_LINE) ? "si" : "no");
+        terminal_print("modeset: ");
+        terminal_print_line((caps & VIDEO_CAP_MODESET) ? "si" : "no");
+        return 1;
+    }
+
+    terminal_print("Resolucion: ");
+    terminal_print_uint(mode.width);
+    terminal_print("x");
+    terminal_print_uint(mode.height);
+    terminal_put_char('\n');
+
+    terminal_print("BPP: ");
+    terminal_print_uint((unsigned int)mode.bpp);
+    terminal_put_char('\n');
+
+    terminal_print("Pitch: ");
+    terminal_print_uint(mode.pitch);
+    terminal_put_char('\n');
+
+    terminal_print("Tipo: ");
+    terminal_print_line(video_type_name());
+
+    terminal_print("Canales: R[");
+    terminal_print_uint((unsigned int)mode.red_pos);
+    terminal_print("/");
+    terminal_print_uint((unsigned int)mode.red_size);
+    terminal_print("] G[");
+    terminal_print_uint((unsigned int)mode.green_pos);
+    terminal_print("/");
+    terminal_print_uint((unsigned int)mode.green_size);
+    terminal_print("] B[");
+    terminal_print_uint((unsigned int)mode.blue_pos);
+    terminal_print("/");
+    terminal_print_uint((unsigned int)mode.blue_size);
+    terminal_print_line("]");
+
+    terminal_print("Backend: ");
+    terminal_print_line(video_backend_name());
+
+    terminal_print("Caps: ");
+    terminal_print_line("present_rgb32 fill_rect draw_rect draw_line");
+
+    terminal_print("Modeset: ");
+    terminal_print_line("no (backend multiboot-framebuffer)");
     return 1;
 }
 

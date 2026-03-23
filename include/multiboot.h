@@ -34,6 +34,14 @@ typedef struct multiboot_info {
     uint8_t framebuffer_bpp;
     uint8_t framebuffer_type;
     uint16_t reserved;
+    /* RGB colour channel layout (valid when framebuffer_type == 1).
+     * Overlaps with palette fields for type 0; we only expose the RGB variant. */
+    uint8_t framebuffer_red_field_position;
+    uint8_t framebuffer_red_mask_size;
+    uint8_t framebuffer_green_field_position;
+    uint8_t framebuffer_green_mask_size;
+    uint8_t framebuffer_blue_field_position;
+    uint8_t framebuffer_blue_mask_size;
 } multiboot_info_t;
 
 typedef struct multiboot_mmap_entry {

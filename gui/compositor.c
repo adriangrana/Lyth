@@ -13,6 +13,11 @@
 static uint32_t* back_buffer;
 static uint32_t back_buffer_phys;
 static uint32_t back_buffer_size;
+/* Background cache: desktop + all non-dragging windows rendered once per drag.
+ * Allows drag frames to skip the expensive full composite. */
+static uint32_t* bg_buffer;
+static uint32_t bg_buffer_phys;
+static int bg_valid;
 static int scr_w, scr_h;
 static uint32_t scr_pitch;
 static int gui_running;
@@ -580,31 +585,16 @@ static void draw_cursor(void) {
 }
 
 static void flip(void) {
-    uint8_t* fb = (uint8_t*)fb_get_buffer();
-    int y;
-
-    if (!fb) {
+    if (!fb_get_buffer()) {
         return;
     }
 
-    for (y = 0; y < scr_h; y++) {
-        memcpy(fb + y * scr_pitch, back_buffer + y * scr_w, scr_w * 4);
-    }
+    fb_present_rgb32(back_buffer, (uint32_t)scr_w, (uint32_t)scr_h, (uint32_t)scr_w);
 }
 
-static void composite(void) {
+static void sort_windows(gui_window_t** sorted, int count) {
     int i;
     int j;
-    int count;
-    gui_window_t* sorted[GUI_MAX_WINDOWS];
-
-    draw_desktop();
-
-    count = gui_window_count();
-    for (i = 0; i < count; i++) {
-        sorted[i] = gui_window_get(i);
-    }
-
     for (i = 1; i < count; i++) {
         gui_window_t* key = sorted[i];
         j = i - 1;
@@ -614,11 +604,70 @@ static void composite(void) {
         }
         sorted[j + 1] = key;
     }
+}
 
+static void composite(void) {
+    int i;
+    int count;
+    gui_window_t* sorted[GUI_MAX_WINDOWS];
+
+    draw_desktop();
+
+    count = gui_window_count();
+    for (i = 0; i < count; i++) {
+        sorted[i] = gui_window_get(i);
+    }
+    sort_windows(sorted, count);
     for (i = 0; i < count; i++) {
         draw_window(sorted[i]);
     }
 
+    draw_cursor();
+    flip();
+}
+
+/*
+ * Render desktop + all windows except skip_win into bg_buffer.
+ * Called once at the start of each drag gesture.
+ */
+static void rebuild_bg(gui_window_t* skip_win) {
+    int i;
+    int count;
+    gui_window_t* sorted[GUI_MAX_WINDOWS];
+    uint32_t* saved_bb;
+
+    if (!bg_buffer) {
+        return;
+    }
+
+    /* Redirect all bb_* drawing to bg_buffer for the duration of this call. */
+    saved_bb = back_buffer;
+    back_buffer = bg_buffer;
+
+    draw_desktop();
+
+    count = gui_window_count();
+    for (i = 0; i < count; i++) {
+        sorted[i] = gui_window_get(i);
+    }
+    sort_windows(sorted, count);
+    for (i = 0; i < count; i++) {
+        if (sorted[i] != skip_win) {
+            draw_window(sorted[i]);
+        }
+    }
+
+    back_buffer = saved_bb;
+    bg_valid = 1;
+}
+
+/*
+ * Fast drag frame: copy cached background, draw only the dragging window
+ * and cursor, then flip. Skips full desktop+windows composite entirely.
+ */
+static void composite_drag(gui_window_t* drag_win) {
+    memcpy(back_buffer, bg_buffer, (size_t)(scr_w * scr_h) * sizeof(uint32_t));
+    draw_window(drag_win);
     draw_cursor();
     flip();
 }
@@ -709,13 +758,63 @@ static void btn_hello_click(gui_widget_t* w) {
 
 static void create_demo_windows(void) {
     gui_window_t* win;
+    char arch_line[32];
+    char display_line[64];
+
+    memcpy(arch_line, "Kernel target: x86_64", 22);
+    arch_line[22] = '\0';
+
+    memcpy(display_line, "Display: ", 9);
+    display_line[9] = '\0';
+    {
+        unsigned int value;
+        char digits[12];
+        int len;
+        int pos = 9;
+
+        value = (unsigned int)fb_width();
+        len = 0;
+        do {
+            digits[len++] = (char)('0' + (value % 10U));
+            value /= 10U;
+        } while (value != 0U);
+        while (len > 0) {
+            display_line[pos++] = digits[--len];
+        }
+        display_line[pos++] = 'x';
+
+        value = (unsigned int)fb_height();
+        len = 0;
+        do {
+            digits[len++] = (char)('0' + (value % 10U));
+            value /= 10U;
+        } while (value != 0U);
+        while (len > 0) {
+            display_line[pos++] = digits[--len];
+        }
+        display_line[pos++] = 'x';
+
+        value = (unsigned int)fb_bpp();
+        len = 0;
+        do {
+            digits[len++] = (char)('0' + (value % 10U));
+            value /= 10U;
+        } while (value != 0U);
+        while (len > 0) {
+            display_line[pos++] = digits[--len];
+        }
+
+        memcpy(display_line + pos, " framebuffer", 13);
+        pos += 13;
+        display_line[pos] = '\0';
+    }
 
     win = gui_window_create("System Overview", 92, 82, 240, 160,
         GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE | GUI_WIN_DRAGGABLE);
     if (win) {
         gui_add_label(win, 24, 22, "Lyth OS", COL_ACCENT);
-        gui_add_label(win, 24, 52, "Kernel target: x86 i686", COL_TEXT);
-        gui_add_label(win, 24, 72, "Display: 1280x1024 framebuffer", COL_TEXT);
+        gui_add_label(win, 24, 52, arch_line, COL_TEXT);
+        gui_add_label(win, 24, 72, display_line, COL_TEXT);
         gui_add_label(win, 24, 92, "Desktop: compositor and window manager", COL_TEXT);
         gui_add_panel(win, 24, 126, 366, 2, COL_PANEL_BORDER);
         gui_add_panel(win, 24, 150, 366, 72, COL_PANEL_BG);
@@ -756,6 +855,14 @@ void gui_init(void) {
     back_buffer = (uint32_t*)(uintptr_t)back_buffer_phys;
     memset(back_buffer, 0, back_buffer_size);
 
+    /* Allocate background cache for smooth window dragging. */
+    bg_buffer_phys = physmem_alloc_region(back_buffer_size, 4096);
+    if (bg_buffer_phys) {
+        bg_buffer = (uint32_t*)(uintptr_t)bg_buffer_phys;
+        memset(bg_buffer, 0, back_buffer_size);
+    }
+    bg_valid = 0;
+
     mouse_x = scr_w / 2;
     mouse_y = scr_h / 2;
     need_redraw = 1;
@@ -777,14 +884,19 @@ int gui_is_active(void) {
     return gui_running;
 }
 
+/* Minimum milliseconds between rendered frames (~60 fps). */
+#define GUI_FRAME_INTERVAL_MS 16U
+
 void gui_run(void) {
     input_event_t ev;
     int desktop_h;
     gui_window_t* dragging_win = 0;
+    unsigned int last_frame_ms;
 
     gui_running = 1;
     need_redraw = 1;
     desktop_h = scr_h - GUI_TASKBAR_HEIGHT;
+    last_frame_ms = timer_get_uptime_ms();
 
     while (gui_running) {
         while (input_poll_event(&ev)) {
@@ -877,8 +989,28 @@ void gui_run(void) {
         }
 
         if (need_redraw) {
-            need_redraw = 0;
-            composite();
+            if (dragging_win && bg_buffer) {
+                /* Fast drag path: rebuild background once, then just blit it
+                 * and draw the moving window. No frame cap — every mouse
+                 * event gets its own frame, keeping movement fluid. */
+                if (!bg_valid) {
+                    rebuild_bg(dragging_win);
+                }
+                need_redraw = 0;
+                composite_drag(dragging_win);
+            } else {
+                /* Normal path: full composite with 60 fps cap. */
+                bg_valid = 0;
+                {
+                    unsigned int now = timer_get_uptime_ms();
+                    unsigned int elapsed = now - last_frame_ms;
+                    if (elapsed >= GUI_FRAME_INTERVAL_MS) {
+                        need_redraw = 0;
+                        last_frame_ms = now;
+                        composite();
+                    }
+                }
+            }
         }
 
         __asm__ volatile("hlt");
@@ -899,6 +1031,12 @@ void gui_run(void) {
         physmem_free_region(back_buffer_phys, back_buffer_size);
         back_buffer = 0;
         back_buffer_phys = 0;
+    }
+
+    if (bg_buffer) {
+        physmem_free_region(bg_buffer_phys, back_buffer_size);
+        bg_buffer = 0;
+        bg_buffer_phys = 0;
     }
 
     fb_clear();
