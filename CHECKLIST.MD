@@ -2,11 +2,11 @@
 
 ## 1. Arranque y arquitectura base
 - [x] GRUB + Multiboot
-- [x] Kernel ELF32
-- [ ] Compatibilidad con 64-bits
+- [x] Kernel ELF64 (x86_64)
+- [x] Compatibilidad con 64-bits
 - [x] Stack inicial
-- [x] ACPI (MADT, LAPIC/IOAPIC discovery)
-- [ ] Soporte hardware real
+- [x] ACPI (MADT, LAPIC/IOAPIC discovery, FADT shutdown/reboot)
+- [x] Soporte hardware real (AHCI/SATA, ACPI power, framebuffer flexible)
 - [ ] UEFI
 - [x] SMP (multicore)
 
@@ -137,6 +137,7 @@
 - [x] VGA / framebuffer
 - [x] Teclado / ratón
 - [x] ATA PIO
+- [x] AHCI/SATA (DMA, LBA48)
 - [x] Capa de dispositivo de bloques
 - [x] Disco
 - [ ] USB

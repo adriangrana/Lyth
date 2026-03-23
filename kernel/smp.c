@@ -6,14 +6,14 @@
 #include "paging.h"
 #include "klog.h"
 
-/* ── Trampoline symbols (defined in ap_trampoline.s) ────────────── */
+/* ── Trampoline symbols (defined in ap_trampoline64.s) ────────────── */
 
 extern uint8_t  ap_trampoline_start[];
 extern uint8_t  ap_trampoline_end[];
-extern uint32_t ap_trampoline_gdt_desc;
-extern uint32_t ap_trampoline_stack;
-extern uint32_t ap_trampoline_cr3;
-extern uint32_t ap_trampoline_entry;
+extern uint16_t ap_trampoline_gdt_desc;   /* word limit + quad base (10 bytes) */
+extern uint64_t ap_trampoline_stack;
+extern uint64_t ap_trampoline_cr3;
+extern uint64_t ap_trampoline_entry;
 
 /* ── Constants ──────────────────────────────────────────────────── */
 
@@ -74,8 +74,8 @@ static void ap_main(void);
 
 static void ap_main(void) {
 	/* Load per-CPU GDT + TSS with our own kernel stack */
-	uint32_t my_stack_top;
-	__asm__ volatile ("mov %%esp, %0" : "=r"(my_stack_top));
+	uintptr_t my_stack_top;
+	__asm__ volatile ("mov %%rsp, %0" : "=r"(my_stack_top));
 	gdt_init_ap(my_stack_top);
 
 	/* Load shared IDT */
@@ -95,7 +95,7 @@ static void ap_main(void) {
 
 /* ── Trampoline setup ───────────────────────────────────────────── */
 
-static void install_trampoline(uint32_t stack_top) {
+static void install_trampoline(uintptr_t stack_top) {
 	uint8_t* dest = (uint8_t*)(uintptr_t)AP_TRAMPOLINE_PHYS;
 	uint32_t size = (uint32_t)(ap_trampoline_end - ap_trampoline_start);
 
@@ -110,21 +110,21 @@ static void install_trampoline(uint32_t stack_top) {
 	uint32_t off_cr3   = (uint32_t)((uint8_t*)&ap_trampoline_cr3     - ap_trampoline_start);
 	uint32_t off_entry = (uint32_t)((uint8_t*)&ap_trampoline_entry   - ap_trampoline_start);
 
-	/* GDT descriptor: reuse BSP's loaded GDTR (kernel page-dir identity maps it) */
-	struct { uint16_t limit; uint32_t base; } __attribute__((packed)) gdtr;
+	/* GDT descriptor: reuse BSP's loaded GDTR (kernel page-dir identity maps it)
+	 * 64-bit GDTR: 2-byte limit + 8-byte base */
+	struct { uint16_t limit; uint64_t base; } __attribute__((packed)) gdtr;
 	__asm__ volatile ("sgdt %0" : "=m"(gdtr));
-	/* Store as a 6-byte GDTR at dest + off_gdt */
 	*(uint16_t*)(dest + off_gdt)     = gdtr.limit;
-	*(uint32_t*)(dest + off_gdt + 2) = gdtr.base;
+	*(uint64_t*)(dest + off_gdt + 2) = gdtr.base;
 
-	*(uint32_t*)(dest + off_stack) = stack_top;
+	*(uint64_t*)(dest + off_stack) = (uint64_t)stack_top;
 
-	/* CR3: kernel page directory physical address */
-	uint32_t cr3;
+	/* CR3: PML4 physical address */
+	uint64_t cr3;
 	__asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
-	*(uint32_t*)(dest + off_cr3) = cr3;
+	*(uint64_t*)(dest + off_cr3) = cr3;
 
-	*(uint32_t*)(dest + off_entry) = (uint32_t)(uintptr_t)ap_main;
+	*(uint64_t*)(dest + off_entry) = (uint64_t)(uintptr_t)ap_main;
 }
 
 /* ── Public API ─────────────────────────────────────────────────── */
@@ -176,7 +176,7 @@ void smp_init(void) {
 			break;
 
 		/* Prepare per-AP stack */
-		uint32_t stack_top = (uint32_t)(uintptr_t)
+		uintptr_t stack_top = (uintptr_t)
 			(ap_stacks[cpu_count] + AP_STACK_SIZE);
 
 		/* Install trampoline with this AP's stack */

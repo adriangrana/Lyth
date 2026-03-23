@@ -126,7 +126,7 @@ void* slab_alloc(uint32_t size) {
         return 0;
 
     cache = &slab_caches[ci];
-    uint32_t flags = spinlock_acquire_irqsave(&cache->lock);
+    uint64_t flags = spinlock_acquire_irqsave(&cache->lock);
 
     /* Try an existing partial page first */
     page = cache->partial;
@@ -164,12 +164,12 @@ void slab_free(void* ptr) {
     if (!ptr)
         return;
 
-    page = (slab_page_t*)((uint32_t)(uintptr_t)ptr & ~(SLAB_PAGE_SIZE - 1U));
+    page = (slab_page_t*)((uintptr_t)ptr & ~(SLAB_PAGE_SIZE - 1U));
     if (page->magic != SLAB_MAGIC)
         return;
 
     cache = &slab_caches[page->cache_idx];
-    uint32_t flags = spinlock_acquire_irqsave(&cache->lock);
+    uint64_t flags = spinlock_acquire_irqsave(&cache->lock);
 
     was_full = (page->free_count == 0);
 
@@ -204,7 +204,7 @@ int slab_owns(void* ptr) {
     if (!ptr)
         return 0;
 
-    page = (slab_page_t*)((uint32_t)(uintptr_t)ptr & ~(SLAB_PAGE_SIZE - 1U));
+    page = (slab_page_t*)((uintptr_t)ptr & ~(SLAB_PAGE_SIZE - 1U));
     return (page->magic == SLAB_MAGIC) ? 1 : 0;
 }
 
@@ -220,7 +220,7 @@ void slab_get_stats(slab_stats_t* stats) {
     for (int i = 0; i < SLAB_NUM_CACHES; i++) {
         uint32_t total = 0, free_o = 0, pages = 0;
 
-        uint32_t flags = spinlock_acquire_irqsave(&slab_caches[i].lock);
+        uint64_t flags = spinlock_acquire_irqsave(&slab_caches[i].lock);
 
         for (page = slab_caches[i].partial; page; page = page->next) {
             pages++;

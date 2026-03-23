@@ -37,6 +37,8 @@
 #include "endian.h"
 #include "compositor.h"
 #include "window.h"
+#include "acpi.h"
+#include "serial.h"
 
 #define SHELL_MAX_ARGS 8
 #define SHELL_TOKEN_MAX 64
@@ -213,6 +215,8 @@ static int cmd_dhcpc(int argc, const char* argv[], int background);
 static int cmd_nslookup(int argc, const char* argv[], int background);
 static int cmd_nc(int argc, const char* argv[], int background);
 static int cmd_gui(int argc, const char* argv[], int background);
+static int cmd_shutdown(int argc, const char* argv[], int background);
+static int cmd_reboot(int argc, const char* argv[], int background);
 static void shell_resolve_path(const char* input, char* out, unsigned int out_size);
 
 /* Current working directory (always an absolute VFS path). */
@@ -336,6 +340,10 @@ static command_t commands[] = {
     {"nc",      cmd_nc,      "netcat UDP: nc <ip> <port> <mensaje>"},
     /* --- GUI --- */
     {"gui",     cmd_gui,     "inicia el escritorio grafico (ESC para salir)"},
+    {"shutdown",cmd_shutdown, "apaga el sistema (ACPI S5)"},
+    {"poweroff",cmd_shutdown, "alias de shutdown"},
+    {"halt",    cmd_shutdown, "alias de shutdown"},
+    {"reboot",  cmd_reboot,   "reinicia el sistema"},
 };
 
 static const int command_count = sizeof(commands) / sizeof(commands[0]);
@@ -7003,6 +7011,30 @@ static int cmd_gui(int argc, const char* argv[], int background) {
     gui_init();
     gui_run();
     terminal_print_line("Escritorio cerrado.");
+    return 1;
+}
+
+static int cmd_shutdown(int argc, const char* argv[], int background) {
+    (void)argc; (void)argv; (void)background;
+    if (!acpi_power_available()) {
+        terminal_print_line("Error: ACPI no disponible, no se puede apagar.");
+        return 1;
+    }
+    terminal_print_line("Apagando sistema...");
+    serial_print("[acpi] shutdown\n");
+    acpi_shutdown();
+    /* Should not return */
+    terminal_print_line("Error: shutdown fallo.");
+    return 1;
+}
+
+static int cmd_reboot(int argc, const char* argv[], int background) {
+    (void)argc; (void)argv; (void)background;
+    terminal_print_line("Reiniciando sistema...");
+    serial_print("[acpi] reboot\n");
+    acpi_reboot();
+    /* Should not return */
+    terminal_print_line("Error: reboot fallo.");
     return 1;
 }
 

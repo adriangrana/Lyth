@@ -1,11 +1,13 @@
 #ifndef INTERRUPTS_H
 #define INTERRUPTS_H
 
+#include <stdint.h>
+
 void interrupts_init(void);
-unsigned int timer_interrupt_handler(unsigned int current_esp);
-unsigned int keyboard_interrupt_handler(unsigned int current_esp);
-unsigned int mouse_interrupt_handler(unsigned int current_esp);
-unsigned int syscall_interrupt_handler(unsigned int current_esp);
-unsigned int exception_interrupt_handler(unsigned int current_esp);
+uintptr_t timer_interrupt_handler(uintptr_t current_rsp);
+uintptr_t keyboard_interrupt_handler(uintptr_t current_rsp);
+uintptr_t mouse_interrupt_handler(uintptr_t current_rsp);
+uintptr_t syscall_interrupt_handler(uintptr_t current_rsp);
+uintptr_t exception_interrupt_handler(uintptr_t current_rsp);
 
 #endif

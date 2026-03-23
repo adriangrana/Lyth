@@ -13,18 +13,18 @@
  * reuse by future mmap calls.
  */
 
-static uint32_t align_up_page(uint32_t v) {
+static uintptr_t align_up_page(uintptr_t v) {
     return (v + MMAP_PAGE_SIZE - 1U) & ~(MMAP_PAGE_SIZE - 1U);
 }
 
-static uint32_t align_down_page(uint32_t v) {
+static uintptr_t align_down_page(uintptr_t v) {
     return v & ~(MMAP_PAGE_SIZE - 1U);
 }
 
 /* Check whether [base, base+len) overlaps any existing region */
-static int overlaps_any(const mmap_region_t* regions, uint32_t base, uint32_t len) {
+static int overlaps_any(const mmap_region_t* regions, uintptr_t base, uintptr_t len) {
     for (int i = 0; i < MMAP_MAX_REGIONS; i++) {
-        uint32_t rend, nend;
+        uintptr_t rend, nend;
         if (!regions[i].used)
             continue;
         rend = regions[i].base + regions[i].length;
@@ -43,13 +43,13 @@ void mmap_init_regions(mmap_region_t* regions) {
     }
 }
 
-uint32_t mmap_anonymous(mmap_region_t* regions,
-                        uint32_t mmap_top, uint32_t mmap_low,
-                        uint32_t length)
+uintptr_t mmap_anonymous(mmap_region_t* regions,
+                        uintptr_t mmap_top, uintptr_t mmap_low,
+                        uintptr_t length)
 {
     int slot = -1;
-    uint32_t aligned_len;
-    uint32_t candidate;
+    uintptr_t aligned_len;
+    uintptr_t candidate;
 
     if (!regions || length == 0)
         return MMAP_FAILED;
@@ -93,8 +93,8 @@ uint32_t mmap_anonymous(mmap_region_t* regions,
     return MMAP_FAILED;
 }
 
-int mmap_unmap(mmap_region_t* regions, uint32_t addr, uint32_t length) {
-    uint32_t aligned_len;
+int mmap_unmap(mmap_region_t* regions, uintptr_t addr, uintptr_t length) {
+    uintptr_t aligned_len;
     (void)length; /* currently: match by base address only */
 
     if (!regions || addr == 0)

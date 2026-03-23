@@ -21,14 +21,14 @@ static inline void spinlock_release(spinlock_t *sl) {
 }
 
 /* IRQ-safe variants: disable interrupts while holding the lock */
-static inline uint32_t spinlock_acquire_irqsave(spinlock_t *sl) {
-	uint32_t flags;
-	__asm__ volatile ("pushf; pop %0; cli" : "=r"(flags) : : "memory");
+static inline uint64_t spinlock_acquire_irqsave(spinlock_t *sl) {
+	uint64_t flags;
+	__asm__ volatile ("pushfq; pop %0; cli" : "=r"(flags) : : "memory");
 	spinlock_acquire(sl);
 	return flags;
 }
 
-static inline void spinlock_release_irqrestore(spinlock_t *sl, uint32_t flags) {
+static inline void spinlock_release_irqrestore(spinlock_t *sl, uint64_t flags) {
 	spinlock_release(sl);
 	if (flags & 0x200)
 		__asm__ volatile ("sti" ::: "memory");

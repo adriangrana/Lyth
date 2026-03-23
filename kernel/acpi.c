@@ -1,6 +1,20 @@
 #include "acpi.h"
 #include "klog.h"
 
+/* ── Inline port I/O helpers ────────────────────────────────────── */
+
+static inline void outb(uint16_t port, uint8_t val) {
+	__asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+static inline void outw(uint16_t port, uint16_t val) {
+	__asm__ volatile ("outw %0, %1" : : "a"(val), "Nd"(port));
+}
+static inline uint16_t inw(uint16_t port) {
+	uint16_t val;
+	__asm__ volatile ("inw %1, %0" : "=a"(val) : "Nd"(port));
+	return val;
+}
+
 /* ── ACPI table structures ──────────────────────────────────────── */
 
 typedef struct {
@@ -67,6 +81,71 @@ typedef struct {
 static acpi_madt_info_t madt_info;
 static const rsdt_t*    cached_rsdt = 0;
 static uint32_t         cached_entry_count = 0;
+
+/* ── FADT / power management ────────────────────────────────────── */
+
+typedef struct {
+	acpi_sdt_header_t header;
+	uint32_t firmware_ctrl;
+	uint32_t dsdt;
+	uint8_t  reserved1;
+	uint8_t  preferred_pm_profile;
+	uint16_t sci_interrupt;
+	uint32_t smi_command_port;
+	uint8_t  acpi_enable;
+	uint8_t  acpi_disable;
+	uint8_t  s4bios_req;
+	uint8_t  pstate_control;
+	uint32_t pm1a_event_block;
+	uint32_t pm1b_event_block;
+	uint32_t pm1a_control_block;
+	uint32_t pm1b_control_block;
+	uint32_t pm2_control_block;
+	uint32_t pm_timer_block;
+	uint32_t gpe0_block;
+	uint32_t gpe1_block;
+	uint8_t  pm1_event_length;
+	uint8_t  pm1_control_length;
+	uint8_t  pm2_control_length;
+	uint8_t  pm_timer_length;
+	uint8_t  gpe0_length;
+	uint8_t  gpe1_length;
+	uint8_t  gpe1_base;
+	uint8_t  cstate_control;
+	uint16_t worst_c2_latency;
+	uint16_t worst_c3_latency;
+	uint16_t flush_size;
+	uint16_t flush_stride;
+	uint8_t  duty_offset;
+	uint8_t  duty_width;
+	uint8_t  day_alarm;
+	uint8_t  month_alarm;
+	uint8_t  century;
+	uint16_t iapc_boot_arch;
+	uint8_t  reserved2;
+	uint32_t flags;
+	/* Generic Address Structure for reset register (FADT rev >= 2) */
+	uint8_t  reset_reg_space;
+	uint8_t  reset_reg_bit_width;
+	uint8_t  reset_reg_bit_offset;
+	uint8_t  reset_reg_access_size;
+	uint64_t reset_reg_address;
+	uint8_t  reset_value;
+} __attribute__((packed)) fadt_t;
+
+static int      fadt_available = 0;
+static uint16_t pm1a_ctrl_port = 0;
+static uint16_t pm1b_ctrl_port = 0;
+static uint16_t slp_typa = 0;
+static uint16_t slp_typb = 0;
+/* FADT reboot info */
+static int      fadt_has_reset = 0;
+static uint8_t  fadt_reset_space = 0;
+static uint64_t fadt_reset_address = 0;
+static uint8_t  fadt_reset_value = 0;
+
+/* Forward declarations */
+static void parse_fadt(void);
 
 /* ── Helpers ────────────────────────────────────────────────────── */
 
@@ -232,6 +311,9 @@ void acpi_init(void) {
 	if (!madt_info.found) {
 		klog_write(KLOG_LEVEL_WARN, "acpi", "MADT no encontrada en RSDT");
 	}
+
+	/* Parse FADT for power management (shutdown/reboot) */
+	parse_fadt();
 }
 
 const acpi_madt_info_t* acpi_get_madt_info(void) {
@@ -254,4 +336,125 @@ const void* acpi_find_table(const char* signature) {
 	}
 
 	return 0;
+}
+
+/* ── FADT / DSDT S5 parsing ─────────────────────────────────────── */
+
+static void parse_fadt(void) {
+	const fadt_t* fadt = (const fadt_t*)acpi_find_table("FACP");
+	if (!fadt) {
+		klog_write(KLOG_LEVEL_WARN, "acpi", "FADT no encontrada");
+		return;
+	}
+
+	pm1a_ctrl_port = (uint16_t)fadt->pm1a_control_block;
+	pm1b_ctrl_port = (uint16_t)fadt->pm1b_control_block;
+
+	/* Extract S5 sleep type from DSDT \_S5 object */
+	if (fadt->dsdt) {
+		const uint8_t* dsdt = (const uint8_t*)(uintptr_t)fadt->dsdt;
+		const acpi_sdt_header_t* dh = (const acpi_sdt_header_t*)dsdt;
+		uint32_t dsdt_len = dh->length;
+		/* Search for the AML name object "_S5_" (bytes: 08 5F 53 35 5F) */
+		for (uint32_t i = sizeof(acpi_sdt_header_t); i + 8 < dsdt_len; i++) {
+			if (dsdt[i] == '_' && dsdt[i+1] == 'S' &&
+			    dsdt[i+2] == '5' && dsdt[i+3] == '_') {
+				/* Skip past _S5_ name + package op + length */
+				uint32_t j = i + 4;
+				if (j < dsdt_len && dsdt[j] == 0x12) { /* PackageOp */
+					j++;
+					/* Skip package length (1-4 byte encoding) */
+					if (dsdt[j] & 0xC0) {
+						j += (dsdt[j] >> 6) + 1;
+					} else {
+						j++;
+					}
+					j++; /* package element count */
+					/* Read SLP_TYPa */
+					if (j < dsdt_len && dsdt[j] == 0x0A) { /* BytePrefix */
+						j++;
+						slp_typa = dsdt[j];
+						j++;
+					} else if (j < dsdt_len) {
+						slp_typa = dsdt[j];
+						j++;
+					}
+					/* Read SLP_TYPb */
+					if (j < dsdt_len && dsdt[j] == 0x0A) {
+						j++;
+						slp_typb = dsdt[j];
+					} else if (j < dsdt_len) {
+						slp_typb = dsdt[j];
+					}
+				}
+				break;
+			}
+		}
+	}
+
+	/* Check for reset register (FADT revision >= 2, bit 10 of flags) */
+	if (fadt->header.revision >= 2 && (fadt->flags & (1U << 10))) {
+		fadt_has_reset = 1;
+		fadt_reset_space = fadt->reset_reg_space;
+		fadt_reset_address = fadt->reset_reg_address;
+		fadt_reset_value = fadt->reset_value;
+	}
+
+	fadt_available = 1;
+	klog_write(KLOG_LEVEL_INFO, "acpi", "FADT: power management disponible");
+}
+
+/* ── Power management API ───────────────────────────────────────── */
+
+int acpi_power_available(void) {
+	return fadt_available;
+}
+
+int acpi_shutdown(void) {
+	if (!fadt_available || !pm1a_ctrl_port) {
+		return -1;
+	}
+
+	/* Disable interrupts */
+	__asm__ volatile ("cli");
+
+	/* Write SLP_TYPa | SLP_EN to PM1a control register */
+	outw(pm1a_ctrl_port, (slp_typa << 10) | (1 << 13));
+
+	/* If PM1b exists, write there too */
+	if (pm1b_ctrl_port) {
+		outw(pm1b_ctrl_port, (slp_typb << 10) | (1 << 13));
+	}
+
+	/* If we get here, shutdown failed.  Halt. */
+	for (;;) __asm__ volatile ("hlt");
+	return -1;
+}
+
+int acpi_reboot(void) {
+	/* Method 1: FADT reset register */
+	if (fadt_has_reset && fadt_reset_address) {
+		__asm__ volatile ("cli");
+		if (fadt_reset_space == 1) {
+			/* System I/O space */
+			outb((uint16_t)fadt_reset_address, fadt_reset_value);
+		}
+		/* Wait a moment */
+		for (volatile int i = 0; i < 100000; i++) {}
+	}
+
+	/* Method 2: PS/2 keyboard controller reset (0x64 port) */
+	__asm__ volatile ("cli");
+	outb(0x64, 0xFE);
+
+	/* Method 3: triple fault */
+	for (volatile int i = 0; i < 100000; i++) {}
+	__asm__ volatile (
+		"lidt %0\n\t"
+		"int $3"
+		: : "m"(*(uint16_t[]){0, 0, 0}) : "memory"
+	);
+
+	for (;;) __asm__ volatile ("hlt");
+	return -1;
 }

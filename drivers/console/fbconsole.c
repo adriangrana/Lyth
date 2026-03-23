@@ -65,6 +65,12 @@ static void fb_write_pixel(int x, int y, uint32_t rgb) {
         pixel[0] = (uint8_t)(rgb & 0xFF);
         pixel[1] = (uint8_t)((rgb >> 8) & 0xFF);
         pixel[2] = (uint8_t)((rgb >> 16) & 0xFF);
+    } else if (fbinfo.bpp == 16) {
+        /* RGB565 */
+        uint16_t r5 = (uint16_t)((rgb >> 19) & 0x1F);
+        uint16_t g6 = (uint16_t)((rgb >> 10) & 0x3F);
+        uint16_t b5 = (uint16_t)((rgb >> 3) & 0x1F);
+        *(uint16_t*)pixel = (r5 << 11) | (g6 << 5) | b5;
     }
 }
 
@@ -82,6 +88,12 @@ static uint32_t fb_read_pixel(int x, int y) {
         return (uint32_t)pixel[0] |
                ((uint32_t)pixel[1] << 8) |
                ((uint32_t)pixel[2] << 16);
+    } else if (fbinfo.bpp == 16) {
+        uint16_t val = *(uint16_t*)pixel;
+        uint32_t r = ((val >> 11) & 0x1F) << 3;
+        uint32_t g = ((val >> 5)  & 0x3F) << 2;
+        uint32_t b = (val & 0x1F) << 3;
+        return b | (g << 8) | (r << 16);
     }
 
     return 0;
@@ -245,7 +257,7 @@ int fb_init(multiboot_info_t* mbi) {
         return 0;
     }
 
-    if (mbi->framebuffer_bpp != 24 && mbi->framebuffer_bpp != 32) {
+    if (mbi->framebuffer_bpp != 16 && mbi->framebuffer_bpp != 24 && mbi->framebuffer_bpp != 32) {
         fb_is_active = 0;
         return 0;
     }

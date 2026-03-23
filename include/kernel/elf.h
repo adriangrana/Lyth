@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 typedef struct {
-    uint32_t entry;
+    uintptr_t entry;
     uint32_t program_header_offset;
     uint16_t program_header_count;
     uint16_t program_header_entry_size;

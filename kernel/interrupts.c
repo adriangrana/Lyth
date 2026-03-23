@@ -1,4 +1,5 @@
 #include "interrupts.h"
+#include <stdint.h>
 #include "idt.h"
 #include "gdt.h"
 #include "keyboard.h"
@@ -90,23 +91,23 @@ extern void isr29_stub(void);
 extern void isr30_stub(void);
 extern void isr31_stub(void);
 
-static const unsigned int exception_stubs[32] = {
-    (unsigned int)isr0_stub,  (unsigned int)isr1_stub,
-    (unsigned int)isr2_stub,  (unsigned int)isr3_stub,
-    (unsigned int)isr4_stub,  (unsigned int)isr5_stub,
-    (unsigned int)isr6_stub,  (unsigned int)isr7_stub,
-    (unsigned int)isr8_stub,  (unsigned int)isr9_stub,
-    (unsigned int)isr10_stub, (unsigned int)isr11_stub,
-    (unsigned int)isr12_stub, (unsigned int)isr13_stub,
-    (unsigned int)isr14_stub, (unsigned int)isr15_stub,
-    (unsigned int)isr16_stub, (unsigned int)isr17_stub,
-    (unsigned int)isr18_stub, (unsigned int)isr19_stub,
-    (unsigned int)isr20_stub, (unsigned int)isr21_stub,
-    (unsigned int)isr22_stub, (unsigned int)isr23_stub,
-    (unsigned int)isr24_stub, (unsigned int)isr25_stub,
-    (unsigned int)isr26_stub, (unsigned int)isr27_stub,
-    (unsigned int)isr28_stub, (unsigned int)isr29_stub,
-    (unsigned int)isr30_stub, (unsigned int)isr31_stub,
+static const uintptr_t exception_stubs[32] = {
+    (uintptr_t)isr0_stub,  (uintptr_t)isr1_stub,
+    (uintptr_t)isr2_stub,  (uintptr_t)isr3_stub,
+    (uintptr_t)isr4_stub,  (uintptr_t)isr5_stub,
+    (uintptr_t)isr6_stub,  (uintptr_t)isr7_stub,
+    (uintptr_t)isr8_stub,  (uintptr_t)isr9_stub,
+    (uintptr_t)isr10_stub, (uintptr_t)isr11_stub,
+    (uintptr_t)isr12_stub, (uintptr_t)isr13_stub,
+    (uintptr_t)isr14_stub, (uintptr_t)isr15_stub,
+    (uintptr_t)isr16_stub, (uintptr_t)isr17_stub,
+    (uintptr_t)isr18_stub, (uintptr_t)isr19_stub,
+    (uintptr_t)isr20_stub, (uintptr_t)isr21_stub,
+    (uintptr_t)isr22_stub, (uintptr_t)isr23_stub,
+    (uintptr_t)isr24_stub, (uintptr_t)isr25_stub,
+    (uintptr_t)isr26_stub, (uintptr_t)isr27_stub,
+    (uintptr_t)isr28_stub, (uintptr_t)isr29_stub,
+    (uintptr_t)isr30_stub, (uintptr_t)isr31_stub,
 };
 
 static void cpu_halt_forever(void) {
@@ -117,8 +118,8 @@ static void cpu_halt_forever(void) {
     }
 }
 
-static unsigned int read_cr2(void) {
-    unsigned int value;
+static uint64_t read_cr2(void) {
+    uint64_t value;
     __asm__ volatile ("mov %%cr2, %0" : "=r"(value));
     return value;
 }
@@ -155,19 +156,19 @@ static void send_eoi(unsigned char irq) {
     }
 }
 
-unsigned int timer_interrupt_handler(unsigned int current_esp) {
+uintptr_t timer_interrupt_handler(uintptr_t current_esp) {
     timer_handle_interrupt();
     send_eoi(0);
     return task_schedule_on_timer(current_esp);
 }
 
-unsigned int keyboard_interrupt_handler(unsigned int current_esp) {
+uintptr_t keyboard_interrupt_handler(uintptr_t current_esp) {
     keyboard_handle_interrupt();
     send_eoi(1);
     return current_esp;
 }
 
-unsigned int mouse_interrupt_handler(unsigned int current_esp) {
+uintptr_t mouse_interrupt_handler(uintptr_t current_esp) {
     mouse_handle_interrupt();
     send_eoi(12);
     return current_esp;
@@ -178,53 +179,52 @@ void e1000_interrupt_handler(void) {
     send_eoi(11);
 }
 
-unsigned int syscall_interrupt_handler(unsigned int current_esp) {
+uintptr_t syscall_interrupt_handler(uintptr_t current_esp) {
     panic_frame_t* frame = (panic_frame_t*)current_esp;
 
-    if (frame->eax == SYSCALL_FORK) {
-        /* fork needs access to the raw frame to clone the register state,
-           so it bypasses the normal syscall_callback path. */
-        frame->eax = (unsigned int)task_fork_from_frame(current_esp);
-    } else if (frame->eax == SYSCALL_EXEC) {
-        frame->eax = syscall_exec_interrupt(current_esp,
-                                            frame->ebx,
-                                            frame->ecx);
-    } else if (frame->eax == SYSCALL_EXECV) {
-        frame->eax = syscall_execv_interrupt(current_esp,
-                                             frame->ebx,
-                                             frame->ecx,
-                                             frame->edx,
-                                             frame->esi);
-    } else if (frame->eax == SYSCALL_EXECVE) {
-        frame->eax = syscall_execve_interrupt(current_esp,
-                                              frame->ebx,
-                                              frame->ecx,
-                                              frame->edx);
+    /* 64-bit syscall convention: RAX=number, RDI=arg0, RSI=arg1, RDX=arg2, R10=arg3 */
+    if (frame->rax == SYSCALL_FORK) {
+        frame->rax = (uint64_t)task_fork_from_frame(current_esp);
+    } else if (frame->rax == SYSCALL_EXEC) {
+        frame->rax = syscall_exec_interrupt(current_esp,
+                                            frame->rdi,
+                                            frame->rsi);
+    } else if (frame->rax == SYSCALL_EXECV) {
+        frame->rax = syscall_execv_interrupt(current_esp,
+                                             frame->rdi,
+                                             frame->rsi,
+                                             frame->rdx,
+                                             frame->r10);
+    } else if (frame->rax == SYSCALL_EXECVE) {
+        frame->rax = syscall_execve_interrupt(current_esp,
+                                              frame->rdi,
+                                              frame->rsi,
+                                              frame->rdx);
     } else {
-        frame->eax = syscall_callback(frame->eax,
-                                      frame->ebx,
-                                      frame->ecx,
-                                      frame->edx,
-                                      frame->esi);
+        frame->rax = syscall_callback(frame->rax,
+                                      frame->rdi,
+                                      frame->rsi,
+                                      frame->rdx,
+                                      frame->r10);
     }
 
     return task_schedule_on_syscall(current_esp);
 }
 
-unsigned int exception_interrupt_handler(unsigned int current_esp) {
+uintptr_t exception_interrupt_handler(uintptr_t current_esp) {
     panic_frame_t* frame = (panic_frame_t*)current_esp;
-    unsigned int vector = frame->vector & 0xFFU;
+    unsigned int vector = (unsigned int)(frame->vector & 0xFFU);
     int from_user_mode = (frame->cs & 0x03U) == 0x03U;
 
     if (from_user_mode && task_current_is_user_mode()) {
         if (vector == 14) {
-            unsigned int fault_addr = read_cr2();
-            unsigned int error_code = frame->error_code;
+            uint64_t fault_addr = read_cr2();
+            uint64_t error_code = frame->error_code;
 
             /* COW: write to present user page → attempt resolve */
             if ((error_code & 0x07U) == 0x07U) {
-                uint32_t* dir = task_current_page_directory();
-                if (dir != 0 && paging_cow_resolve(dir, fault_addr)) {
+                uint64_t* dir = task_current_page_directory();
+                if (dir != 0 && paging_cow_resolve(dir, (uintptr_t)fault_addr)) {
                     return current_esp;
                 }
             }
@@ -236,7 +236,7 @@ unsigned int exception_interrupt_handler(unsigned int current_esp) {
             terminal_print(": ");
             terminal_print_line(exception_names[14]);
             terminal_print("CR2: ");
-            terminal_print_hex(fault_addr);
+            terminal_print_hex((unsigned int)fault_addr);
             terminal_put_char('\n');
             if (fault_addr >= PAGING_USER_STACK_GUARD_BASE &&
                 fault_addr < PAGING_USER_STACK_BOTTOM) {
@@ -274,12 +274,12 @@ void interrupts_init(void) {
 
     timer_init(100);
 
-    idt_set_gate(32, (unsigned int)irq0_stub,  code_selector, 0x8E);
-    idt_set_gate(33, (unsigned int)irq1_stub,  code_selector, 0x8E);
-    idt_set_gate(43, (unsigned int)irq11_stub, code_selector, 0x8E);
-    idt_set_gate(44, (unsigned int)irq12_stub, code_selector, 0x8E);
-    idt_set_gate(46, (unsigned int)irq14_stub, code_selector, 0x8E);
-    idt_set_gate(0x80, (unsigned int)syscall_stub, code_selector, 0xEE);
+    idt_set_gate(32, (uintptr_t)irq0_stub,  code_selector, 0x8E);
+    idt_set_gate(33, (uintptr_t)irq1_stub,  code_selector, 0x8E);
+    idt_set_gate(43, (uintptr_t)irq11_stub, code_selector, 0x8E);
+    idt_set_gate(44, (uintptr_t)irq12_stub, code_selector, 0x8E);
+    idt_set_gate(46, (uintptr_t)irq14_stub, code_selector, 0x8E);
+    idt_set_gate(0x80, (uintptr_t)syscall_stub, code_selector, 0xEE);
 
     if (apic_is_enabled()) {
         /* Route ISA IRQs through IOAPIC */

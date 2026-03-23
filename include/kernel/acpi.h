@@ -52,4 +52,10 @@ const acpi_madt_info_t* acpi_get_madt_info(void);
  */
 const void* acpi_find_table(const char* signature);
 
+/* Power management — require FADT.  Return 0 on success, -1 on failure. */
+int acpi_shutdown(void);
+int acpi_reboot(void);
+/* Returns 1 if FADT was parsed and power control is available. */
+int acpi_power_available(void);
+
 #endif

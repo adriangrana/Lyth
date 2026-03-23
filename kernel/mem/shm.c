@@ -76,7 +76,7 @@ static int shm_slot_find_free(shm_mapping_t* slots, int slot_count) {
     return -1;
 }
 
-static uint32_t shm_find_free_base(const shm_mapping_t* slots,
+static uintptr_t shm_find_free_base(const shm_mapping_t* slots,
                                    int slot_count,
                                    unsigned int page_count) {
     unsigned int used_pages[SHM_MAX_PAGES];
@@ -128,11 +128,11 @@ static uint32_t shm_find_free_base(const shm_mapping_t* slots,
     return 0U;
 }
 
-static int shm_attach_at(uint32_t* directory,
+static int shm_attach_at(uint64_t* directory,
                          shm_mapping_t* slots,
                          int slot_count,
                          shm_segment_t* segment,
-                         uint32_t base) {
+                         uintptr_t base) {
     int slot_index;
 
     if (directory == 0 || slots == 0 || segment == 0 || !segment->used) {
@@ -145,7 +145,7 @@ static int shm_attach_at(uint32_t* directory,
     }
 
     for (unsigned int page = 0; page < segment->page_count; page++) {
-        uint32_t va = base + (page * PAGING_PAGE_SIZE);
+        uintptr_t va = base + (page * PAGING_PAGE_SIZE);
         if (!paging_map_user_page(directory, va, segment->frames[page], 1)) {
             while (page > 0U) {
                 page--;
@@ -163,7 +163,7 @@ static int shm_attach_at(uint32_t* directory,
     return 1;
 }
 
-static int shm_detach_slot(uint32_t* directory, shm_mapping_t* slot) {
+static int shm_detach_slot(uint64_t* directory, shm_mapping_t* slot) {
     shm_segment_t* segment;
     unsigned int page_count;
 
@@ -250,12 +250,12 @@ int shm_create(unsigned int size) {
     return shm_segments[slot].id;
 }
 
-uint32_t shm_attach(uint32_t* directory,
+uintptr_t shm_attach(uint64_t* directory,
                     shm_mapping_t* slots,
                     int slot_count,
                     int segment_id) {
     shm_segment_t* segment;
-    uint32_t base;
+    uintptr_t base;
 
     segment = shm_find_segment(segment_id);
     if (segment == 0 || segment->marked_for_delete) {
@@ -274,10 +274,10 @@ uint32_t shm_attach(uint32_t* directory,
     return base;
 }
 
-int shm_detach(uint32_t* directory,
+int shm_detach(uint64_t* directory,
                shm_mapping_t* slots,
                int slot_count,
-               uint32_t address) {
+               uintptr_t address) {
     for (int i = 0; i < slot_count; i++) {
         if (slots[i].used &&
             address >= slots[i].base &&
@@ -289,7 +289,7 @@ int shm_detach(uint32_t* directory,
     return 0;
 }
 
-void shm_detach_all(uint32_t* directory,
+void shm_detach_all(uint64_t* directory,
                     shm_mapping_t* slots,
                     int slot_count) {
     if (directory == 0 || slots == 0) {
@@ -303,7 +303,7 @@ void shm_detach_all(uint32_t* directory,
     }
 }
 
-int shm_clone_mappings(uint32_t* child_directory,
+int shm_clone_mappings(uint64_t* child_directory,
                        shm_mapping_t* child_slots,
                        int child_slot_count,
                        const shm_mapping_t* parent_slots,

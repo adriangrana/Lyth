@@ -35,6 +35,7 @@
 #include "pci.h"
 #include "e1000.h"
 #include "socket.h"
+#include "ahci.h"
 
 static void terminal_write_uint(uint32_t value) {
     char buffer[16];
@@ -190,6 +191,9 @@ void kernel_main(unsigned long mbi_ptr) {
         }
         klog_write(KLOG_LEVEL_INFO, "blkdev", "Capa de bloques lista");
     }
+
+    /* AHCI/SATA controller ---------------------------------------- */
+    ahci_init();
 
     /* Auto-mount FAT16 / FAT32 partitions ------------------------- */
     {

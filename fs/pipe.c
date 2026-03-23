@@ -23,13 +23,13 @@ typedef struct {
     int nonblock;
 } pipe_end_t;
 
-static unsigned int pipe_irq_save(void) {
-    unsigned int flags;
-    __asm__ volatile ("pushf; pop %0; cli" : "=r"(flags) : : "memory");
+static uint64_t pipe_irq_save(void) {
+    uint64_t flags;
+    __asm__ volatile ("pushfq; pop %0; cli" : "=r"(flags) : : "memory");
     return flags;
 }
 
-static void pipe_irq_restore(unsigned int flags) {
+static void pipe_irq_restore(uint64_t flags) {
     if (flags & 0x200U) {
         __asm__ volatile ("sti" : : : "memory");
     }

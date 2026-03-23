@@ -2,9 +2,10 @@
 #include "terminal.h"
 #include "serial.h"
 #include "klog.h"
+#include <stdint.h>
 
-extern unsigned int __kernel_start;
-extern unsigned int __kernel_end;
+extern unsigned char __kernel_start;
+extern unsigned char __kernel_end;
 
 static int panic_reentry = 0;
 
@@ -35,9 +36,11 @@ static void panic_putln_both(const char* s) {
     serial_putc('\n');
 }
 
-static void panic_print_hex_both(unsigned int value) {
-    terminal_print_hex(value);
-    serial_print_hex(value);
+static void panic_print_hex_both(uint64_t value) {
+    terminal_print_hex((unsigned int)(value >> 32));
+    terminal_print_hex((unsigned int)value);
+    serial_print_hex((unsigned int)(value >> 32));
+    serial_print_hex((unsigned int)value);
 }
 
 static void panic_print_uint_both(unsigned int value) {
@@ -45,14 +48,14 @@ static void panic_print_uint_both(unsigned int value) {
     serial_print_uint(value);
 }
 
-static void panic_print_label_hex_both(const char* label, unsigned int value) {
+static void panic_print_label_hex_both(const char* label, uint64_t value) {
     panic_puts_both(label);
     panic_print_hex_both(value);
     panic_term_serial_nl();
 }
 
-static void panic_print_pair_hex_both(const char* left_label, unsigned int left_value,
-                                      const char* right_label, unsigned int right_value) {
+static void panic_print_pair_hex_both(const char* left_label, uint64_t left_value,
+                                      const char* right_label, uint64_t right_value) {
     panic_puts_both("  ");
     panic_puts_both(left_label);
     panic_puts_both(": ");
@@ -78,10 +81,10 @@ static void panic_separator(void) {
  *  Utilidades
  * ------------------------------------------------------------ */
 
-static int panic_ptr_probably_safe(unsigned int p) {
-    if ((p & 0x3U) != 0U) return 0;
-    if (p < (unsigned int)(uintptr_t)&__kernel_start) return 0;
-    if (p >= 0x00400000U) return 0; /* identity-mapped first 4 MiB */
+static int panic_ptr_probably_safe(uintptr_t p) {
+    if ((p & 0x7U) != 0U) return 0;
+    if (p < (uintptr_t)&__kernel_start) return 0;
+    if (p >= 0x100000000UL) return 0; /* identity-mapped first 4 GiB */
     return 1;
 }
 
@@ -123,7 +126,7 @@ static void panic_print_section(const char* name) {
 
 static void panic_print_exception_summary(const char* reason,
                                           const panic_frame_t* frame,
-                                          unsigned int cr2) {
+                                          uint64_t cr2) {
     unsigned int vector;
 
     if (frame == 0) {
@@ -144,7 +147,7 @@ static void panic_print_exception_summary(const char* reason,
     panic_puts_both("PANIC: ");
     panic_puts_both(panic_vector_name(vector));
     panic_puts_both(" at ");
-    panic_print_hex_both(frame->eip);
+    panic_print_hex_both(frame->rip);
     panic_term_serial_nl();
     terminal_set_color(PANIC_COLOR_NORMAL);
 
@@ -160,12 +163,12 @@ static void panic_print_exception_summary(const char* reason,
     panic_print_hex_both(frame->error_code);
     panic_term_serial_nl();
 
-    panic_puts_both("EIP:    ");
-    panic_print_hex_both(frame->eip);
+    panic_puts_both("RIP:    ");
+    panic_print_hex_both(frame->rip);
     panic_puts_both("  CS:    ");
     panic_print_hex_both(frame->cs);
-    panic_puts_both("  EFLAGS: ");
-    panic_print_hex_both(frame->eflags);
+    panic_puts_both("  RFLAGS: ");
+    panic_print_hex_both(frame->rflags);
     panic_term_serial_nl();
 
     if (vector == 14U) {
@@ -179,30 +182,34 @@ static void panic_print_registers(const panic_frame_t* frame) {
     if (frame == 0) return;
 
     panic_print_section("Registers:");
-    panic_print_pair_hex_both("EAX", frame->eax, "EBX", frame->ebx);
-    panic_print_pair_hex_both("ECX", frame->ecx, "EDX", frame->edx);
-    panic_print_pair_hex_both("ESI", frame->esi, "EDI", frame->edi);
-    panic_print_pair_hex_both("EBP", frame->ebp, "ESP", frame->esp);
+    panic_print_pair_hex_both("RAX", frame->rax, "RBX", frame->rbx);
+    panic_print_pair_hex_both("RCX", frame->rcx, "RDX", frame->rdx);
+    panic_print_pair_hex_both("RSI", frame->rsi, "RDI", frame->rdi);
+    panic_print_pair_hex_both("RBP", frame->rbp, "RSP", frame->rsp);
+    panic_print_pair_hex_both("R8 ", frame->r8,  "R9 ", frame->r9);
+    panic_print_pair_hex_both("R10", frame->r10, "R11", frame->r11);
+    panic_print_pair_hex_both("R12", frame->r12, "R13", frame->r13);
+    panic_print_pair_hex_both("R14", frame->r14, "R15", frame->r15);
 }
 
-static void panic_backtrace(unsigned int ebp_start, unsigned int max_frames) {
-    unsigned int* frame;
+static void panic_backtrace(uintptr_t rbp_start, unsigned int max_frames) {
+    uintptr_t* frame;
     unsigned int i;
 
     panic_print_section("Call trace:");
 
-    if (!panic_ptr_probably_safe(ebp_start)) {
+    if (!panic_ptr_probably_safe(rbp_start)) {
         panic_putln_both("  <invalid frame pointer>");
         return;
     }
 
-    frame = (unsigned int*)(uintptr_t)ebp_start;
+    frame = (uintptr_t*)rbp_start;
 
     for (i = 0; i < max_frames; i++) {
-        unsigned int next;
-        unsigned int ret;
+        uintptr_t next;
+        uintptr_t ret;
 
-        if (!panic_ptr_probably_safe((unsigned int)(uintptr_t)frame)) {
+        if (!panic_ptr_probably_safe((uintptr_t)frame)) {
             break;
         }
 
@@ -214,18 +221,18 @@ static void panic_backtrace(unsigned int ebp_start, unsigned int max_frames) {
         panic_puts_both("  ");
         panic_print_hex_both(ret);
 
-        if (ret >= (unsigned int)(uintptr_t)&__kernel_start &&
-            ret <= (unsigned int)(uintptr_t)&__kernel_end) {
+        if (ret >= (uintptr_t)&__kernel_start &&
+            ret <= (uintptr_t)&__kernel_end) {
             panic_puts_both("  [kernel]");
         }
 
         panic_term_serial_nl();
 
-        if (!panic_ptr_probably_safe(next) || next <= (unsigned int)(uintptr_t)frame) {
+        if (!panic_ptr_probably_safe(next) || next <= (uintptr_t)frame) {
             break;
         }
 
-        frame = (unsigned int*)(uintptr_t)next;
+        frame = (uintptr_t*)next;
     }
 }
 
@@ -235,7 +242,7 @@ static void panic_print_assert_common(const char* title,
                                       const char* file,
                                       int line,
                                       const char* func) {
-    unsigned int ebp;
+    uintptr_t ebp;
 
     terminal_set_color(PANIC_COLOR_NORMAL);
     terminal_clear();
@@ -268,8 +275,8 @@ static void panic_print_assert_common(const char* title,
     panic_putln_both("");
     panic_separator();
 
-    __asm__ volatile ("mov %%ebp, %0" : "=r"(ebp));
-    panic_backtrace(ebp, 16U);
+    __asm__ volatile ("mov %%rbp, %0" : "=r"(ebp));
+    panic_backtrace((uintptr_t)ebp, 16U);
 
     panic_putln_both("");
     panic_separator();
@@ -287,7 +294,7 @@ void panic_halt(void) {
     }
 }
 
-void panic_show(const char* reason, const panic_frame_t* frame, unsigned int cr2) {
+void panic_show(const char* reason, const panic_frame_t* frame, uint64_t cr2) {
     if (panic_reentry) {
         panic_halt();
     }
@@ -308,7 +315,7 @@ void panic_show(const char* reason, const panic_frame_t* frame, unsigned int cr2
         panic_putln_both("");
 
         panic_separator();
-        panic_backtrace(frame->ebp, 16U);
+        panic_backtrace(frame->rbp, 16U);
         panic_putln_both("");
     }
 

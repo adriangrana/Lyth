@@ -19,35 +19,17 @@
 #define TASK_STACK_SIZE 16384
 #define TASK_USER_STACK_SIZE 4096
 
+/* 64-bit interrupt frame — must match interrupts64.s SAVE_ALL order */
 typedef struct {
-    unsigned int edi;
-    unsigned int esi;
-    unsigned int ebp;
-    unsigned int esp_placeholder;
-    unsigned int ebx;
-    unsigned int edx;
-    unsigned int ecx;
-    unsigned int eax;
-    unsigned int eip;
-    unsigned int cs;
-    unsigned int eflags;
+    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
+    uint64_t rdi, rsi, rbp, rbx, rdx, rcx, rax;
+    uint64_t vector, error_code;
+    /* CPU iretq frame (always full in 64-bit mode) */
+    uint64_t rip, cs, rflags, rsp, ss;
 } task_stack_frame_t;
 
-typedef struct {
-    unsigned int edi;
-    unsigned int esi;
-    unsigned int ebp;
-    unsigned int esp_placeholder;
-    unsigned int ebx;
-    unsigned int edx;
-    unsigned int ecx;
-    unsigned int eax;
-    unsigned int eip;
-    unsigned int cs;
-    unsigned int eflags;
-    unsigned int user_esp;
-    unsigned int user_ss;
-} task_user_stack_frame_t;
+/* In 64-bit mode, iretq always pops SS:RSP, no separate user frame needed */
+typedef task_stack_frame_t task_user_stack_frame_t;
 
 typedef struct {
     int used;
@@ -63,16 +45,16 @@ typedef struct {
     void* data;
     unsigned int data_size;
     int exit_code;
-    unsigned int saved_esp;
+    uintptr_t saved_rsp;
     unsigned char* stack;
     unsigned char* user_stack;
-    unsigned int user_entry;
+    uintptr_t user_entry;
     int user_mode;
-    uint32_t user_physical_base;
-    uint32_t user_heap_base;
-    uint32_t user_heap_size;
-    uint32_t user_initial_esp;               /* custom initial user ESP (0 = top of stack) */
-    uint32_t* page_directory;
+    uintptr_t user_physical_base;
+    uintptr_t user_heap_base;
+    uintptr_t user_heap_size;
+    uintptr_t user_initial_esp;              /* custom initial user ESP (0 = top of stack) */
+    uint64_t* page_directory;
     vfs_fd_entry_t fd_table[VFS_MAX_FD]; /* per-task open file descriptors */
     unsigned int fd_limit_soft;          /* soft FD limit (RLIMIT_NOFILE cur) */
     unsigned int fd_limit_hard;          /* hard FD limit (RLIMIT_NOFILE max) */
@@ -80,9 +62,9 @@ typedef struct {
     int parent_id;                       /* PID of the task that spawned this one */
     unsigned int pending_signals;        /* bitmask of pending signals */
     unsigned int signal_mask;            /* blocked signals bitmask */
-    unsigned int signal_handlers[LYTH_SIGNAL_MAX + 1]; /* 0/1 special or user handler */
-    uint32_t signal_trampoline_va;       /* user-space stub to restore stack after handler */
-    uint32_t waitpid_status_uptr;        /* user vaddr where WAITPID status is written on wake */
+    uintptr_t signal_handlers[LYTH_SIGNAL_MAX + 1]; /* 0/1 special or user handler */
+    uintptr_t signal_trampoline_va;      /* user-space stub to restore stack after handler */
+    uintptr_t waitpid_status_uptr;       /* user vaddr where WAITPID status is written on wake */
     int sched_next;                      /* next index in ready queue, -1 = tail / not queued */
     unsigned int uid;                    /* real user id */
     unsigned int gid;                    /* real group id */
@@ -114,7 +96,7 @@ static int sched_ready_tail[SCHED_PRIO_COUNT]; /* tails of per-priority FIFO que
 static int    idle_task_id    = -1;
 static unsigned int idle_tick_count  = 0;
 static unsigned int ctx_switch_count = 0;
-static unsigned int idle_context_esp = 0;
+static uintptr_t idle_context_rsp = 0;
 static spinlock_t sched_lock = SPINLOCK_INIT;
 static unsigned short kernel_code_selector = 0x08;
 static unsigned short user_code_selector = GDT_USER_CODE_SELECTOR;
@@ -219,13 +201,13 @@ static void idle_task_step(void) {
     __asm__ volatile("hlt");
 }
 
-static unsigned int interrupt_save(void) {
-    unsigned int flags;
-    __asm__ volatile ("pushf; pop %0; cli" : "=r"(flags) : : "memory");
+static uint64_t interrupt_save(void) {
+    uint64_t flags;
+    __asm__ volatile ("pushfq; pop %0; cli" : "=r"(flags) : : "memory");
     return flags;
 }
 
-static void interrupt_restore(unsigned int flags) {
+static void interrupt_restore(uint64_t flags) {
     if (flags & 0x200) {
         __asm__ volatile ("sti" : : : "memory");
     }
@@ -265,10 +247,10 @@ static int encode_child_status(const task_entry_t* t) {
 /* Write a 32-bit int into a task's user-space at virtual address 'vaddr'.
  * Uses the physical mapping so it works from any execution context.
  */
-static void write_user_int32(task_entry_t* t, uint32_t vaddr, int value) {
-    uint32_t base   = PAGING_USER_BASE;
-    uint32_t size   = PAGING_USER_SIZE;
-    uint32_t offset;
+static void write_user_int32(task_entry_t* t, uintptr_t vaddr, int value) {
+    uintptr_t base   = PAGING_USER_BASE;
+    uintptr_t size   = PAGING_USER_SIZE;
+    uintptr_t offset;
     if (!t || !t->user_physical_base || !vaddr) return;
     if (vaddr < base || vaddr + 4U > base + size) return;
     if (t->page_directory != 0 &&
@@ -276,7 +258,7 @@ static void write_user_int32(task_entry_t* t, uint32_t vaddr, int value) {
         return;
     }
     offset = vaddr - base;
-    *(int*)(uintptr_t)(t->user_physical_base + offset) = value;
+    *(int*)(t->user_physical_base + offset) = value;
 }
 
 static int signal_is_valid(int signum) {
@@ -326,11 +308,12 @@ static int signal_is_blocked(const task_entry_t* task, int signum) {
 }
 
 static void task_install_signal_trampoline(task_entry_t* task) {
-    static const unsigned char code[] = { 0x83, 0xC4, 0x04, 0xC3 }; /* add $4,%esp ; ret */
-    uint32_t va;
-    uint32_t offset;
-    unsigned char* dst;
-
+    /* In 64-bit mode, signal delivery passes signum in RDI and pushes original
+     * RIP on the user stack.  The handler's `ret` pops the original RIP
+     * directly — no stack-fixup trampoline is needed.  We keep
+     * signal_trampoline_va as a sentinel (non-zero when the task has user-mode
+     * signal support) but no code is actually installed.
+     */
     if (task == 0 || !task->user_mode || task->user_physical_base == 0) {
         if (task != 0) {
             task->signal_trampoline_va = 0;
@@ -338,19 +321,8 @@ static void task_install_signal_trampoline(task_entry_t* task) {
         return;
     }
 
-    va = PAGING_USER_STACK_TOP - PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
-    offset = va - PAGING_USER_BASE;
-    if (offset + sizeof(code) > PAGING_USER_SIZE) {
-        task->signal_trampoline_va = 0;
-        return;
-    }
-
-    dst = (unsigned char*)(uintptr_t)(task->user_physical_base + offset);
-    for (unsigned int i = 0; i < sizeof(code); i++) {
-        dst[i] = code[i];
-    }
-
-    task->signal_trampoline_va = va;
+    /* Use a recognizable sentinel address inside the user stack guard area. */
+    task->signal_trampoline_va = PAGING_USER_STACK_TOP - PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
 }
 
 static void task_signal_handlers_init(task_entry_t* task) {
@@ -437,7 +409,7 @@ static void clear_task(task_entry_t* task) {
     task->data = 0;
     task->data_size = 0;
     task->exit_code = 0;
-    task->saved_esp = 0;
+    task->saved_rsp = 0;
     task->stack = 0;
     task->user_stack = 0;
     task->user_entry = 0;
@@ -585,50 +557,47 @@ static int task_pop_pending_signal(task_entry_t* task) {
 
 static int task_push_user_signal_frame(task_entry_t* task,
                                        task_user_stack_frame_t* frame,
-                                       unsigned int handler,
+                                       uintptr_t handler,
                                        int signum) {
-    uint32_t new_user_esp;
-    uint32_t offset;
-    uint32_t* sp;
+    uintptr_t new_user_rsp;
+    uintptr_t offset;
+    uint64_t* sp;
 
     if (task == 0 || frame == 0 || handler <= LYTH_SIG_IGN || task->signal_trampoline_va == 0) {
         return 0;
     }
 
-    if (frame->user_esp < (PAGING_USER_STACK_BOTTOM + 12U) ||
-        frame->user_esp > PAGING_USER_STACK_TOP) {
+    if (frame->rsp < (PAGING_USER_STACK_BOTTOM + 16U) ||
+        frame->rsp > PAGING_USER_STACK_TOP) {
         return 0;
     }
 
-    new_user_esp = frame->user_esp - 12U;
-    if (new_user_esp < PAGING_USER_STACK_BOTTOM) {
+    /* 64-bit SysV ABI: align RSP to 16 bytes, then push 8-byte return addr.
+     * Result is RSP ≡ 8 (mod 16), as if after a `call`.  */
+    new_user_rsp = (frame->rsp & ~(uintptr_t)0xF) - 8U;
+    if (new_user_rsp < PAGING_USER_STACK_BOTTOM) {
         return 0;
     }
 
-    offset = new_user_esp - PAGING_USER_BASE;
-    if (offset + 12U > PAGING_USER_SIZE) {
+    offset = new_user_rsp - PAGING_USER_BASE;
+    if (offset + 8U > PAGING_USER_SIZE) {
         return 0;
     }
 
-    sp = (uint32_t*)(uintptr_t)(task->user_physical_base + offset);
-    /* cdecl frame for handler(int):
-       [esp+0]  = return address -> trampoline
-       [esp+4]  = signum argument
-       [esp+8]  = original eip (consumed by trampoline ret)
-     */
-    sp[0] = task->signal_trampoline_va;
-    sp[1] = (uint32_t)signum;
-    sp[2] = frame->eip;
+    sp = (uint64_t*)(task->user_physical_base + offset);
+    /* At [RSP+0] we place the original RIP so handler's `ret` resumes there. */
+    sp[0] = frame->rip;
 
-    frame->user_esp = new_user_esp;
-    frame->eip = handler;
+    frame->rsp = new_user_rsp;
+    frame->rdi = (uint64_t)signum;   /* first argument in RDI (SysV ABI) */
+    frame->rip = handler;
     return 1;
 }
 
-static void task_deliver_signals_current(task_entry_t* task, unsigned int frame_esp) {
+static void task_deliver_signals_current(task_entry_t* task, uintptr_t frame_esp) {
     task_user_stack_frame_t* frame;
     int signum;
-    unsigned int handler;
+    uintptr_t handler;
 
     if (task == 0 || !task->used || !task->user_mode || task->state != TASK_STATE_RUNNING) {
         return;
@@ -744,10 +713,10 @@ static void complete_task(task_entry_t* task) {
            wake it and reap immediately. */
 
         /* Write child PID as the syscall return value into parent's saved frame. */
-        if (parent->saved_esp != 0) {
+        if (parent->saved_rsp != 0) {
             task_user_stack_frame_t* pframe =
-                (task_user_stack_frame_t*)parent->saved_esp;
-            pframe->eax = (unsigned int)task_id;
+                (task_user_stack_frame_t*)parent->saved_rsp;
+            pframe->rax = (unsigned int)task_id;
         }
         /* Write POSIX status to user-space pointer if set. */
         if (parent->waitpid_status_uptr) {
@@ -781,7 +750,7 @@ static int select_next_ready_task(void) {
     return -1;
 }
 
-static unsigned int schedule_from_idle(unsigned int current_esp) {
+static uintptr_t schedule_from_idle(uintptr_t current_esp) {
     int selected = select_next_ready_task();
 
     if (selected < 0) {
@@ -790,7 +759,7 @@ static unsigned int schedule_from_idle(unsigned int current_esp) {
 
     sched_dequeue_ready((int)tasks[selected].priority);
 
-    idle_context_esp = current_esp;
+    idle_context_rsp = current_esp;
     current_task_index = selected;
     tasks[selected].state = TASK_STATE_RUNNING;
     ctx_switch_count++;
@@ -803,10 +772,10 @@ static unsigned int schedule_from_idle(unsigned int current_esp) {
         paging_switch_directory(paging_kernel_directory());
     }
 
-    return tasks[selected].saved_esp;
+    return tasks[selected].saved_rsp;
 }
 
-static unsigned int schedule_back_to_idle(unsigned int current_esp) {
+static uintptr_t schedule_back_to_idle(uintptr_t current_esp) {
     task_entry_t* task;
 
     if (current_task_index < 0) {
@@ -814,7 +783,7 @@ static unsigned int schedule_back_to_idle(unsigned int current_esp) {
     }
 
     task = &tasks[current_task_index];
-    task->saved_esp = current_esp;
+    task->saved_rsp = current_esp;
 
     terminal_set_output_vc(-1);
 
@@ -833,63 +802,71 @@ static unsigned int schedule_back_to_idle(unsigned int current_esp) {
 
     current_task_index = -1;
 
-    if (idle_context_esp != 0) {
-        return idle_context_esp;
+    if (idle_context_rsp != 0) {
+        return idle_context_rsp;
     }
 
     return current_esp;
 }
 
 static void initialize_task_stack(task_entry_t* task) {
-    unsigned int stack_top;
+    uintptr_t stack_top;
 
-    stack_top = (unsigned int)(task->stack + TASK_STACK_SIZE);
+    stack_top = (uintptr_t)(task->stack + TASK_STACK_SIZE);
 
     if (task->user_mode) {
         task_user_stack_frame_t* frame;
-        unsigned int user_stack_top;
+        uintptr_t user_stack_top;
 
-        user_stack_top = (unsigned int)(task->user_stack + TASK_USER_STACK_SIZE);
+        user_stack_top = (uintptr_t)(task->user_stack + TASK_USER_STACK_SIZE);
         if (task->user_initial_esp != 0)
-            user_stack_top = (unsigned int)task->user_initial_esp;
+            user_stack_top = task->user_initial_esp;
         else
             user_stack_top -= PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
         stack_top -= sizeof(task_user_stack_frame_t);
         frame = (task_user_stack_frame_t*)stack_top;
 
-        frame->edi = 0;
-        frame->esi = 0;
-        frame->ebp = 0;
-        frame->esp_placeholder = 0;
-        frame->ebx = 0;
-        frame->edx = 0;
-        frame->ecx = 0;
-        frame->eax = 0;
-        frame->eip = task->user_entry;
+        frame->r15 = 0; frame->r14 = 0; frame->r13 = 0; frame->r12 = 0;
+        frame->r11 = 0; frame->r10 = 0; frame->r9  = 0; frame->r8  = 0;
+        frame->rdi = 0;
+        frame->rsi = 0;
+        frame->rbp = 0;
+        frame->rbx = 0;
+        frame->rdx = 0;
+        frame->rcx = 0;
+        frame->rax = 0;
+        frame->vector = 0;
+        frame->error_code = 0;
+        frame->rip = task->user_entry;
         frame->cs = user_code_selector | 0x03;
-        frame->eflags = 0x00000202U;
-        frame->user_esp = user_stack_top;
-        frame->user_ss = user_data_selector | 0x03;
+        frame->rflags = 0x00000202UL;
+        frame->rsp = user_stack_top;
+        frame->ss = user_data_selector | 0x03;
     } else {
         task_stack_frame_t* frame;
 
         stack_top -= sizeof(task_stack_frame_t);
         frame = (task_stack_frame_t*)stack_top;
 
-        frame->edi = 0;
-        frame->esi = 0;
-        frame->ebp = 0;
-        frame->esp_placeholder = 0;
-        frame->ebx = 0;
-        frame->edx = 0;
-        frame->ecx = 0;
-        frame->eax = 0;
-        frame->eip = (unsigned int)(uintptr_t)task_thread_bootstrap;
+        frame->r15 = 0; frame->r14 = 0; frame->r13 = 0; frame->r12 = 0;
+        frame->r11 = 0; frame->r10 = 0; frame->r9  = 0; frame->r8  = 0;
+        frame->rdi = 0;
+        frame->rsi = 0;
+        frame->rbp = 0;
+        frame->rbx = 0;
+        frame->rdx = 0;
+        frame->rcx = 0;
+        frame->rax = 0;
+        frame->vector = 0;
+        frame->error_code = 0;
+        frame->rip = (uintptr_t)task_thread_bootstrap;
         frame->cs = kernel_code_selector;
-        frame->eflags = 0x00000202U;
+        frame->rflags = 0x00000202UL;
+        frame->rsp = stack_top + sizeof(task_stack_frame_t);
+        frame->ss = 0x10;
     }
 
-    task->saved_esp = stack_top;
+    task->saved_rsp = stack_top;
 }
 
 static void task_thread_bootstrap(void) {
@@ -945,7 +922,7 @@ void task_system_init(void) {
     current_task_index = -1;
     next_task_id = 1;
     foreground_task_id = -1;
-    idle_context_esp = 0;
+    idle_context_rsp = 0;
     foreground_complete_handler = 0;
     idle_task_id   = -1;
     idle_tick_count  = 0;
@@ -982,7 +959,7 @@ void task_system_init(void) {
             tasks[slot].data             = 0;
             tasks[slot].data_size        = 0;
             tasks[slot].exit_code        = 0;
-            tasks[slot].saved_esp        = 0;
+            tasks[slot].saved_rsp        = 0;
             tasks[slot].user_mode        = 0;
             tasks[slot].user_physical_base = 0;
             tasks[slot].user_heap_base   = 0;
@@ -1011,7 +988,7 @@ void task_system_init(void) {
 }
 
 int task_spawn(const char* name, task_step_fn step, const void* data, unsigned int data_size, int foreground) {
-    unsigned int flags;
+    uint64_t flags;
     int slot = -1;
 
     if (step == 0) {
@@ -1051,7 +1028,7 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
     tasks[slot].data_size = data_size;
     tasks[slot].exit_code = 0;
     tasks[slot].output_vc = terminal_active_vc();
-    tasks[slot].saved_esp = 0;
+    tasks[slot].saved_rsp = 0;
     tasks[slot].stack = 0;
     tasks[slot].user_stack = 0;
     tasks[slot].user_entry = 0;
@@ -1115,15 +1092,15 @@ int task_spawn(const char* name, task_step_fn step, const void* data, unsigned i
 }
 
 static int task_spawn_user_common(const char* name,
-                                  unsigned int entry_point,
-                                  uint32_t user_physical_base,
-                                  uint32_t user_heap_base,
-                                  uint32_t user_heap_size,
-                                  uint32_t* page_directory,
-                                  uint32_t initial_user_esp,
+                                  uintptr_t entry_point,
+                                  uintptr_t user_physical_base,
+                                  uintptr_t user_heap_base,
+                                  uintptr_t user_heap_size,
+                                  uint64_t* page_directory,
+                                  uintptr_t initial_user_esp,
                                   int shm_segment_id,
                                   int foreground) {
-    unsigned int flags;
+    uint64_t flags;
     int slot = -1;
 
     if (entry_point == 0 || user_physical_base == 0 || page_directory == 0) {
@@ -1163,7 +1140,7 @@ static int task_spawn_user_common(const char* name,
     tasks[slot].data_size = 0;
     tasks[slot].exit_code = 0;
     tasks[slot].output_vc = terminal_active_vc();
-    tasks[slot].saved_esp = 0;
+    tasks[slot].saved_rsp = 0;
     tasks[slot].stack = (unsigned char*)kmalloc(TASK_STACK_SIZE);
     tasks[slot].user_stack = 0;
     tasks[slot].user_entry = entry_point;
@@ -1228,12 +1205,12 @@ static int task_spawn_user_common(const char* name,
 }
 
 int task_spawn_user(const char* name,
-                    unsigned int entry_point,
-                    uint32_t user_physical_base,
-                    uint32_t user_heap_base,
-                    uint32_t user_heap_size,
-                    uint32_t* page_directory,
-                    uint32_t initial_user_esp,
+                    uintptr_t entry_point,
+                    uintptr_t user_physical_base,
+                    uintptr_t user_heap_base,
+                    uintptr_t user_heap_size,
+                    uint64_t* page_directory,
+                    uintptr_t initial_user_esp,
                     int foreground) {
     return task_spawn_user_common(name,
                                   entry_point,
@@ -1247,12 +1224,12 @@ int task_spawn_user(const char* name,
 }
 
 int task_spawn_user_shm1(const char* name,
-                         unsigned int entry_point,
-                         uint32_t user_physical_base,
-                         uint32_t user_heap_base,
-                         uint32_t user_heap_size,
-                         uint32_t* page_directory,
-                         uint32_t initial_user_esp,
+                         uintptr_t entry_point,
+                         uintptr_t user_physical_base,
+                         uintptr_t user_heap_base,
+                         uintptr_t user_heap_size,
+                         uint64_t* page_directory,
+                         uintptr_t initial_user_esp,
                          int shm_segment_id,
                          int foreground) {
     return task_spawn_user_common(name,
@@ -1383,7 +1360,7 @@ void task_wait_event_timeout(int event_id, unsigned int timeout_ticks) {
 
 int task_signal_event(int event_id) {
     int woken = 0;
-    unsigned int flags;
+    uint64_t flags;
 
     if (event_id < 0) {
         return 0;
@@ -1427,7 +1404,7 @@ void task_exit(int exit_code) {
 }
 
 void task_request_cancel(void) {
-    unsigned int flags;
+    uint64_t flags;
     task_entry_t* task = 0;
 
     flags = interrupt_save();
@@ -1452,7 +1429,7 @@ void task_request_cancel(void) {
 }
 
 void task_request_foreground_cancel(void) {
-    unsigned int flags;
+    uint64_t flags;
     task_entry_t* task;
 
     flags = interrupt_save();
@@ -1517,7 +1494,7 @@ int task_current_is_user_mode(void) {
     return tasks[current_task_index].user_mode;
 }
 
-uint32_t* task_current_page_directory(void) {
+uint64_t* task_current_page_directory(void) {
     if (current_task_index < 0) {
         return 0;
     }
@@ -1525,7 +1502,7 @@ uint32_t* task_current_page_directory(void) {
     return tasks[current_task_index].page_directory;
 }
 
-uint32_t task_current_user_heap_base(void) {
+uintptr_t task_current_user_heap_base(void) {
     if (current_task_index < 0) {
         return 0;
     }
@@ -1533,7 +1510,7 @@ uint32_t task_current_user_heap_base(void) {
     return tasks[current_task_index].user_heap_base;
 }
 
-uint32_t task_current_user_heap_size(void) {
+uintptr_t task_current_user_heap_size(void) {
     if (current_task_index < 0) {
         return 0;
     }
@@ -1595,7 +1572,7 @@ int task_foreground_task_id(void) {
 }
 
 int task_set_priority(int id, task_priority_t priority) {
-    unsigned int flags;
+    uint64_t flags;
     task_entry_t* task;
     int idx;
     task_priority_t old_priority;
@@ -1638,7 +1615,7 @@ int task_set_priority(int id, task_priority_t priority) {
 }
 
 void task_set_output_vc(int id, int vc_index) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     task_entry_t* task = find_task_by_id(id);
     if (task != 0) {
         task->output_vc = vc_index;
@@ -1669,7 +1646,7 @@ void task_set_foreground_complete_handler(void (*handler)(int id, const char* na
  * Returns the number of seconds remaining in the previous alarm (POSIX).
  */
 unsigned int task_alarm(unsigned int seconds) {
-    unsigned int flags;
+    uint64_t flags;
     unsigned int freq;
     unsigned int now;
     unsigned int remaining = 0;
@@ -1705,7 +1682,7 @@ unsigned int task_alarm(unsigned int seconds) {
  */
 int task_setitimer(unsigned int value_us, unsigned int interval_us,
                    unsigned int* old_value_us_out, unsigned int* old_interval_us_out) {
-    unsigned int flags;
+    uint64_t flags;
     unsigned int freq;
     unsigned int now;
     unsigned int us_per_tick;
@@ -1752,7 +1729,7 @@ int task_setitimer(unsigned int value_us, unsigned int interval_us,
 }
 
 void task_getitimer(unsigned int* value_us_out, unsigned int* interval_us_out) {
-    unsigned int flags;
+    uint64_t flags;
     unsigned int freq;
     unsigned int now;
 
@@ -1784,7 +1761,7 @@ void task_getitimer(unsigned int* value_us_out, unsigned int* interval_us_out) {
 }
 
 int task_set_foreground(int id) {
-    unsigned int flags;
+    uint64_t flags;
     task_entry_t* old_task;
     task_entry_t* new_task;
 
@@ -1852,7 +1829,7 @@ int task_kill(int id) {
 }
 
 int task_send_signal(int id, int signum) {
-    unsigned int flags;
+    uint64_t flags;
     task_entry_t* task;
     int result;
 
@@ -1872,8 +1849,8 @@ int task_send_signal(int id, int signum) {
     return result;
 }
 
-int task_set_signal_handler(int signum, unsigned int handler, unsigned int* old_handler_out) {
-    unsigned int flags;
+int task_set_signal_handler(int signum, uintptr_t handler, uintptr_t* old_handler_out) {
+    uint64_t flags;
     task_entry_t* task;
 
     if (current_task_index < 0 || !signal_is_valid(signum) || signum == LYTH_SIGKILL) {
@@ -1904,7 +1881,7 @@ unsigned int task_pending_signals(void) {
 }
 
 int task_sigprocmask(unsigned int how, unsigned int mask, unsigned int* old_mask_out) {
-    unsigned int flags;
+    uint64_t flags;
     task_entry_t* task;
 
     if (current_task_index < 0) {
@@ -1939,20 +1916,20 @@ int task_sigprocmask(unsigned int how, unsigned int mask, unsigned int* old_mask
     return 1;
 }
 
-int task_exec_current_user_from_frame(unsigned int frame_esp,
+int task_exec_current_user_from_frame(uintptr_t frame_esp,
                                       const char* new_name,
-                                      unsigned int entry_point,
-                                      uint32_t user_physical_base,
-                                      uint32_t user_heap_base,
-                                      uint32_t user_heap_size,
-                                      uint32_t* page_directory,
-                                      uint32_t initial_user_esp) {
-    unsigned int flags;
+                                      uintptr_t entry_point,
+                                      uintptr_t user_physical_base,
+                                      uintptr_t user_heap_base,
+                                      uintptr_t user_heap_size,
+                                      uint64_t* page_directory,
+                                      uintptr_t initial_user_esp) {
+    uint64_t flags;
     task_entry_t* task;
     task_user_stack_frame_t* frame;
-    uint32_t* old_page_directory;
-    uint32_t old_user_physical_base;
-    unsigned int top_user_esp;
+    uint64_t* old_page_directory;
+    uintptr_t old_user_physical_base;
+    uintptr_t top_user_esp;
 
     if (current_task_index < 0 || frame_esp == 0 || entry_point == 0 ||
         user_physical_base == 0 || page_directory == 0) {
@@ -2016,12 +1993,12 @@ int task_exec_current_user_from_frame(unsigned int frame_esp,
     task_install_signal_trampoline(task);
 
     frame = (task_user_stack_frame_t*)frame_esp;
-    frame->eax = 0;
-    frame->eip = entry_point;
+    frame->rax = 0;
+    frame->rip = entry_point;
     frame->cs = user_code_selector | 0x03;
-    frame->eflags |= 0x00000200U;
-    frame->user_esp = initial_user_esp;
-    frame->user_ss = user_data_selector | 0x03;
+    frame->rflags |= 0x00000200U;
+    frame->rsp = initial_user_esp;
+    frame->ss = user_data_selector | 0x03;
 
     paging_switch_directory(page_directory);
 
@@ -2046,7 +2023,7 @@ void task_set_init_pid(int pid) {
 }
 
 int task_reap_zombies_for(int parent_id) {
-    unsigned int flags;
+    uint64_t flags;
     int count = 0;
     int i;
 
@@ -2084,19 +2061,19 @@ const char* task_state_name(task_state_t state) {
     }
 }
 
-unsigned int task_schedule_on_timer(unsigned int current_esp) {
-    unsigned int flags = interrupt_save();
-    unsigned int next_esp;
+uintptr_t task_schedule_on_timer(uintptr_t current_esp) {
+    uint64_t flags = interrupt_save();
+    uintptr_t next_rsp;
 
     if (current_task_index >= 0) {
         task_deliver_signals_current(&tasks[current_task_index], current_esp);
-        next_esp = schedule_back_to_idle(current_esp);
+        next_rsp = schedule_back_to_idle(current_esp);
     } else {
-        next_esp = schedule_from_idle(current_esp);
+        next_rsp = schedule_from_idle(current_esp);
     }
 
     interrupt_restore(flags);
-    return next_esp;
+    return next_rsp;
 }
 
 /* ── UID/GID identity ────────────────────────────────────────────────────── */
@@ -2201,15 +2178,15 @@ int task_set_groups(const unsigned int* gids, int count) {
 }
 
 int task_shm_create(unsigned int size) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     int rc = shm_create(size);
     interrupt_restore(flags);
     return rc;
 }
 
-uint32_t task_shm_attach(int segment_id) {
-    unsigned int flags;
-    uint32_t address;
+uintptr_t task_shm_attach(int segment_id) {
+    uint64_t flags;
+    uintptr_t address;
 
     if (current_task_index < 0 || !tasks[current_task_index].used || !tasks[current_task_index].user_mode) {
         return 0U;
@@ -2224,8 +2201,8 @@ uint32_t task_shm_attach(int segment_id) {
     return address;
 }
 
-int task_shm_detach(uint32_t address) {
-    unsigned int flags;
+int task_shm_detach(uintptr_t address) {
+    uint64_t flags;
     int rc;
 
     if (current_task_index < 0 || !tasks[current_task_index].used || !tasks[current_task_index].user_mode) {
@@ -2242,35 +2219,35 @@ int task_shm_detach(uint32_t address) {
 }
 
 int task_shm_unlink(int segment_id) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     int rc = shm_unlink(segment_id);
     interrupt_restore(flags);
     return rc;
 }
 
 int task_shm_list(shm_segment_info_t* out, int max_segments) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     int count = shm_list(out, max_segments);
     interrupt_restore(flags);
     return count;
 }
 
 int task_mq_create(unsigned int max_messages, unsigned int msg_size) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     int rc = mqueue_create(max_messages, msg_size);
     interrupt_restore(flags);
     return rc;
 }
 
 int task_mq_open(int queue_id, unsigned int open_flags) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     int rc = mqueue_open_fd(queue_id, open_flags);
     interrupt_restore(flags);
     return rc;
 }
 
 int task_mq_send(int queue_id, const void* message, unsigned int size) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     int rc = mqueue_send(queue_id, message, size);
     int read_event_id = (rc == 0) ? mqueue_read_event_id(queue_id) : -1;
     interrupt_restore(flags);
@@ -2283,7 +2260,7 @@ int task_mq_send(int queue_id, const void* message, unsigned int size) {
 }
 
 int task_mq_receive(int queue_id, void* buffer, unsigned int buffer_size, unsigned int* received_size_out) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     int rc = mqueue_receive(queue_id, buffer, buffer_size, received_size_out);
     int write_event_id = (rc == 0) ? mqueue_write_event_id(queue_id) : -1;
     interrupt_restore(flags);
@@ -2344,7 +2321,7 @@ int task_mq_receive_timed(int queue_id, void* buffer, unsigned int buffer_size, 
 }
 
 int task_mq_unlink(int queue_id) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     int read_event_id = mqueue_read_event_id(queue_id);
     int write_event_id = mqueue_write_event_id(queue_id);
     int rc = mqueue_unlink(queue_id);
@@ -2363,21 +2340,21 @@ int task_mq_unlink(int queue_id) {
 }
 
 int task_mq_list(mqueue_info_t* out, int max_queues) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     int count = mqueue_list(out, max_queues);
     interrupt_restore(flags);
     return count;
 }
 
 int task_mq_read_event_id(int queue_id) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     int event_id = mqueue_read_event_id(queue_id);
     interrupt_restore(flags);
     return event_id;
 }
 
 int task_mq_write_event_id(int queue_id) {
-    unsigned int flags = interrupt_save();
+    uint64_t flags = interrupt_save();
     int event_id = mqueue_write_event_id(queue_id);
     interrupt_restore(flags);
     return event_id;
@@ -2424,15 +2401,15 @@ int task_set_fd_rlimit(unsigned int new_soft, unsigned int new_hard) {
     return 0;
 }
 
-int task_fork_from_frame(unsigned int frame_esp) {
+int task_fork_from_frame(uintptr_t frame_esp) {
     task_user_stack_frame_t* parent_frame;
     task_entry_t* parent;
-    uint32_t* child_dir;
+    uint64_t* child_dir;
     unsigned char* child_kstack;
     task_user_stack_frame_t* child_frame;
-    unsigned int child_stack_top;
+    uintptr_t child_stack_top;
     int slot;
-    unsigned int flags;
+    uint64_t flags;
 
     if (current_task_index < 0) return -1;
 
@@ -2528,13 +2505,13 @@ int task_fork_from_frame(unsigned int frame_esp) {
     vfs_task_fd_inherit(tasks[slot].fd_table, parent->fd_table);  /* inherit open FDs */
     task_install_signal_trampoline(&tasks[slot]);
 
-    /* Build child kernel stack: clone parent's syscall frame, child gets eax=0 */
-    child_stack_top = (unsigned int)(child_kstack + TASK_STACK_SIZE);
+    /* Build child kernel stack: clone parent's syscall frame, child gets rax=0 */
+    child_stack_top = (uintptr_t)(child_kstack + TASK_STACK_SIZE);
     child_stack_top -= sizeof(task_user_stack_frame_t);
     child_frame = (task_user_stack_frame_t*)child_stack_top;
     *child_frame        = *parent_frame;
-    child_frame->eax    = 0;   /* fork() returns 0 in the child */
-    tasks[slot].saved_esp = child_stack_top;
+    child_frame->rax    = 0;   /* fork() returns 0 in the child */
+    tasks[slot].saved_rsp = child_stack_top;
 
     interrupt_restore(flags);
     sched_enqueue_ready(slot);
@@ -2561,7 +2538,7 @@ void task_idle_stats(unsigned int* idle_ticks_out, unsigned int* ctx_switches_ou
 }
 
 int task_parent_id(int id) {
-    unsigned int flags;
+    uint64_t flags;
     task_entry_t* task;
     int result;
 
@@ -2577,7 +2554,7 @@ int task_parent_id(int id) {
  * to avoid a race where the target finishes between the existence check
  * and the wait_event call. */
 void task_wait_id(int target_id) {
-    unsigned int flags;
+    uint64_t flags;
     task_entry_t* target;
     task_entry_t* self;
     int self_id;
@@ -2639,8 +2616,8 @@ void task_wait_id(int target_id) {
 }
 
 /* ---- waitpid: wait with status collection ---- */
-int task_waitpid(int target_id, uint32_t status_uptr) {
-    unsigned int flags;
+int task_waitpid(int target_id, uintptr_t status_uptr) {
+    uint64_t flags;
     task_entry_t* self;
     task_entry_t* target;
     int self_id;
@@ -2676,7 +2653,7 @@ int task_waitpid(int target_id, uint32_t status_uptr) {
             return -1;
         }
 
-        /* Block; complete_task() will fill frame->eax and write status. */
+        /* Block; complete_task() will fill frame->rax and write status. */
         self->waitpid_status_uptr = status_uptr;
         self->blocked_event_id = self_id;
         self->state = TASK_STATE_BLOCKED;
@@ -2722,9 +2699,9 @@ int task_waitpid(int target_id, uint32_t status_uptr) {
     return 0; /* overridden by complete_task */
 }
 
-unsigned int task_schedule_on_syscall(unsigned int current_esp) {
-    unsigned int flags = interrupt_save();
-    unsigned int next_esp = current_esp;
+uintptr_t task_schedule_on_syscall(uintptr_t current_esp) {
+    uint64_t flags = interrupt_save();
+    uintptr_t next_rsp = current_esp;
 
     if (current_task_index >= 0) {
         task_entry_t* task = &tasks[current_task_index];
@@ -2732,12 +2709,12 @@ unsigned int task_schedule_on_syscall(unsigned int current_esp) {
         task_deliver_signals_current(task, current_esp);
 
         if (task->state != TASK_STATE_RUNNING) {
-            next_esp = schedule_back_to_idle(current_esp);
+            next_rsp = schedule_back_to_idle(current_esp);
         }
     }
 
     interrupt_restore(flags);
-    return next_esp;
+    return next_rsp;
 }
 
 /* ── mmap per-process ─────────────────────────────────────────────────── */
@@ -2748,10 +2725,10 @@ mmap_region_t* task_current_mmap_regions(void) {
     return tasks[current_task_index].mmap_regions;
 }
 
-uint32_t task_mmap(uint32_t length, uint32_t flags) {
+uintptr_t task_mmap(uintptr_t length, uintptr_t flags) {
     task_entry_t* task;
-    uint32_t mmap_top;
-    uint32_t mmap_low;
+    uintptr_t mmap_top;
+    uintptr_t mmap_low;
 
     (void)flags; /* only MAP_ANONYMOUS|MAP_PRIVATE supported */
 
@@ -2777,7 +2754,7 @@ uint32_t task_mmap(uint32_t length, uint32_t flags) {
     return mmap_anonymous(task->mmap_regions, mmap_top, mmap_low, length);
 }
 
-int task_munmap(uint32_t addr, uint32_t length) {
+int task_munmap(uintptr_t addr, uintptr_t length) {
     if (current_task_index < 0)
         return -1;
     return mmap_unmap(tasks[current_task_index].mmap_regions, addr, length);

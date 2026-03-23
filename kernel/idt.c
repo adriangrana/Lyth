@@ -1,40 +1,46 @@
 #include "idt.h"
+#include <stddef.h>
 
+/* 64-bit IDT entry: 16 bytes each */
 struct idt_entry {
-    unsigned short base_low;
-    unsigned short selector;
-    unsigned char zero;
-    unsigned char flags;
-    unsigned short base_high;
+    uint16_t base_low;      /* handler offset [15:0] */
+    uint16_t selector;      /* code segment selector */
+    uint8_t  ist;           /* IST index (bits 0-2), rest 0 */
+    uint8_t  flags;         /* type + DPL + P */
+    uint16_t base_mid;      /* handler offset [31:16] */
+    uint32_t base_high;     /* handler offset [63:32] */
+    uint32_t reserved;
 } __attribute__((packed));
 
 struct idt_ptr {
-    unsigned short limit;
-    unsigned int base;
+    uint16_t limit;
+    uint64_t base;
 } __attribute__((packed));
 
 static struct idt_entry idt[256];
 static struct idt_ptr idtp;
 
-extern void idt_load(unsigned int);
+extern void idt_load(uintptr_t);
 
-void idt_set_gate(unsigned char num, unsigned int base, unsigned short sel, unsigned char flags) {
-    idt[num].base_low = (unsigned short)(base & 0xFFFF);
-    idt[num].base_high = (unsigned short)((base >> 16) & 0xFFFF);
-    idt[num].selector = sel;
-    idt[num].zero = 0;
-    idt[num].flags = flags;
+void idt_set_gate(unsigned char num, uintptr_t base, unsigned short sel, unsigned char flags) {
+    idt[num].base_low  = (uint16_t)(base & 0xFFFFU);
+    idt[num].base_mid  = (uint16_t)((base >> 16) & 0xFFFFU);
+    idt[num].base_high = (uint32_t)((base >> 32) & 0xFFFFFFFFU);
+    idt[num].selector  = sel;
+    idt[num].ist       = 0;
+    idt[num].flags     = flags;
+    idt[num].reserved  = 0;
 }
 
 void idt_load_table(void) {
-    idt_load((unsigned int)&idtp);
+    idt_load((uintptr_t)&idtp);
 }
 
 void idt_init(void) {
-    idtp.limit = (unsigned short)((sizeof(struct idt_entry) * 256) - 1);
-    idtp.base = (unsigned int)&idt;
+    idtp.limit = (uint16_t)((sizeof(struct idt_entry) * 256) - 1);
+    idtp.base  = (uint64_t)(uintptr_t)&idt;
 
     for (int i = 0; i < 256; i++) {
-        idt_set_gate(i, 0, 0, 0);
+        idt_set_gate((unsigned char)i, 0, 0, 0);
     }
 }

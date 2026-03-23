@@ -1,568 +1,523 @@
+/* =================================================================
+ *  Lyth OS — 64-bit 4-level paging (PML4 → PDPT → PD → PT)
+ *
+ *  Boot identity map: 4 GB with 2 MB pages (set up in boot64.s).
+ *  User space: 4 KB pages via full PML4→PDPT→PD→PT chain.
+ *  Per-process: own PML4/PDPT/PD for the first 1 GB; shared kernel PDs.
+ * ================================================================= */
+
 #include "paging.h"
 #include "physmem.h"
+#include <stddef.h>
 
-#define PAGE_DIRECTORY_ENTRIES 1024U
-#define PAGE_SIZE_4MB 0x400000U
-#define PAGE_TABLE_ENTRIES 1024U
-#define PAGE_PRESENT 0x001U
-#define PAGE_WRITABLE 0x002U
-#define PAGE_USER 0x004U
-#define PAGE_PAGE_SIZE 0x080U
-#define PAGE_COW 0x200U
+/* ── Constants ──────────────────────────────────────────────────── */
+#define ENTRIES_PER_TABLE 512U
+#define PAGE_SIZE_2MB     0x200000UL
 
-extern char __kernel_end;
+#define PG_PRESENT  0x001UL
+#define PG_WRITABLE 0x002UL
+#define PG_USER     0x004UL
+#define PG_PS       0x080UL   /* 2 MB page */
+#define PG_COW      0x200UL
+#define PG_ADDR_MASK 0x000FFFFFFFFFF000ULL
 
-static uint32_t page_directory[PAGE_DIRECTORY_ENTRIES] __attribute__((aligned(4096)));
-static uint32_t* current_directory = page_directory;
+/* Index extraction from virtual address */
+#define PML4_IDX(va) (((va) >> 39) & 0x1FFU)
+#define PDPT_IDX(va) (((va) >> 30) & 0x1FFU)
+#define PD_IDX(va)   (((va) >> 21) & 0x1FFU)
+#define PT_IDX(va)   (((va) >> 12) & 0x1FFU)
+
+/* User space spans PD entries 8..9 in the first 1 GB PD
+   (PAGING_USER_BASE = 0x01000000, 0x01000000 >> 21 = 8) */
+#define USER_PD_START  (PAGING_USER_BASE >> 21)
+#define USER_PD_COUNT  2   /* 2 × 2 MB = 4 MB user region */
+
+/* ── Boot page tables (set up in boot64.s) ──────────────────────── */
+extern uint64_t boot_pml4[];
+
+static uint64_t* kernel_pml4 = 0;
+static uint64_t* current_pml4 = 0;
 static int paging_enabled = 0;
-static uint32_t paging_bytes_mapped = 0;
+static uintptr_t paging_bytes_mapped = 0;
 
-static void paging_invalidate_page(uint32_t address) {
-    __asm__ volatile ("invlpg (%0)" : : "r"((void*)(uintptr_t)address) : "memory");
+/* ── Helpers ────────────────────────────────────────────────────── */
+
+static void paging_invalidate_page(uintptr_t address) {
+    __asm__ volatile("invlpg (%0)" : : "r"(address) : "memory");
 }
 
-static uint32_t align_up(uint32_t value, uint32_t alignment) {
-    return (value + alignment - 1U) & ~(alignment - 1U);
+static uintptr_t align_down(uintptr_t value, uintptr_t alignment) {
+    return value & ~(alignment - 1UL);
 }
 
-static uint32_t align_down(uint32_t value, uint32_t alignment) {
-    return value & ~(alignment - 1U);
+/* Access a physical frame as a uint64_t* (identity-mapped) */
+static uint64_t* phys_to_virt(uint64_t phys) {
+    return (uint64_t*)(uintptr_t)(phys & PG_ADDR_MASK);
 }
 
-static uint32_t max_uint32(uint32_t a, uint32_t b) {
-    return a > b ? a : b;
+/* Read a subtable pointer from a page table entry */
+static uint64_t* entry_subtable(uint64_t entry) {
+    if ((entry & PG_PRESENT) == 0) return 0;
+    return phys_to_virt(entry);
 }
 
-static uint32_t detect_framebuffer_end(multiboot_info_t* mbi) {
-    if (mbi == 0) {
-        return 0;
-    }
+/* ── Kernel PD pointers (derived from boot tables at init) ────── */
+static uint64_t* kernel_pdpt = 0;   /* boot PDPT covering first 512 GB */
+static uint64_t* kernel_pd0  = 0;   /* boot PD covering first 1 GB */
 
-    if ((mbi->flags & (1U << 12)) == 0 || mbi->framebuffer_addr == 0 ||
-        mbi->framebuffer_pitch == 0 || mbi->framebuffer_height == 0) {
-        return 0;
-    }
-
-    return (uint32_t)mbi->framebuffer_addr + (mbi->framebuffer_pitch * mbi->framebuffer_height);
-}
+/* ── Initialisation ─────────────────────────────────────────────── */
 
 void paging_init(multiboot_info_t* mbi) {
-    uint32_t highest_needed;
-    uint32_t mapped_limit;
-    uint32_t directory_count;
+    (void)mbi;
 
-    if (paging_enabled) {
-        return;
-    }
+    if (paging_enabled) return;
 
-    highest_needed = physmem_highest_address();
-    highest_needed = max_uint32(highest_needed, (uint32_t)(uintptr_t)&__kernel_end);
-    highest_needed = max_uint32(highest_needed, detect_framebuffer_end(mbi));
+    kernel_pml4 = boot_pml4;
+    current_pml4 = kernel_pml4;
 
-    if (highest_needed < PAGE_SIZE_4MB) {
-        highest_needed = PAGE_SIZE_4MB;
-    }
-
-    mapped_limit = align_up(highest_needed, PAGE_SIZE_4MB);
-    directory_count = mapped_limit / PAGE_SIZE_4MB;
-
-    if (directory_count > PAGE_DIRECTORY_ENTRIES) {
-        directory_count = PAGE_DIRECTORY_ENTRIES;
-        mapped_limit = PAGE_DIRECTORY_ENTRIES * PAGE_SIZE_4MB;
-    }
-
-    for (uint32_t i = 0; i < PAGE_DIRECTORY_ENTRIES; i++) {
-        page_directory[i] = 0;
-    }
-
-    for (uint32_t i = 0; i < directory_count; i++) {
-        uint32_t flags = PAGE_PRESENT | PAGE_WRITABLE | PAGE_PAGE_SIZE;
-
-        page_directory[i] = (i * PAGE_SIZE_4MB) | flags;
-    }
-
-    __asm__ volatile (
-        "mov %%cr4, %%eax\n"
-        "or $0x10, %%eax\n"
-        "mov %%eax, %%cr4\n"
-        "mov %0, %%cr3\n"
-        "mov %%cr0, %%eax\n"
-        "or $0x80010000, %%eax\n"   /* PG (bit 31) + WP (bit 16) */
-        "mov %%eax, %%cr0\n"
-        :
-        : "r"(page_directory)
-        : "eax", "memory"
-    );
+    /* Derive sub-table pointers from boot PML4 */
+    kernel_pdpt = entry_subtable(kernel_pml4[0]);
+    if (kernel_pdpt)
+        kernel_pd0 = entry_subtable(kernel_pdpt[0]);
 
     paging_enabled = 1;
-    paging_bytes_mapped = mapped_limit;
-    current_directory = page_directory;
+    paging_bytes_mapped = 4UL * 1024 * 1024 * 1024;  /* 4 GB identity map */
 }
 
-int paging_is_enabled(void) {
-    return paging_enabled;
-}
+int paging_is_enabled(void) { return paging_enabled; }
+uintptr_t paging_mapped_bytes(void) { return paging_bytes_mapped; }
+uintptr_t paging_user_base(void) { return PAGING_USER_BASE; }
+uintptr_t paging_user_size(void) { return PAGING_USER_SIZE; }
 
-uint32_t paging_mapped_bytes(void) {
-    return paging_bytes_mapped;
-}
+/* ── Address validation ─────────────────────────────────────────── */
 
-uint32_t paging_user_base(void) {
-    return PAGING_USER_BASE;
-}
-
-uint32_t paging_user_size(void) {
-    return PAGING_USER_SIZE;
-}
-
-int paging_address_is_user_accessible(uint32_t address, uint32_t size) {
-    uint32_t end;
-
-    if (size == 0) {
-        return 0;
-    }
-
+int paging_address_is_user_accessible(uintptr_t address, uintptr_t size) {
+    uintptr_t end;
+    if (size == 0) return 0;
     end = address + size;
-    if (end < address) {
-        return 0;
-    }
-
+    if (end < address) return 0;
     return address >= PAGING_USER_BASE && end <= (PAGING_USER_BASE + PAGING_USER_SIZE);
 }
 
-static int paging_directory_page_is_user_accessible(uint32_t* directory, uint32_t address) {
-    uint32_t pde_index;
-    uint32_t pde;
-    uint32_t* table;
-    uint32_t pte_index;
-    uint32_t pte;
+/* Walk PML4→PDPT→PD→PT for one 4 KB page */
+static int page_is_user_accessible(uint64_t* pml4, uintptr_t address) {
+    uint64_t *pdpt, *pd, *pt;
+    uint64_t e;
 
-    if (directory == 0) {
+    if (pml4 == 0) return 0;
+    if (address < PAGING_USER_BASE || address >= (PAGING_USER_BASE + PAGING_USER_SIZE))
         return 0;
-    }
 
-    if (address < PAGING_USER_BASE || address >= (PAGING_USER_BASE + PAGING_USER_SIZE)) {
-        return 0;
-    }
+    e = pml4[PML4_IDX(address)];
+    if ((e & PG_PRESENT) == 0 || (e & PG_USER) == 0) return 0;
+    pdpt = phys_to_virt(e);
 
-    pde_index = address >> 22;
-    pde = directory[pde_index];
+    e = pdpt[PDPT_IDX(address)];
+    if ((e & PG_PRESENT) == 0 || (e & PG_USER) == 0) return 0;
+    pd = phys_to_virt(e);
 
-    if ((pde & PAGE_PRESENT) == 0 || (pde & PAGE_USER) == 0) {
-        return 0;
-    }
+    e = pd[PD_IDX(address)];
+    if ((e & PG_PRESENT) == 0 || (e & PG_USER) == 0) return 0;
+    if (e & PG_PS) return 1;  /* 2 MB page */
+    pt = phys_to_virt(e);
 
-    if ((pde & PAGE_PAGE_SIZE) != 0) {
-        return 1;
-    }
-
-    table = (uint32_t*)(uintptr_t)(pde & 0xFFFFF000U);
-    pte_index = (address >> 12) & 0x3FFU;
-    pte = table[pte_index];
-
-    return ((pte & PAGE_PRESENT) != 0 && (pte & PAGE_USER) != 0) ? 1 : 0;
+    e = pt[PT_IDX(address)];
+    return ((e & PG_PRESENT) != 0 && (e & PG_USER) != 0) ? 1 : 0;
 }
 
-int paging_directory_user_buffer_is_accessible(uint32_t* directory, uint32_t address, uint32_t size) {
-    uint32_t cursor;
-    uint32_t end;
-
-    if (!paging_address_is_user_accessible(address, size)) {
-        return 0;
-    }
-
+int paging_directory_user_buffer_is_accessible(uint64_t* pml4, uintptr_t address, uintptr_t size) {
+    uintptr_t cursor, end;
+    if (!paging_address_is_user_accessible(address, size)) return 0;
     end = address + size;
     cursor = align_down(address, PAGING_PAGE_SIZE);
-
     while (cursor < end) {
-        if (!paging_directory_page_is_user_accessible(directory, cursor)) {
-            return 0;
-        }
+        if (!page_is_user_accessible(pml4, cursor)) return 0;
         cursor += PAGING_PAGE_SIZE;
     }
-
     return 1;
 }
 
-int paging_user_buffer_is_accessible(const void* buffer, uint32_t size) {
-    if (buffer == 0) {
-        return 0;
-    }
-
-    return paging_directory_user_buffer_is_accessible(current_directory,
-                                                      (uint32_t)(uintptr_t)buffer,
-                                                      size);
+int paging_user_buffer_is_accessible(const void* buffer, uintptr_t size) {
+    if (buffer == 0) return 0;
+    return paging_directory_user_buffer_is_accessible(current_pml4,
+        (uintptr_t)buffer, size);
 }
 
-int paging_user_string_is_accessible(const char* text, uint32_t max_length) {
-    uint32_t address;
-
-    if (text == 0 || max_length == 0) {
-        return 0;
+int paging_user_string_is_accessible(const char* text, uintptr_t max_length) {
+    uintptr_t address;
+    if (text == 0 || max_length == 0) return 0;
+    address = (uintptr_t)text;
+    if (!paging_address_is_user_accessible(address, 1)) return 0;
+    for (uintptr_t i = 0; i < max_length; i++) {
+        if (!paging_address_is_user_accessible(address + i, 1)) return 0;
+        if (text[i] == '\0') return 1;
     }
-
-    address = (uint32_t)(uintptr_t)text;
-    if (!paging_address_is_user_accessible(address, 1)) {
-        return 0;
-    }
-
-    for (uint32_t i = 0; i < max_length; i++) {
-        if (!paging_address_is_user_accessible(address + i, 1)) {
-            return 0;
-        }
-
-        if (text[i] == '\0') {
-            return 1;
-        }
-    }
-
     return 0;
 }
 
-uint32_t* paging_kernel_directory(void) {
-    return page_directory;
+/* ── Kernel directory ───────────────────────────────────────────── */
+
+uint64_t* paging_kernel_directory(void) { return kernel_pml4; }
+
+/* ── User page-table navigation helpers ─────────────────────────── *
+ * Walk the per-process PML4→PDPT→PD to locate the PT(s) for user space.
+ * Returns the PT covering the 2 MB region containing `va`, or 0.
+ */
+static uint64_t* user_pt_for(uint64_t* pml4, uintptr_t va) {
+    uint64_t *pdpt, *pd;
+    uint64_t e;
+
+    if (pml4 == 0) return 0;
+    e = pml4[PML4_IDX(va)];
+    if ((e & PG_PRESENT) == 0) return 0;
+    pdpt = phys_to_virt(e);
+
+    e = pdpt[PDPT_IDX(va)];
+    if ((e & PG_PRESENT) == 0) return 0;
+    pd = phys_to_virt(e);
+
+    e = pd[PD_IDX(va)];
+    if ((e & PG_PRESENT) == 0 || (e & PG_PS) != 0) return 0;
+    return phys_to_virt(e);
 }
 
-uint32_t* paging_create_user_directory(uint32_t user_physical_base) {
-    uint32_t directory_physical = physmem_alloc_frame();
-    uint32_t table_physical = physmem_alloc_frame();
-    uint32_t* directory;
-    uint32_t* table;
-    uint32_t page;
+/* ── Create user-space page tables ──────────────────────────────── */
 
-    if (directory_physical == 0 || table_physical == 0) {
-        if (directory_physical != 0) {
-            physmem_free_frame(directory_physical);
-        }
-        if (table_physical != 0) {
-            physmem_free_frame(table_physical);
-        }
+uint64_t* paging_create_user_directory(uintptr_t user_physical_base) {
+    uint32_t pml4_phys, pdpt_phys, pd_phys, pt0_phys, pt1_phys;
+    uint64_t *new_pml4, *new_pdpt, *new_pd, *pt0, *pt1;
+
+    if (kernel_pml4 == 0 || kernel_pdpt == 0 || kernel_pd0 == 0)
+        return 0;
+
+    /* Allocate 5 frames: PML4, PDPT, PD, PT0, PT1 */
+    pml4_phys = physmem_alloc_frame();
+    pdpt_phys = physmem_alloc_frame();
+    pd_phys   = physmem_alloc_frame();
+    pt0_phys  = physmem_alloc_frame();
+    pt1_phys  = physmem_alloc_frame();
+
+    if (pml4_phys == 0 || pdpt_phys == 0 || pd_phys == 0 ||
+        pt0_phys == 0 || pt1_phys == 0) {
+        if (pml4_phys) physmem_free_frame(pml4_phys);
+        if (pdpt_phys) physmem_free_frame(pdpt_phys);
+        if (pd_phys)   physmem_free_frame(pd_phys);
+        if (pt0_phys)  physmem_free_frame(pt0_phys);
+        if (pt1_phys)  physmem_free_frame(pt1_phys);
         return 0;
     }
 
-    directory = (uint32_t*)(uintptr_t)directory_physical;
-    table = (uint32_t*)(uintptr_t)table_physical;
+    new_pml4 = (uint64_t*)(uintptr_t)pml4_phys;
+    new_pdpt = (uint64_t*)(uintptr_t)pdpt_phys;
+    new_pd   = (uint64_t*)(uintptr_t)pd_phys;
+    pt0      = (uint64_t*)(uintptr_t)pt0_phys;
+    pt1      = (uint64_t*)(uintptr_t)pt1_phys;
 
-    for (uint32_t i = 0; i < PAGE_DIRECTORY_ENTRIES; i++) {
-        directory[i] = page_directory[i];
-    }
+    /* 1. PML4: copy kernel entries, override [0] → new PDPT */
+    for (unsigned i = 0; i < ENTRIES_PER_TABLE; i++)
+        new_pml4[i] = kernel_pml4[i];
+    new_pml4[0] = (uint64_t)pdpt_phys | PG_PRESENT | PG_WRITABLE | PG_USER;
 
-    for (uint32_t i = 0; i < PAGE_TABLE_ENTRIES; i++) {
-        table[i] = 0;
-    }
+    /* 2. PDPT: copy kernel entries, override [0] → new PD */
+    for (unsigned i = 0; i < ENTRIES_PER_TABLE; i++)
+        new_pdpt[i] = kernel_pdpt[i];
+    new_pdpt[0] = (uint64_t)pd_phys | PG_PRESENT | PG_WRITABLE | PG_USER;
 
-    for (page = 0; page < PAGE_TABLE_ENTRIES; page++) {
-        uint32_t va = PAGING_USER_BASE + (page * PAGING_PAGE_SIZE);
-        uint32_t pa = user_physical_base + (page * PAGING_PAGE_SIZE);
+    /* 3. PD: copy kernel 2 MB pages, override user entries → PTs */
+    for (unsigned i = 0; i < ENTRIES_PER_TABLE; i++)
+        new_pd[i] = kernel_pd0[i];
+    new_pd[USER_PD_START]     = (uint64_t)pt0_phys | PG_PRESENT | PG_WRITABLE | PG_USER;
+    new_pd[USER_PD_START + 1] = (uint64_t)pt1_phys | PG_PRESENT | PG_WRITABLE | PG_USER;
 
-        if (va == PAGING_USER_STACK_GUARD_BASE) {
-            continue;
+    /* 4. Fill PTs with user physical pages */
+    for (unsigned i = 0; i < ENTRIES_PER_TABLE; i++) pt0[i] = 0;
+    for (unsigned i = 0; i < ENTRIES_PER_TABLE; i++) pt1[i] = 0;
+
+    for (unsigned page = 0; page < (PAGING_USER_SIZE / PAGING_PAGE_SIZE); page++) {
+        uintptr_t va = PAGING_USER_BASE + (page * PAGING_PAGE_SIZE);
+        uintptr_t pa = user_physical_base + (page * PAGING_PAGE_SIZE);
+
+        if (va == PAGING_USER_STACK_GUARD_BASE) continue;
+
+        unsigned pt_page = page;
+        uint64_t* pt = pt0;
+        if (pt_page >= ENTRIES_PER_TABLE) {
+            pt = pt1;
+            pt_page -= ENTRIES_PER_TABLE;
         }
-
-        table[page] = pa | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+        pt[pt_page] = (uint64_t)pa | PG_PRESENT | PG_WRITABLE | PG_USER;
     }
 
-    directory[PAGING_USER_BASE / PAGE_SIZE_4MB] =
-        table_physical | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
-
-    return directory;
+    return new_pml4;
 }
 
-static uint32_t* paging_user_table(uint32_t* directory) {
-    uint32_t pde;
+/* ── Map / unmap / lookup single user pages ─────────────────────── */
 
-    if (directory == 0) {
-        return 0;
-    }
+int paging_map_user_page(uint64_t* pml4, uintptr_t virtual_address,
+                         uintptr_t physical_address, int writable) {
+    uint64_t* pt;
+    uint64_t flags;
 
-    pde = directory[PAGING_USER_BASE / PAGE_SIZE_4MB];
-    if ((pde & PAGE_PRESENT) == 0 || (pde & PAGE_PAGE_SIZE) != 0) {
-        return 0;
-    }
-
-    return (uint32_t*)(uintptr_t)(pde & 0xFFFFF000U);
-}
-
-int paging_map_user_page(uint32_t* directory,
-                         uint32_t virtual_address,
-                         uint32_t physical_address,
-                         int writable) {
-    uint32_t* table;
-    uint32_t pte_index;
-    uint32_t flags;
-
-    if (directory == 0 ||
+    if (pml4 == 0 ||
         virtual_address < PAGING_USER_BASE ||
         virtual_address >= PAGING_USER_BASE + PAGING_USER_SIZE ||
-        (virtual_address % PAGING_PAGE_SIZE) != 0U ||
-        physical_address == 0U ||
-        (physical_address % PAGING_PAGE_SIZE) != 0U) {
+        (virtual_address % PAGING_PAGE_SIZE) != 0 ||
+        physical_address == 0 ||
+        (physical_address % PAGING_PAGE_SIZE) != 0)
         return 0;
-    }
 
-    table = paging_user_table(directory);
-    if (table == 0) {
-        return 0;
-    }
+    pt = user_pt_for(pml4, virtual_address);
+    if (pt == 0) return 0;
 
-    pte_index = (virtual_address >> 12) & 0x3FFU;
-    flags = PAGE_PRESENT | PAGE_USER | (writable ? PAGE_WRITABLE : 0U);
-    table[pte_index] = physical_address | flags;
+    flags = PG_PRESENT | PG_USER | (writable ? PG_WRITABLE : 0UL);
+    pt[PT_IDX(virtual_address)] = (uint64_t)physical_address | flags;
 
-    if (current_directory == directory) {
+    if (current_pml4 == pml4)
         paging_invalidate_page(virtual_address);
-    }
-
     return 1;
 }
 
-int paging_unmap_user_page(uint32_t* directory, uint32_t virtual_address) {
-    uint32_t* table;
-    uint32_t pte_index;
+int paging_unmap_user_page(uint64_t* pml4, uintptr_t virtual_address) {
+    uint64_t* pt;
 
-    if (directory == 0 ||
+    if (pml4 == 0 ||
         virtual_address < PAGING_USER_BASE ||
         virtual_address >= PAGING_USER_BASE + PAGING_USER_SIZE ||
-        (virtual_address % PAGING_PAGE_SIZE) != 0U) {
+        (virtual_address % PAGING_PAGE_SIZE) != 0)
         return 0;
-    }
 
-    table = paging_user_table(directory);
-    if (table == 0) {
-        return 0;
-    }
+    pt = user_pt_for(pml4, virtual_address);
+    if (pt == 0) return 0;
 
-    pte_index = (virtual_address >> 12) & 0x3FFU;
-    table[pte_index] = 0U;
-
-    if (current_directory == directory) {
+    pt[PT_IDX(virtual_address)] = 0;
+    if (current_pml4 == pml4)
         paging_invalidate_page(virtual_address);
-    }
-
     return 1;
 }
 
-uint32_t paging_lookup_user_page(uint32_t* directory, uint32_t virtual_address) {
-    uint32_t* table;
-    uint32_t pte_index;
-    uint32_t pte;
+uintptr_t paging_lookup_user_page(uint64_t* pml4, uintptr_t virtual_address) {
+    uint64_t* pt;
+    uint64_t pte;
 
-    if (directory == 0 ||
+    if (pml4 == 0 ||
         virtual_address < PAGING_USER_BASE ||
-        virtual_address >= PAGING_USER_BASE + PAGING_USER_SIZE) {
-        return 0U;
-    }
-
-    table = paging_user_table(directory);
-    if (table == 0) {
-        return 0U;
-    }
-
-    pte_index = (virtual_address >> 12) & 0x3FFU;
-    pte = table[pte_index];
-    if ((pte & PAGE_PRESENT) == 0U) {
-        return 0U;
-    }
-
-    return pte & 0xFFFFF000U;
-}
-
-void paging_destroy_user_directory(uint32_t* directory) {
-    uint32_t pde;
-
-    if (directory == 0 || directory == page_directory) {
-        return;
-    }
-
-    pde = directory[PAGING_USER_BASE / PAGE_SIZE_4MB];
-    if ((pde & PAGE_PRESENT) != 0 && (pde & PAGE_PAGE_SIZE) == 0) {
-        physmem_free_frame(pde & 0xFFFFF000U);
-    }
-
-    physmem_free_frame((uint32_t)(uintptr_t)directory);
-}
-
-void paging_switch_directory(uint32_t* directory) {
-    if (directory == 0) {
-        directory = page_directory;
-    }
-
-    if (current_directory == directory) {
-        return;
-    }
-
-    __asm__ volatile ("mov %0, %%cr3" : : "r"(directory) : "memory");
-    current_directory = directory;
-}
-
-int paging_map_mmio(uint32_t physical_address) {
-    uint32_t pde_index = physical_address / PAGE_SIZE_4MB;
-    uint32_t flags = PAGE_PRESENT | PAGE_WRITABLE | PAGE_PAGE_SIZE;
-
-    if (pde_index >= PAGE_DIRECTORY_ENTRIES) {
+        virtual_address >= PAGING_USER_BASE + PAGING_USER_SIZE)
         return 0;
-    }
 
-    if ((page_directory[pde_index] & PAGE_PRESENT) != 0) {
+    pt = user_pt_for(pml4, virtual_address);
+    if (pt == 0) return 0;
+
+    pte = pt[PT_IDX(virtual_address)];
+    if ((pte & PG_PRESENT) == 0) return 0;
+    return (uintptr_t)(pte & PG_ADDR_MASK);
+}
+
+/* ── Destroy / switch ───────────────────────────────────────────── */
+
+static void free_user_pts(uint64_t* pml4) {
+    /* Free the per-process PTs, PD, PDPT (not the kernel's) */
+    uint64_t *pdpt, *pd;
+    uint64_t e;
+
+    e = pml4[0];
+    if ((e & PG_PRESENT) == 0) return;
+    pdpt = phys_to_virt(e);
+
+    e = pdpt[0];
+    if ((e & PG_PRESENT) == 0) goto free_pdpt;
+    pd = phys_to_virt(e);
+
+    /* Free user PTs */
+    for (int i = 0; i < USER_PD_COUNT; i++) {
+        uint64_t pde = pd[USER_PD_START + i];
+        if ((pde & PG_PRESENT) != 0 && (pde & PG_PS) == 0)
+            physmem_free_frame((uint32_t)(pde & PG_ADDR_MASK));
+    }
+    physmem_free_frame((uint32_t)(pdpt[0] & PG_ADDR_MASK));  /* PD */
+free_pdpt:
+    physmem_free_frame((uint32_t)(pml4[0] & PG_ADDR_MASK));  /* PDPT */
+}
+
+void paging_destroy_user_directory(uint64_t* pml4) {
+    if (pml4 == 0 || pml4 == kernel_pml4) return;
+    free_user_pts(pml4);
+    physmem_free_frame((uint32_t)(uintptr_t)pml4);
+}
+
+void paging_switch_directory(uint64_t* pml4) {
+    if (pml4 == 0) pml4 = kernel_pml4;
+    if (current_pml4 == pml4) return;
+    __asm__ volatile("mov %0, %%cr3" : : "r"(pml4) : "memory");
+    current_pml4 = pml4;
+}
+
+/* ── MMIO mapping ───────────────────────────────────────────────── */
+
+int paging_map_mmio(uintptr_t physical_address) {
+    /* In our 4 GB identity map, all MMIO below 4 GB is already mapped */
+    if (physical_address < paging_bytes_mapped)
         return 1;
-    }
-
-    page_directory[pde_index] = (pde_index * PAGE_SIZE_4MB) | flags;
-    paging_invalidate_page(pde_index * PAGE_SIZE_4MB);
-    return 1;
+    /* TODO: for addresses > 4 GB, build new page table entries */
+    return 0;
 }
 
-uint32_t* paging_cow_clone_user_directory(uint32_t* parent_directory) {
-    uint32_t directory_physical;
-    uint32_t table_physical;
-    uint32_t* directory;
-    uint32_t* child_table;
-    uint32_t* parent_table;
+/* ── COW support ────────────────────────────────────────────────── */
 
-    if (parent_directory == 0) {
+uint64_t* paging_cow_clone_user_directory(uint64_t* parent_pml4) {
+    uint32_t pml4_phys, pdpt_phys, pd_phys;
+    uint64_t *new_pml4, *new_pdpt, *new_pd;
+    uint64_t *parent_pdpt, *parent_pd;
+
+    if (parent_pml4 == 0 || kernel_pml4 == 0)
+        return 0;
+
+    /* Get parent's sub-tables */
+    parent_pdpt = entry_subtable(parent_pml4[0]);
+    if (parent_pdpt == 0) return 0;
+    parent_pd = entry_subtable(parent_pdpt[0]);
+    if (parent_pd == 0) return 0;
+
+    /* Allocate PML4 + PDPT + PD (PTs are shared via COW) */
+    pml4_phys = physmem_alloc_frame();
+    pdpt_phys = physmem_alloc_frame();
+    pd_phys   = physmem_alloc_frame();
+    if (pml4_phys == 0 || pdpt_phys == 0 || pd_phys == 0) {
+        if (pml4_phys) physmem_free_frame(pml4_phys);
+        if (pdpt_phys) physmem_free_frame(pdpt_phys);
+        if (pd_phys)   physmem_free_frame(pd_phys);
         return 0;
     }
 
-    parent_table = paging_user_table(parent_directory);
-    if (parent_table == 0) {
-        return 0;
-    }
+    new_pml4 = (uint64_t*)(uintptr_t)pml4_phys;
+    new_pdpt = (uint64_t*)(uintptr_t)pdpt_phys;
+    new_pd   = (uint64_t*)(uintptr_t)pd_phys;
 
-    directory_physical = physmem_alloc_frame();
-    table_physical = physmem_alloc_frame();
+    /* Clone PML4 */
+    for (unsigned i = 0; i < ENTRIES_PER_TABLE; i++)
+        new_pml4[i] = parent_pml4[i];
+    new_pml4[0] = (uint64_t)pdpt_phys | PG_PRESENT | PG_WRITABLE | PG_USER;
 
-    if (directory_physical == 0 || table_physical == 0) {
-        if (directory_physical != 0) {
-            physmem_free_frame(directory_physical);
-        }
-        if (table_physical != 0) {
-            physmem_free_frame(table_physical);
-        }
-        return 0;
-    }
+    /* Clone PDPT */
+    for (unsigned i = 0; i < ENTRIES_PER_TABLE; i++)
+        new_pdpt[i] = parent_pdpt[i];
+    new_pdpt[0] = (uint64_t)pd_phys | PG_PRESENT | PG_WRITABLE | PG_USER;
 
-    directory = (uint32_t*)(uintptr_t)directory_physical;
-    child_table = (uint32_t*)(uintptr_t)table_physical;
+    /* Clone PD, allocate new PTs for user region with COW entries */
+    for (unsigned i = 0; i < ENTRIES_PER_TABLE; i++)
+        new_pd[i] = parent_pd[i];
 
-    for (uint32_t i = 0; i < PAGE_DIRECTORY_ENTRIES; i++) {
-        directory[i] = page_directory[i];
-    }
+    for (int ti = 0; ti < USER_PD_COUNT; ti++) {
+        uint64_t parent_pde = parent_pd[USER_PD_START + ti];
+        uint64_t* parent_pt;
+        uint64_t* child_pt;
+        uint32_t child_pt_phys;
 
-    directory[PAGING_USER_BASE / PAGE_SIZE_4MB] =
-        table_physical | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
-
-    for (uint32_t page = 0; page < PAGE_TABLE_ENTRIES; page++) {
-        uint32_t va = PAGING_USER_BASE + (page * PAGING_PAGE_SIZE);
-        uint32_t parent_pte = parent_table[page];
-        uint32_t phys;
-        uint32_t cow_flags;
-
-        if ((parent_pte & PAGE_PRESENT) == 0) {
-            child_table[page] = 0;
+        if ((parent_pde & PG_PRESENT) == 0 || (parent_pde & PG_PS) != 0) {
+            new_pd[USER_PD_START + ti] = 0;
             continue;
         }
 
-        if (va >= PAGING_USER_SHM_BASE && va < PAGING_USER_STACK_GUARD_BASE) {
-            child_table[page] = 0;
-            continue;
+        parent_pt = phys_to_virt(parent_pde);
+        child_pt_phys = physmem_alloc_frame();
+        if (child_pt_phys == 0) {
+            /* Cleanup on failure: free everything allocated so far */
+            for (int j = 0; j < ti; j++) {
+                uint64_t e = new_pd[USER_PD_START + j];
+                if (e & PG_PRESENT) physmem_free_frame((uint32_t)(e & PG_ADDR_MASK));
+            }
+            physmem_free_frame(pd_phys);
+            physmem_free_frame(pdpt_phys);
+            physmem_free_frame(pml4_phys);
+            return 0;
+        }
+        child_pt = (uint64_t*)(uintptr_t)child_pt_phys;
+
+        for (unsigned p = 0; p < ENTRIES_PER_TABLE; p++) {
+            uint64_t pte = parent_pt[p];
+            if ((pte & PG_PRESENT) == 0) {
+                child_pt[p] = 0;
+                continue;
+            }
+
+            /* Skip SHM pages (don't COW) */
+            uintptr_t va = PAGING_USER_BASE + ((unsigned)(ti * ENTRIES_PER_TABLE) + p) * PAGING_PAGE_SIZE;
+            if (va >= PAGING_USER_SHM_BASE && va < PAGING_USER_STACK_GUARD_BASE) {
+                child_pt[p] = 0;
+                continue;
+            }
+
+            uint64_t phys = pte & PG_ADDR_MASK;
+            uint64_t cow_flags = phys | PG_PRESENT | PG_USER | PG_COW;
+            parent_pt[p] = cow_flags;
+            child_pt[p]  = cow_flags;
+            physmem_ref_frame((uint32_t)phys);
+
+            if (current_pml4 == parent_pml4)
+                paging_invalidate_page(va);
         }
 
-        phys = parent_pte & 0xFFFFF000U;
-        cow_flags = phys | PAGE_PRESENT | PAGE_USER | PAGE_COW;
-
-        parent_table[page] = cow_flags;
-        child_table[page] = cow_flags;
-
-        physmem_ref_frame(phys);
-
-        if (current_directory == parent_directory) {
-            paging_invalidate_page(va);
-        }
+        new_pd[USER_PD_START + ti] = (uint64_t)child_pt_phys | PG_PRESENT | PG_WRITABLE | PG_USER;
     }
 
-    return directory;
+    return new_pml4;
 }
 
-void paging_release_user_pages(uint32_t* directory) {
-    uint32_t* table;
+void paging_release_user_pages(uint64_t* pml4) {
+    if (pml4 == 0) return;
 
-    if (directory == 0) {
-        return;
-    }
+    for (int ti = 0; ti < USER_PD_COUNT; ti++) {
+        uint64_t* pt = user_pt_for(pml4, PAGING_USER_BASE + (uintptr_t)ti * ENTRIES_PER_TABLE * PAGING_PAGE_SIZE);
+        if (pt == 0) continue;
 
-    table = paging_user_table(directory);
-    if (table == 0) {
-        return;
-    }
-
-    for (uint32_t page = 0; page < PAGE_TABLE_ENTRIES; page++) {
-        uint32_t pte = table[page];
-        uint32_t phys;
-
-        if ((pte & PAGE_PRESENT) == 0) {
-            continue;
+        for (unsigned p = 0; p < ENTRIES_PER_TABLE; p++) {
+            uint64_t pte = pt[p];
+            if ((pte & PG_PRESENT) == 0) continue;
+            physmem_unref_frame((uint32_t)(pte & PG_ADDR_MASK));
+            pt[p] = 0;
         }
-
-        phys = pte & 0xFFFFF000U;
-        physmem_unref_frame(phys);
-        table[page] = 0;
     }
 }
 
-int paging_cow_resolve(uint32_t* directory, uint32_t fault_address) {
-    uint32_t* table;
-    uint32_t page_addr;
-    uint32_t pte_index;
-    uint32_t pte;
-    uint32_t old_phys;
-    uint32_t new_phys;
-    uint32_t* src;
-    uint32_t* dst;
+int paging_cow_resolve(uint64_t* pml4, uintptr_t fault_address) {
+    uint64_t* pt;
+    uintptr_t page_addr;
+    uint64_t pte;
+    uint32_t old_phys, new_phys;
 
-    if (directory == 0) {
-        return 0;
-    }
+    if (pml4 == 0) return 0;
 
-    page_addr = fault_address & 0xFFFFF000U;
+    page_addr = fault_address & ~(uintptr_t)(PAGING_PAGE_SIZE - 1);
     if (page_addr < PAGING_USER_BASE ||
-        page_addr >= PAGING_USER_BASE + PAGING_USER_SIZE) {
+        page_addr >= PAGING_USER_BASE + PAGING_USER_SIZE)
         return 0;
-    }
 
-    table = paging_user_table(directory);
-    if (table == 0) {
+    pt = user_pt_for(pml4, page_addr);
+    if (pt == 0) return 0;
+
+    pte = pt[PT_IDX(page_addr)];
+    if ((pte & PG_PRESENT) == 0 || (pte & PG_COW) == 0)
         return 0;
-    }
 
-    pte_index = (page_addr >> 12) & 0x3FFU;
-    pte = table[pte_index];
+    old_phys = (uint32_t)(pte & PG_ADDR_MASK);
 
-    if ((pte & PAGE_PRESENT) == 0 || (pte & PAGE_COW) == 0) {
-        return 0;
-    }
-
-    old_phys = pte & 0xFFFFF000U;
-
+    /* If we're the sole owner, just flip to writable */
     if (physmem_frame_refcount(old_phys) == 1) {
-        table[pte_index] = old_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+        pt[PT_IDX(page_addr)] = (uint64_t)old_phys | PG_PRESENT | PG_WRITABLE | PG_USER;
         paging_invalidate_page(page_addr);
         return 1;
     }
 
+    /* Allocate new frame and copy */
     new_phys = physmem_alloc_frame();
-    if (new_phys == 0) {
-        return 0;
-    }
+    if (new_phys == 0) return 0;
 
-    src = (uint32_t*)(uintptr_t)old_phys;
-    dst = (uint32_t*)(uintptr_t)new_phys;
-    for (unsigned int i = 0; i < PAGING_PAGE_SIZE / sizeof(uint32_t); i++) {
+    uint64_t* src = (uint64_t*)(uintptr_t)old_phys;
+    uint64_t* dst = (uint64_t*)(uintptr_t)new_phys;
+    for (unsigned i = 0; i < PAGING_PAGE_SIZE / sizeof(uint64_t); i++)
         dst[i] = src[i];
-    }
 
     physmem_unref_frame(old_phys);
-
-    table[pte_index] = new_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+    pt[PT_IDX(page_addr)] = (uint64_t)new_phys | PG_PRESENT | PG_WRITABLE | PG_USER;
     paging_invalidate_page(page_addr);
     return 1;
 }

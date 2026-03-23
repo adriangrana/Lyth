@@ -1,6 +1,6 @@
 # Lyth OS
 
-Kernel hobby x86 de 32 bits escrito desde cero en C y ASM, arrancado con GRUB/Multiboot y ejecutable en QEMU.
+Kernel hobby x86_64 (64 bits) escrito desde cero en C y ASM, arrancado con GRUB/Multiboot y ejecutable en QEMU.
 
 Lyth OS cubre los subsistemas clásicos de un kernel real: arranque, gestión de memoria, multitarea preemptiva, sistema de archivos con VFS, syscalls, procesos en modo usuario, drivers de disco y periféricos, una shell interactiva completa y un modelo de seguridad multiusuario con permisos tipo UNIX.
 
@@ -11,9 +11,10 @@ Lyth OS cubre los subsistemas clásicos de un kernel real: arranque, gestión de
 ## Características
 
 ### Arranque y arquitectura
-- Arranque Multiboot con GRUB, solicita modo gráfico `1280×1024×32` con fallback a VGA
-- Kernel ELF32 enlazado a 1 MB con GDT propia, segmentos kernel/user y TSS
+- Arranque Multiboot con GRUB, solicita modo gráfico `1024×768×32` con fallback a VGA
+- Kernel ELF64 x86_64 en long mode con paginación de 4 niveles (PML4), GDT de 64 bits y TSS
 - SMP: detección de CPUs vía MADT, boot de APs con INIT/SIPI, GDT/TSS per-CPU
+- ACPI: MADT (APIC/IOAPIC), FADT (shutdown, reboot), parseo de DSDT para S5 sleep type
 
 ### Consola y vídeo
 - Framebuffer con fuente PSF 8×16, márgenes y scroll propio
@@ -43,8 +44,8 @@ Lyth OS cubre los subsistemas clásicos de un kernel real: arranque, gestión de
 
 ### Memoria
 - Frame allocator físico por bitmap a partir del mapa Multiboot, con conteo de referencias por frame
-- Paginación con páginas grandes de 4 MiB, espacio virtual independiente por proceso
-- Copy-on-write en `fork`: las páginas de usuario se comparten como solo lectura y se copian bajo demanda al primer write (4 KB por fallo en vez de 4 MB por fork)
+- Paginación de 4 niveles (PML4 → PDPT → PD → PT), identity map de 4 GB para kernel, espacio virtual independiente por proceso
+- Copy-on-write en `fork`: las páginas de usuario se comparten como solo lectura y se copian bajo demanda al primer write (4 KB por fallo)
 - Ventana de memoria compartida por proceso con segmentos SHM respaldados por frames físicos
 - Heap del kernel (`kmalloc`/`kfree`), 256 KB
 
@@ -60,7 +61,7 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 - Particionado MBR y GPT automático (hasta 32 particiones)
 
 ### Procesos y señales
-- ELF32 loader, ring 3, `argv`/`envp` completos, `fork` con copy-on-write y herencia de FDs
+- ELF64 loader, ring 3, `argv`/`envp` completos, `fork` con copy-on-write y herencia de FDs
 - Señales completas: entrega, handlers en userland, `SIGKILL` no bloqueable, `SIGCHLD` + `waitpid`
 - Shared memory con herencia de mapeos en `fork` y limpieza automática en `exec`/salida
 - Message passing con colas MQ kernel-globales y mensajes acotados
@@ -78,7 +79,9 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 - Timers por proceso, RTC CMOS, `sleep` por syscall, reloj monotónico
 
 ### Drivers y debug
-- ATA PIO (master/slave), RTC CMOS, serie COM1, GDB remoto integrado
+- ATA PIO (master/slave), AHCI/SATA (DMA, LBA48), RTC CMOS, serie COM1, GDB remoto integrado
+- ACPI shutdown/reboot (FADT S5, reset register, fallback PS/2 + triple fault)
+- Framebuffer flexible: 16/24/32 bpp
 - Panic screen con volcado de registros y backtrace
 - Buffer de logs `dmesg` con niveles `DEBUG/INFO/WARN/ERROR`
 
@@ -88,10 +91,10 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 
 | Herramienta | Uso |
 |---|---|
-| `gcc` (soporte `-m32`) | Compilar el kernel |
+| `gcc` (soporte `-m64`) | Compilar el kernel |
 | `binutils` (`as`, `ld`) | Ensamblar y enlazar |
 | `grub-mkrescue` + `xorriso` | Generar la ISO booteable |
-| `qemu-system-i386` | Ejecutar la ISO |
+| `qemu-system-x86_64` | Ejecutar la ISO |
 | `mtools` *(opcional)* | Crear imágenes de disco FAT para probar el driver ATA |
 
 ---
@@ -102,7 +105,7 @@ Hay dos formas soportadas de compilar:
 
 1. Toolchain host actual
 - Es la que usa la CI hoy.
-- Requiere `gcc` con soporte `-m32`, `binutils`, `grub-mkrescue`, `xorriso` y `qemu-system-i386`.
+- Requiere `gcc` con soporte `-m64`, `binutils`, `grub-mkrescue`, `xorriso` y `qemu-system-x86_64`.
 - Flujo directo:
 
 ```bash
@@ -112,22 +115,22 @@ make run
 2. Toolchain cruzada recomendada
 - Recomendable si quieres aislar el build de librerías y peculiaridades del host.
 - El Makefile acepta un prefijo cruzado vía `CROSS_PREFIX`.
-- Ejemplo con toolchain `i686-elf-`:
+- Ejemplo con toolchain `x86_64-elf-`:
 
 ```bash
-make compile CROSS_PREFIX=i686-elf-
-make create-iso CROSS_PREFIX=i686-elf-
-make run CROSS_PREFIX=i686-elf-
+make compile CROSS_PREFIX=x86_64-elf-
+make create-iso CROSS_PREFIX=x86_64-elf-
+make run CROSS_PREFIX=x86_64-elf-
 ```
 
 También puedes sobrescribir binarios concretos:
 
 ```bash
-make compile CC=i686-elf-gcc AS=i686-elf-as LD=i686-elf-ld
+make compile CC=x86_64-elf-gcc AS=x86_64-elf-as LD=x86_64-elf-ld
 ```
 
 Notas:
-- La CI sigue usando la toolchain host con `gcc -m32`.
+- La CI sigue usando la toolchain host con `gcc -m64`.
 - `grub-mkrescue` y `grub-file` siguen siendo herramientas del host, aunque el compilador sea cruzado.
 
 ---
@@ -208,7 +211,7 @@ kernel/             núcleo: init, IDT, interrupciones, syscalls, scheduler, mem
 drivers/
   console/          terminal lógica, backends VGA y framebuffer, fuente PSF
   input/            teclado PS/2, ratón PS/2, eventos genéricos
-  disk/             driver ATA PIO, capa blkdev (MBR/GPT)
+  disk/             driver ATA PIO, AHCI/SATA, capa blkdev (MBR/GPT)
   rtc/              reloj en tiempo real (CMOS)
   serial/           salida de debug por COM1
 fs/                 VFS, ramfs, FAT16, FAT32, devfs, pipes
@@ -228,7 +231,7 @@ tools/              scripts auxiliares
 | Sistema | `help`, `clear`, `about`, `uptime`, `date`, `dmesg`, `mem` |
 | Procesos | `ps`, `kill`, `nice`, `task`, `wait`, `signal`, `sleep`, `yield`, `getpid`, `exec` |
 | Archivos | `ls`, `cat`, `cd`, `pwd`, `touch`, `rm`, `mkdir`, `cp`, `mv`, `rename`, `stat`, `chmod`, `chown`, `grep`, `head`, `tail`, `more`, `less`, `wc`, `find`, `which`, `rmdir`, `cmp`, `diff`, `file`, `du`, `df`, `sync` |
-| Discos | `disk` (read / mount / fsck / gpt) |
+| Discos | `disk` (read / mount / fsck / gpt), `shutdown`, `reboot` |
 | Shell | `echo`, `env`, `set`, `unset`, `source`, `history`, `repeat`, `shm`, `shmdemo`, `mq` |
 | Entrada | `keymap`, `mouse` |
 | Visual | `color`, `theme`, `gfxdemo` |

@@ -11,6 +11,7 @@
 
 #define ELF_PROGRAM_TYPE_LOAD 1U
 
+/* ELF64 structures for loading segments */
 typedef struct {
     uint8_t magic[4];
     uint8_t elf_class;
@@ -22,9 +23,9 @@ typedef struct {
     uint16_t type;
     uint16_t machine;
     uint32_t version2;
-    uint32_t entry;
-    uint32_t phoff;
-    uint32_t shoff;
+    uint64_t entry;
+    uint64_t phoff;
+    uint64_t shoff;
     uint32_t flags;
     uint16_t ehsize;
     uint16_t phentsize;
@@ -32,18 +33,18 @@ typedef struct {
     uint16_t shentsize;
     uint16_t shnum;
     uint16_t shstrndx;
-} __attribute__((packed)) elf32_header_t;
+} __attribute__((packed)) elf64_header_t;
 
 typedef struct {
     uint32_t type;
-    uint32_t offset;
-    uint32_t vaddr;
-    uint32_t paddr;
-    uint32_t filesz;
-    uint32_t memsz;
     uint32_t flags;
-    uint32_t align;
-} __attribute__((packed)) elf32_program_header_t;
+    uint64_t offset;
+    uint64_t vaddr;
+    uint64_t paddr;
+    uint64_t filesz;
+    uint64_t memsz;
+    uint64_t align;
+} __attribute__((packed)) elf64_program_header_t;
 
 static void zero_memory(uint8_t* buffer, uint32_t size) {
     for (uint32_t i = 0; i < size; i++) {
@@ -57,7 +58,7 @@ static void copy_memory(uint8_t* dst, const uint8_t* src, uint32_t size) {
     }
 }
 
-static uint32_t align_up(uint32_t value, uint32_t alignment) {
+static uintptr_t align_up(uintptr_t value, uintptr_t alignment) {
     return (value + alignment - 1U) & ~(alignment - 1U);
 }
 
@@ -68,14 +69,14 @@ int usermode_spawn_stackbomb(int foreground) {
         (uint8_t)((PAGING_USER_STACK_GUARD_BASE >> 8) & 0xFFU),
         (uint8_t)((PAGING_USER_STACK_GUARD_BASE >> 16) & 0xFFU),
         (uint8_t)((PAGING_USER_STACK_GUARD_BASE >> 24) & 0xFFU),
-        0xC6, 0x00, 0x41,                               /* mov byte ptr [eax], 0x41 */
+        0xC6, 0x00, 0x41,                               /* mov byte ptr [rax], 0x41 */
         0xEB, 0xFE                                      /* jmp . */
     };
-    uint32_t user_physical_base;
-    uint32_t* page_directory;
-    uint32_t entry_point;
-    uint32_t user_heap_base;
-    uint32_t user_heap_size;
+    uintptr_t user_physical_base;
+    uint64_t* page_directory;
+    uintptr_t entry_point;
+    uintptr_t user_heap_base;
+    uintptr_t user_heap_size;
     unsigned int i;
 
     user_physical_base = physmem_alloc_region(paging_user_size(), paging_user_size());
@@ -121,16 +122,16 @@ int usermode_spawn_stackok(int foreground) {
         (uint8_t)((PAGING_USER_STACK_BOTTOM >> 8) & 0xFFU),
         (uint8_t)((PAGING_USER_STACK_BOTTOM >> 16) & 0xFFU),
         (uint8_t)((PAGING_USER_STACK_BOTTOM >> 24) & 0xFFU),
-        0xC6, 0x00, 0x4F,                               /* mov byte ptr [eax], 0x4F */
-        0x31, 0xDB,                                     /* xor ebx, ebx */
+        0xC6, 0x00, 0x4F,                               /* mov byte ptr [rax], 0x4F */
+        0x31, 0xFF,                                     /* xor edi, edi */
         0xB8, 0x0B, 0x00, 0x00, 0x00,                   /* mov eax, 11 (exit) */
         0xCD, 0x80                                      /* int 0x80 */
     };
-    uint32_t user_physical_base;
-    uint32_t* page_directory;
-    uint32_t entry_point;
-    uint32_t user_heap_base;
-    uint32_t user_heap_size;
+    uintptr_t user_physical_base;
+    uint64_t* page_directory;
+    uintptr_t entry_point;
+    uintptr_t user_heap_base;
+    uintptr_t user_heap_size;
     unsigned int i;
 
     user_physical_base = physmem_alloc_region(paging_user_size(), paging_user_size());
@@ -177,16 +178,16 @@ int usermode_spawn_shm_writer(int segment_id, unsigned char value, int foregroun
         (uint8_t)((PAGING_USER_SHM_BASE >> 16) & 0xFFU),
         (uint8_t)((PAGING_USER_SHM_BASE >> 24) & 0xFFU),
         0xC6, 0x00, 0x00,
-        0x31, 0xDB,
+        0x31, 0xFF,
         0xB8, 0x0B, 0x00, 0x00, 0x00,
         0xCD, 0x80
     };
     uint8_t code[sizeof(template_code)];
-    uint32_t user_physical_base;
-    uint32_t* page_directory;
-    uint32_t entry_point;
-    uint32_t user_heap_base;
-    uint32_t user_heap_size;
+    uintptr_t user_physical_base;
+    uint64_t* page_directory;
+    uintptr_t entry_point;
+    uintptr_t user_heap_base;
+    uintptr_t user_heap_size;
 
     if (segment_id <= 0) {
         return -1;
@@ -237,29 +238,29 @@ int usermode_spawn_shm_reader(int segment_id, unsigned char expected, int foregr
         (uint8_t)((PAGING_USER_SHM_BASE >> 8) & 0xFFU),
         (uint8_t)((PAGING_USER_SHM_BASE >> 16) & 0xFFU),
         (uint8_t)((PAGING_USER_SHM_BASE >> 24) & 0xFFU),
-        0x8A, 0x08,
+        0x0F, 0xB6, 0x08,
         0x80, 0xF9, 0x00,
         0x75, 0x07,
-        0x31, 0xDB,
+        0x31, 0xFF,
         0xB8, 0x0B, 0x00, 0x00, 0x00,
         0xCD, 0x80,
-        0xBB, 0x01, 0x00, 0x00, 0x00,
+        0xBF, 0x01, 0x00, 0x00, 0x00,
         0xB8, 0x0B, 0x00, 0x00, 0x00,
         0xCD, 0x80
     };
     uint8_t code[sizeof(template_code)];
-    uint32_t user_physical_base;
-    uint32_t* page_directory;
-    uint32_t entry_point;
-    uint32_t user_heap_base;
-    uint32_t user_heap_size;
+    uintptr_t user_physical_base;
+    uint64_t* page_directory;
+    uintptr_t entry_point;
+    uintptr_t user_heap_base;
+    uintptr_t user_heap_size;
 
     if (segment_id <= 0) {
         return -1;
     }
 
     copy_memory(code, template_code, (uint32_t)sizeof(template_code));
-    code[9] = expected;
+    code[10] = expected;
 
     user_physical_base = physmem_alloc_region(paging_user_size(), paging_user_size());
     if (user_physical_base == 0) {
@@ -297,45 +298,45 @@ int usermode_spawn_shm_reader(int segment_id, unsigned char expected, int foregr
 }
 
 /* ============================================================
- *  argv / envp stack setup
+ *  argv / envp stack setup  (64-bit)
  *
  *  Writes argument and environment strings + pointer arrays into
- *  the top of the user physical stack, following the i386 ABI:
+ *  the top of the user physical stack:
  *
  *    [user stack top]  <- envp strings, argv strings (raw bytes)
- *    NULL              <- envp sentinel
- *    envp[n-1..0]      <- virtual pointers
- *    NULL              <- argv sentinel
- *    argv[argc-1..0]   <- virtual pointers
- *    envp              <- (char**)
- *    argv              <- (char**)
- *    argc              <- int
- *    0                 <- fake return address
- *    <- initial user ESP
+ *    NULL              <- envp sentinel   (8 bytes)
+ *    envp[n-1..0]      <- virtual pointers (8 bytes each)
+ *    NULL              <- argv sentinel   (8 bytes)
+ *    argv[argc-1..0]   <- virtual pointers (8 bytes each)
+ *    envp              <- (char**)        (8 bytes)
+ *    argv              <- (char**)        (8 bytes)
+ *    argc              <- long            (8 bytes)
+ *    0                 <- fake return address (8 bytes)
+ *    <- initial user RSP  (16-byte aligned)
  *
- *  Returns the virtual initial ESP value to pass to task_spawn_user.
+ *  Returns the virtual initial RSP value to pass to task_spawn_user.
  *  If argc == 0 returns 0 (caller uses default stack top).
  * ============================================================ */
 
 #define ARGV_MAX_ARGS   16
-#define ARGV_STACK_LIMIT 2048U   /* max bytes consumed at the top of user stack */
+#define ARGV_STACK_LIMIT 4096U   /* max bytes consumed at the top of user stack */
 
-static uint32_t setup_user_stack_argv(uint32_t user_physical_base,
+static uintptr_t setup_user_stack_argv(uintptr_t user_physical_base,
                                        int argc, const char* const* argv,
                                        int envc, const char* const* envp)
 {
-    uint32_t phys_top  = user_physical_base + paging_user_size() - PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
-    uint32_t virt_top  = paging_user_base()  + paging_user_size() - PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
-    uint32_t sp_phys   = phys_top;
-    uint32_t sp_virt   = virt_top;
-    uint32_t phys_limit = phys_top - ARGV_STACK_LIMIT;
-    uint32_t argv_virt[ARGV_MAX_ARGS];
-    uint32_t envp_virt[ARGV_MAX_ARGS];
+    uintptr_t phys_top  = user_physical_base + paging_user_size() - PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
+    uintptr_t virt_top  = paging_user_base()  + paging_user_size() - PAGING_USER_SIGNAL_TRAMPOLINE_SIZE;
+    uintptr_t sp_phys   = phys_top;
+    uintptr_t sp_virt   = virt_top;
+    uintptr_t phys_limit = phys_top - ARGV_STACK_LIMIT;
+    uintptr_t argv_virt[ARGV_MAX_ARGS];
+    uintptr_t envp_virt[ARGV_MAX_ARGS];
     int real_argc = 0;
     int real_envc = 0;
-    uint32_t diff;
-    uint32_t envp_arr_virt;
-    uint32_t argv_arr_virt;
+    uintptr_t diff;
+    uintptr_t envp_arr_virt;
+    uintptr_t argv_arr_virt;
 
     if (argc <= 0 && envc <= 0) return 0;
 
@@ -347,7 +348,7 @@ static uint32_t setup_user_stack_argv(uint32_t user_physical_base,
             len = str_length(envp[i]) + 1U;
             if (sp_phys - len < phys_limit) break;
             sp_phys -= len; sp_virt -= len;
-            copy_memory((uint8_t*)(uintptr_t)sp_phys, (const uint8_t*)envp[i], len);
+            copy_memory((uint8_t*)sp_phys, (const uint8_t*)envp[i], len);
             envp_virt[real_envc++] = sp_virt;
         }
     }
@@ -360,45 +361,49 @@ static uint32_t setup_user_stack_argv(uint32_t user_physical_base,
             len = str_length(argv[i]) + 1U;
             if (sp_phys - len < phys_limit) break;
             sp_phys -= len; sp_virt -= len;
-            copy_memory((uint8_t*)(uintptr_t)sp_phys, (const uint8_t*)argv[i], len);
+            copy_memory((uint8_t*)sp_phys, (const uint8_t*)argv[i], len);
             argv_virt[real_argc++] = sp_virt;
         }
     }
 
-    /* --- 4-byte align --- */
-    diff = sp_phys & 3U;
+    /* --- 8-byte align --- */
+    diff = sp_phys & 7U;
     sp_phys -= diff; sp_virt -= diff;
 
     /* --- envp pointer array (NULL-terminated, reversed into memory) --- */
-    sp_phys -= 4; sp_virt -= 4;
-    *(uint32_t*)(uintptr_t)sp_phys = 0;                    /* NULL sentinel */
+    sp_phys -= 8; sp_virt -= 8;
+    *(uint64_t*)sp_phys = 0;                    /* NULL sentinel */
     for (int i = real_envc - 1; i >= 0; i--) {
-        sp_phys -= 4; sp_virt -= 4;
-        *(uint32_t*)(uintptr_t)sp_phys = envp_virt[i];
+        sp_phys -= 8; sp_virt -= 8;
+        *(uint64_t*)sp_phys = envp_virt[i];
     }
     envp_arr_virt = sp_virt;
 
     /* --- argv pointer array (NULL-terminated, reversed into memory) --- */
-    sp_phys -= 4; sp_virt -= 4;
-    *(uint32_t*)(uintptr_t)sp_phys = 0;                    /* NULL sentinel */
+    sp_phys -= 8; sp_virt -= 8;
+    *(uint64_t*)sp_phys = 0;                    /* NULL sentinel */
     for (int i = real_argc - 1; i >= 0; i--) {
-        sp_phys -= 4; sp_virt -= 4;
-        *(uint32_t*)(uintptr_t)sp_phys = argv_virt[i];
+        sp_phys -= 8; sp_virt -= 8;
+        *(uint64_t*)sp_phys = argv_virt[i];
     }
     argv_arr_virt = sp_virt;
 
     /* --- ABI frame: envp, argv, argc, return addr --- */
-    sp_phys -= 4; sp_virt -= 4;
-    *(uint32_t*)(uintptr_t)sp_phys = envp_arr_virt;
-    sp_phys -= 4; sp_virt -= 4;
-    *(uint32_t*)(uintptr_t)sp_phys = argv_arr_virt;
-    sp_phys -= 4; sp_virt -= 4;
-    *(uint32_t*)(uintptr_t)sp_phys = (uint32_t)real_argc;
-    sp_phys -= 4; sp_virt -= 4;
-    *(uint32_t*)(uintptr_t)sp_phys = 0;                    /* fake return address */
+    sp_phys -= 8; sp_virt -= 8;
+    *(uint64_t*)sp_phys = envp_arr_virt;
+    sp_phys -= 8; sp_virt -= 8;
+    *(uint64_t*)sp_phys = argv_arr_virt;
+    sp_phys -= 8; sp_virt -= 8;
+    *(uint64_t*)sp_phys = (uint64_t)real_argc;
+    sp_phys -= 8; sp_virt -= 8;
+    *(uint64_t*)sp_phys = 0;                    /* fake return address */
+
+    /* 16-byte align for SysV ABI */
+    sp_phys &= ~(uintptr_t)0xF;
+    sp_virt &= ~(uintptr_t)0xF;
 
     (void)sp_phys;
-    return sp_virt;  /* initial user ESP */
+    return sp_virt;  /* initial user RSP */
 }
 
 int usermode_spawn_elf_task(const char* fs_name, int foreground) {
@@ -406,12 +411,12 @@ int usermode_spawn_elf_task(const char* fs_name, int foreground) {
     unsigned char* image;
     int read;
     elf_image_info_t info;
-    const elf32_header_t* header;
-    uint32_t user_physical_base = 0;
-    uint32_t highest_user_end = paging_user_base();
-    uint32_t user_heap_base;
-    uint32_t user_heap_size;
-    uint32_t* page_directory = 0;
+    const elf64_header_t* header;
+    uintptr_t user_physical_base = 0;
+    uintptr_t highest_user_end = paging_user_base();
+    uintptr_t user_heap_base;
+    uintptr_t user_heap_size;
+    uint64_t* page_directory = 0;
     int task_id;
 
     if (fs_name == 0) {
@@ -454,11 +459,11 @@ int usermode_spawn_elf_task(const char* fs_name, int foreground) {
 
     zero_memory((uint8_t*)(uintptr_t)user_physical_base, paging_user_size());
 
-    header = (const elf32_header_t*)image;
+    header = (const elf64_header_t*)image;
 
     for (uint16_t index = 0; index < header->phnum; index++) {
-        const elf32_program_header_t* program_header =
-            (const elf32_program_header_t*)(image + header->phoff + (index * header->phentsize));
+        const elf64_program_header_t* program_header =
+            (const elf64_program_header_t*)(image + header->phoff + (index * header->phentsize));
 
         if (program_header->type != ELF_PROGRAM_TYPE_LOAD) {
             continue;
@@ -533,12 +538,12 @@ int usermode_spawn_elf_vfs_argv(const char* vfs_path,
     int            n_read;
     int            total;
     elf_image_info_t info;
-    const elf32_header_t* header;
-    uint32_t user_physical_base = 0;
-    uint32_t highest_user_end   = paging_user_base();
-    uint32_t user_heap_base;
-    uint32_t user_heap_size;
-    uint32_t* page_directory = 0;
+    const elf64_header_t* header;
+    uintptr_t user_physical_base = 0;
+    uintptr_t highest_user_end   = paging_user_base();
+    uintptr_t user_heap_base;
+    uintptr_t user_heap_size;
+    uint64_t* page_directory = 0;
     int task_id;
     const char* task_name;
     const char* p;
@@ -581,14 +586,14 @@ int usermode_spawn_elf_vfs_argv(const char* vfs_path,
 
     zero_memory((uint8_t*)(uintptr_t)user_physical_base, paging_user_size());
 
-    header = (const elf32_header_t*)image;
+    header = (const elf64_header_t*)image;
     for (uint16_t i = 0; i < header->phnum; i++) {
-        const elf32_program_header_t* ph =
-            (const elf32_program_header_t*)(image + header->phoff
+        const elf64_program_header_t* ph =
+            (const elf64_program_header_t*)(image + header->phoff
                                             + (i * header->phentsize));
         if (ph->type != ELF_PROGRAM_TYPE_LOAD) continue;
         if (!paging_address_is_user_accessible(ph->vaddr, ph->memsz) ||
-            ph->offset + ph->filesz > (uint32_t)file_size ||
+            ph->offset + ph->filesz > (uint64_t)file_size ||
             ph->memsz < ph->filesz) {
             paging_destroy_user_directory(page_directory);
             physmem_free_region(user_physical_base, paging_user_size());
@@ -637,23 +642,23 @@ int usermode_spawn_elf_vfs_argv(const char* vfs_path,
 int usermode_exec_current_vfs_argv(const char* vfs_path,
                                    int argc, const char* const* argv,
                                    int envc, const char* const* envp,
-                                   unsigned int frame_esp) {
+                                   uintptr_t frame_esp) {
     int            fd;
     int            file_size;
     unsigned char* image;
     int            n_read;
     int            total;
     elf_image_info_t info;
-    const elf32_header_t* header;
-    uint32_t user_physical_base = 0;
-    uint32_t highest_user_end   = paging_user_base();
-    uint32_t user_heap_base;
-    uint32_t user_heap_size;
-    uint32_t* page_directory = 0;
+    const elf64_header_t* header;
+    uintptr_t user_physical_base = 0;
+    uintptr_t highest_user_end   = paging_user_base();
+    uintptr_t user_heap_base;
+    uintptr_t user_heap_size;
+    uint64_t* page_directory = 0;
     int ok;
     const char* task_name;
     const char* p;
-    uint32_t initial_esp;
+    uintptr_t initial_rsp;
 
     if (vfs_path == 0) return -1;
 
@@ -693,14 +698,14 @@ int usermode_exec_current_vfs_argv(const char* vfs_path,
 
     zero_memory((uint8_t*)(uintptr_t)user_physical_base, paging_user_size());
 
-    header = (const elf32_header_t*)image;
+    header = (const elf64_header_t*)image;
     for (uint16_t i = 0; i < header->phnum; i++) {
-        const elf32_program_header_t* ph =
-            (const elf32_program_header_t*)(image + header->phoff
+        const elf64_program_header_t* ph =
+            (const elf64_program_header_t*)(image + header->phoff
                                             + (i * header->phentsize));
         if (ph->type != ELF_PROGRAM_TYPE_LOAD) continue;
         if (!paging_address_is_user_accessible(ph->vaddr, ph->memsz) ||
-            ph->offset + ph->filesz > (uint32_t)file_size ||
+            ph->offset + ph->filesz > (uint64_t)file_size ||
             ph->memsz < ph->filesz) {
             paging_destroy_user_directory(page_directory);
             physmem_free_region(user_physical_base, paging_user_size());
@@ -731,7 +736,7 @@ int usermode_exec_current_vfs_argv(const char* vfs_path,
         if (*p == '/') task_name = p + 1;
     if (*task_name == '\0') task_name = vfs_path;
 
-    initial_esp = setup_user_stack_argv(user_physical_base, argc, argv, envc, envp);
+    initial_rsp = setup_user_stack_argv(user_physical_base, argc, argv, envc, envp);
 
     ok = task_exec_current_user_from_frame(frame_esp,
                                            task_name,
@@ -740,7 +745,7 @@ int usermode_exec_current_vfs_argv(const char* vfs_path,
                                            user_heap_base,
                                            user_heap_size,
                                            page_directory,
-                                           initial_esp);
+                                           initial_rsp);
     if (!ok) {
         paging_destroy_user_directory(page_directory);
         physmem_free_region(user_physical_base, paging_user_size());

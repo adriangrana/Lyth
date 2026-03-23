@@ -9,7 +9,7 @@
 typedef struct {
     int used;
     int segment_id;
-    uint32_t base;
+    uintptr_t base;
     unsigned int size;
 } shm_mapping_t;
 
@@ -23,18 +23,18 @@ typedef struct {
 
 void shm_init(void);
 int shm_create(unsigned int size);
-uint32_t shm_attach(uint32_t* directory,
+uintptr_t shm_attach(uint64_t* directory,
                     shm_mapping_t* slots,
                     int slot_count,
                     int segment_id);
-int shm_detach(uint32_t* directory,
+int shm_detach(uint64_t* directory,
                shm_mapping_t* slots,
                int slot_count,
-               uint32_t address);
-void shm_detach_all(uint32_t* directory,
+               uintptr_t address);
+void shm_detach_all(uint64_t* directory,
                     shm_mapping_t* slots,
                     int slot_count);
-int shm_clone_mappings(uint32_t* child_directory,
+int shm_clone_mappings(uint64_t* child_directory,
                        shm_mapping_t* child_slots,
                        int child_slot_count,
                        const shm_mapping_t* parent_slots,

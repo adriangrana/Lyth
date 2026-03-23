@@ -19,8 +19,8 @@
 #define MMAP_FAILED ((uint32_t)0)
 
 typedef struct {
-    uint32_t base;     /* page-aligned virtual address */
-    uint32_t length;   /* length in bytes (page-aligned) */
+    uintptr_t base;     /* page-aligned virtual address */
+    uintptr_t length;   /* length in bytes (page-aligned) */
     int      used;
 } mmap_region_t;
 
@@ -36,14 +36,14 @@ void mmap_init_regions(mmap_region_t* regions);
  *
  * Returns the base VA of the new mapping, or MMAP_FAILED.
  */
-uint32_t mmap_anonymous(mmap_region_t* regions,
-                        uint32_t mmap_top, uint32_t mmap_low,
-                        uint32_t length);
+uintptr_t mmap_anonymous(mmap_region_t* regions,
+                        uintptr_t mmap_top, uintptr_t mmap_low,
+                        uintptr_t length);
 
 /*
  * Release a mapping.  Returns 0 on success, -1 if not found.
  */
-int mmap_unmap(mmap_region_t* regions, uint32_t addr, uint32_t length);
+int mmap_unmap(mmap_region_t* regions, uintptr_t addr, uintptr_t length);
 
 /*
  * Copy parent VMA table to child (used by fork).

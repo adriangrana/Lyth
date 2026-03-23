@@ -3,19 +3,20 @@
 ## Arquitectura general
 
 ```
-arch/x86/boot/boot.s  →  kernel_main()  →  subsistemas (GDT, consola, mem, VFS, scheduler)
-                                         →  acpi_init() + apic_init()  →  interrupts_init()
-                                         →  tarea init (PID 1) → shell interactiva
+arch/x86/boot/boot64.s  →  kernel_main()  →  subsistemas (GDT, consola, mem, VFS, scheduler)
+                                             →  acpi_init() + apic_init()  →  interrupts_init()
+                                             →  pci_init() + ahci_init()
+                                             →  tarea init (PID 1) → shell interactiva
 ```
 
 Subsistemas principales y sus archivos:
 
 | Subsistema | Archivos principales |
 |---|---|
-| Arranque | `arch/x86/boot/boot.s`, `arch/x86/boot/grub.cfg` |
+| Arranque | `arch/x86/boot/boot64.s`, `arch/x86/boot/grub.cfg` |
 | Kernel init | `kernel/kernel.c` |
-| GDT / TSS | `kernel/gdt.c`, `arch/x86/gdt.s` |
-| IDT / PIC / PIT | `kernel/idt.c`, `kernel/interrupts.c`, `arch/x86/interrupts.s` |
+| GDT / TSS | `kernel/gdt.c`, `arch/x86/gdt64.s` |
+| IDT / PIC / PIT | `kernel/idt.c`, `kernel/interrupts.c`, `arch/x86/interrupts64.s` |
 | ACPI / APIC | `kernel/acpi.c`, `kernel/apic.c` |
 | SMP | `kernel/smp.c`, `arch/x86/boot/ap_trampoline.s`, `include/kernel/spinlock.h` |
 | PCI | `drivers/net/pci.c` |
@@ -38,6 +39,7 @@ Subsistemas principales y sus archivos:
 | Consola | `drivers/console/terminal.c`, `drivers/console/fbconsole.c`, `drivers/console/console_backend.c` |
 | Teclado / ratón | `drivers/input/keyboard.c`, `drivers/input/mouse.c`, `drivers/input/input.c` |
 | ATA / blkdev | `drivers/disk/ata.c`, `drivers/disk/blkdev.c` |
+| AHCI/SATA | `drivers/disk/ahci.c` |
 | RTC | `drivers/rtc/rtc.c` |
 | Serie | `drivers/serial/serial.c` |
 | Shell | `userland/shell/shell.c`, `userland/shell/shell_input.c`, `userland/shell/parser.c` |
@@ -48,10 +50,10 @@ Subsistemas principales y sus archivos:
 
 ## Flujo de arranque
 
-1. GRUB carga el kernel con Multiboot. `boot.s` solicita modo gráfico `1280×1024×32` y pasa a `kernel_main()`.
-2. `kernel_main()` inicializa en orden: GDT + TSS, consola (detecta framebuffer o VGA), memoria física (bitmap Multiboot), heap, VFS (monta ramfs en `/`), ugdb (usuarios/grupos), scheduler.
-3. `ata_init()` detecta unidades ATA; `blkdev` escanea MBR/GPT; las particiones FAT16/FAT32 se montan automáticamente.
-4. `acpi_init()` busca el RSDP (EBDA + ROM BIOS), valida el RSDT y parsea la tabla MADT para obtener la dirección del Local APIC, las entradas IOAPIC y los Interrupt Source Overrides.
+1. GRUB carga el kernel con Multiboot. `boot64.s` solicita modo gráfico `1024×768×32`, activa long mode (paginación de 4 niveles) y salta a `kernel_main()`.
+2. `kernel_main()` inicializa en orden: GDT + TSS (64-bit), consola (detecta framebuffer 16/24/32 bpp o VGA), memoria física (bitmap Multiboot), heap, VFS (monta ramfs en `/`), ugdb (usuarios/grupos), scheduler.
+3. `ata_init()` detecta unidades ATA; `ahci_init()` detecta controladores AHCI/SATA vía PCI; `blkdev` escanea MBR/GPT; las particiones FAT16/FAT32 se montan automáticamente.
+4. `acpi_init()` busca el RSDP (EBDA + ROM BIOS), valida el RSDT y parsea la tabla MADT para obtener la dirección del Local APIC, las entradas IOAPIC y los Interrupt Source Overrides. También parsea la FADT para obtener los puertos PM1a/PM1b (shutdown) y el reset register (reboot).
 5. `apic_init()` comprueba CPUID, mapea las regiones MMIO (LAPIC en 0xFEE00000, IOAPIC en 0xFEC00000) con `paging_map_mmio()`, deshabilita el PIC 8259A, inicializa el LAPIC (spurious vector 0xFF, TPR a 0) y el IOAPIC (enmascara todas las líneas).
 6. `smp_init()` enumera CPUs de la MADT, copia el trampoline a 0x8000, y arranca cada AP con INIT/SIPI. Los APs cargan su GDT/TSS, IDT y LAPIC propios y entran en halt.
 7. `interrupts_init()` instala la IDT, y rutea las IRQs 0, 1, 12 y 14 por el IOAPIC (si APIC está activo) o remapea el PIC 8259A como fallback. Configura el PIT a 100 Hz y habilita IRQs.
@@ -76,7 +78,7 @@ A partir del RSDP, valida el RSDT (Root System Description Table) y recorre sus 
 
 ### Inicialización
 `apic_init()` verifica CPUID (EDX bit 9) y consume la información MADT:
-1. Mapea MMIO del LAPIC y del IOAPIC mediante `paging_map_mmio()` (páginas grandes de 4 MiB identity-mapped).
+1. Mapea MMIO del LAPIC y del IOAPIC mediante `paging_map_mmio()` (identity-mapped en el espacio de 4 GB).
 2. Deshabilita el PIC 8259A (máscara `0xFF` en ambos chips).
 3. Inicializa el LAPIC: spurious interrupt vector `0xFF`, TPR a 0, ESR limpiado.
 4. Inicializa el IOAPIC: enmascara todas las líneas de redirección.
@@ -104,7 +106,7 @@ El kernel detecta todos los procesadores lógicos y arranca los APs (Application
 
 Flujo del trampoline:
 1. **Real mode**: `cli`, carga GDT parcheado, activa PE en CR0.
-2. **Protected mode**: carga segmentos de kernel, carga CR3 del BSP (misma tabla de páginas), activa PSE + PG.
+2. **Protected mode**: carga segmentos de kernel, carga CR3 del BSP (misma tabla de páginas), activa paginación.
 3. **Call**: salta a `ap_main()` en C.
 
 ### Secuencia INIT/SIPI
@@ -133,6 +135,51 @@ Protecciones actuales:
 
 ---
 
+## ACPI FADT (shutdown/reboot)
+
+`acpi_init()` también parsea la tabla FADT (firma `FACP`) del RSDT. De ella extrae:
+
+- **PM1a/PM1b control block**: puertos I/O para gestión de energía.
+- **DSDT**: busca el objeto AML `_S5_` para obtener los valores SLP_TYPa/SLP_TYPb necesarios para el estado S5 (soft-off).
+- **Reset register** (FADT rev ≥ 2, flag bit 10): dirección I/O y valor para reiniciar el sistema.
+
+### Shutdown (`acpi_shutdown`)
+Escribe `(SLP_TYPa << 10) | SLP_EN` en el puerto PM1a control. Si existe PM1b, también lo escribe ahí.
+
+### Reboot (`acpi_reboot`)
+Cadena de fallback:
+1. **FADT reset register**: escritura al puerto I/O especificado por la FADT.
+2. **PS/2 keyboard controller**: escribe `0xFE` al puerto `0x64`.
+3. **Triple fault**: carga un IDTR vacío y ejecuta `int3`.
+
+---
+
+## AHCI/SATA
+
+`drivers/disk/ahci.c` implementa un driver AHCI completo para discos SATA.
+
+### Detección
+1. `pci_find_class(0x01, 0x06)` localiza el controlador AHCI.
+2. Se habilita bus mastering (`pci_enable_bus_mastering`).
+3. BAR5 (ABAR) se mapea vía `paging_map_mmio()` para acceso MMIO.
+4. Se activa el bit AHCI Enable (`GHC.AE`).
+
+### Enumeración de puertos
+Para cada bit activo en el registro PI (Ports Implemented):
+- Comprueba presencia de dispositivo SATA (SStatus DET=3, IPM=1, signature=`0x00000101`).
+- Detiene el puerto, configura estructuras DMA (command list, FIS receive, command table en una página de 4 KiB) y lo reinicia.
+- Ejecuta `IDENTIFY DEVICE` para obtener modelo y capacidad (LBA48, capped a 32-bit).
+
+### DMA read/write
+- Usa `READ DMA EXT` / `WRITE DMA EXT` (comandos LBA48).
+- Una sola PRDT entry por comando, chunks de hasta 128 sectores (64 KB).
+- Polling de CI (Command Issue) para completitud; detección de TFES para errores.
+
+### Integración
+Cada disco se registra con `blkdev_register()` como `sd0`, `sd1`, etc. El probing de particiones MBR/GPT y el auto-mount FAT16/FAT32 funcionan automáticamente.
+
+---
+
 ## Consola y vídeo
 
 La consola mantiene un buffer lógico de celdas (carácter + color) independiente del renderer activo.
@@ -151,10 +198,11 @@ El framebuffer se activa si el flag `MULTIBOOT_INFO_FRAMEBUFFER_INFO` está pres
 `physmem.c` construye un bitmap de frames (4 KiB cada uno) a partir del mapa de memoria Multiboot. Cada frame lleva un contador de referencias (`uint8_t`, máximo 255) que permite compartir páginas físicas entre procesos. `physmem_ref_frame` incrementa la cuenta, `physmem_unref_frame` la decrementa y libera el frame automáticamente cuando llega a cero.
 
 ### Paginación
-`paging.c` activa paginación con identity mapping inicial usando páginas grandes de 4 MiB (bit `PSE`). Expone:
+`paging.c` activa paginación de 4 niveles (PML4 → PDPT → PD → PT) con identity mapping inicial de 4 GB usando páginas de 2 MiB. Expone:
 - `paging_create_user_dir()`: crea un directorio de páginas para un proceso de usuario.
 - `paging_switch(dir)`: cambia `CR3` en el context switch.
 - `paging_validate_user_buffer(addr, size)`: valida que un buffer de usuario sea accesible antes de una syscall.
+- `paging_map_mmio(addr)`: mapea regiones MMIO (APIC, AHCI BAR) en el identity map.
 
 Cada proceso de usuario tiene su propio directorio de páginas. El kernel usa identity mapping supervisor-only global.
 
@@ -205,7 +253,7 @@ Los zombies permanecen visibles en `ps` hasta que el padre llama a `wait`/`waitp
 
 ## Syscalls
 
-El dispatcher está en `kernel/syscall.c`, activado por `int 0x80`. Los argumentos llegan en registros (`eax` = número, `ebx/ecx/edx/esi/edi` = args).
+El dispatcher está en `kernel/syscall.c`, activado por `syscall` (MSR-based) o `int 0x80`. Los argumentos llegan en registros (`rdi/rsi/rdx/r10/r8/r9`).
 
 Todas las syscalls que reciben punteros de usuario los validan con `paging_validate_user_buffer` o `syscall_validate_user_string` antes de usarlos. El acceso falla con `EFAULT` si el buffer no es válido.
 
@@ -303,7 +351,7 @@ La shell expone `mq` para colas de mensajes globales. La implementación actual 
 ## Procesos y señales
 
 ### ELF loader y user mode
-`kernel/elf.c` valida la cabecera ELF32 i386. `kernel/usermode.c` mapea los segmentos `PT_LOAD` en la región virtual de usuario, construye la pila con `argv`/`envp` y crea una tarea ring 3.
+`kernel/elf.c` valida la cabecera ELF64 x86_64. `kernel/usermode.c` mapea los segmentos `PT_LOAD` en la región virtual de usuario, construye la pila con `argv`/`envp` y crea una tarea ring 3.
 
 Para validar las guard pages del stack hay dos pruebas sintéticas expuestas por la shell:
 - `stackbomb`: lanza una tarea userland mínima que toca la guard page del stack y debe terminar con `Page fault`.
@@ -419,12 +467,12 @@ Capa de abstracción sobre ATA. Al registrar una unidad:
 | `make test` | Compila, genera ISO y valida multiboot con `grub-file` |
 
 ### Toolchain host y cruzada
-- Flujo actualmente validado en CI: toolchain host con `gcc -m32`, `as`, `ld`, `grub-mkrescue` y `grub-file` del sistema.
-- Flujo recomendado para desarrollo aislado: toolchain cruzada ELF i386, por ejemplo `i686-elf-gcc`, `i686-elf-as`, `i686-elf-ld`.
+- Flujo actualmente validado en CI: toolchain host con `gcc -m64`, `as`, `ld`, `grub-mkrescue` y `grub-file` del sistema.
+- Flujo recomendado para desarrollo aislado: toolchain cruzada ELF x86_64, por ejemplo `x86_64-elf-gcc`, `x86_64-elf-as`, `x86_64-elf-ld`.
 - El Makefile admite ambas rutas:
     - host: `make run`
-    - cruzada por prefijo: `make run CROSS_PREFIX=i686-elf-`
-    - cruzada por binario explícito: `make compile CC=i686-elf-gcc AS=i686-elf-as LD=i686-elf-ld`
+    - cruzada por prefijo: `make run CROSS_PREFIX=x86_64-elf-`
+    - cruzada por binario explícito: `make compile CC=x86_64-elf-gcc AS=x86_64-elf-as LD=x86_64-elf-ld`
 - Las utilidades de GRUB y QEMU siguen siendo herramientas del host; no van detrás de `CROSS_PREFIX`.
 
 ### Reproducibilidad

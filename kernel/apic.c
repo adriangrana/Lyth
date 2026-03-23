@@ -139,7 +139,7 @@ int apic_init(void) {
 
 	/* Install spurious interrupt handler */
 	idt_set_gate(APIC_SPURIOUS_VECTOR,
-		     (unsigned int)apic_spurious_stub,
+		     (uintptr_t)apic_spurious_stub,
 		     gdt_kernel_code_selector(), 0x8E);
 
 	/* Build ISA → GSI mapping */

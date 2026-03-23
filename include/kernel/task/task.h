@@ -47,27 +47,27 @@ typedef struct {
 void task_system_init(void);
 int task_spawn(const char* name, task_step_fn step, const void* data, unsigned int data_size, int foreground);
 int task_spawn_user(const char* name,
-					unsigned int entry_point,
-					uint32_t user_physical_base,
-					uint32_t user_heap_base,
-					uint32_t user_heap_size,
-					uint32_t* page_directory,
-					uint32_t initial_user_esp,
+					uintptr_t entry_point,
+					uintptr_t user_physical_base,
+					uintptr_t user_heap_base,
+					uintptr_t user_heap_size,
+					uint64_t* page_directory,
+					uintptr_t initial_user_esp,
 					int foreground);
 int task_spawn_user_shm1(const char* name,
-					 unsigned int entry_point,
-					 uint32_t user_physical_base,
-					 uint32_t user_heap_base,
-					 uint32_t user_heap_size,
-					 uint32_t* page_directory,
-					 uint32_t initial_user_esp,
+					 uintptr_t entry_point,
+					 uintptr_t user_physical_base,
+					 uintptr_t user_heap_base,
+					 uintptr_t user_heap_size,
+					 uint64_t* page_directory,
+					 uintptr_t initial_user_esp,
 					 int shm_segment_id,
 					 int foreground);
 void task_run_ready(void);
 int task_has_runnable(void);
 void task_on_tick(void);
-unsigned int task_schedule_on_timer(unsigned int current_esp);
-unsigned int task_schedule_on_syscall(unsigned int current_esp);
+uintptr_t task_schedule_on_timer(uintptr_t current_esp);
+uintptr_t task_schedule_on_syscall(uintptr_t current_esp);
 void task_sleep(unsigned int ticks);
 void task_wait_event(int event_id);
 void task_wait_event_timeout(int event_id, unsigned int timeout_ticks);
@@ -80,9 +80,9 @@ int task_cancel_requested(void);
 void task_clear_cancel(void);
 int task_is_running(void);
 int task_current_is_user_mode(void);
-uint32_t* task_current_page_directory(void);
-uint32_t task_current_user_heap_base(void);
-uint32_t task_current_user_heap_size(void);
+uint64_t* task_current_page_directory(void);
+uintptr_t task_current_user_heap_base(void);
+uintptr_t task_current_user_heap_size(void);
 const char* task_current_name(void);
 int task_current_id(void);
 void* task_current_data(void);
@@ -104,7 +104,7 @@ void task_wait_id(int target_id);
    target_id: child PID to wait for, or -1 for any child.
    status_uptr: virtual address where the int status will be written (0 = discard).
    Returns child PID on success, -1 if no matching child or error. */
-int task_waitpid(int target_id, uint32_t status_uptr);
+int task_waitpid(int target_id, uintptr_t status_uptr);
 /* Returns the parent PID of the given task, or -1 if not found. */
 int task_parent_id(int id);
 /* Send a signal to a task by PID. Returns 1 on success, 0 on error. */
@@ -112,24 +112,24 @@ int task_send_signal(int id, int signum);
 /* Set current task signal disposition for signum.
 	handler uses LYTH_SIG_DFL / LYTH_SIG_IGN or a user function address.
 	old_handler_out may be NULL. Returns 1 on success. */
-int task_set_signal_handler(int signum, unsigned int handler, unsigned int* old_handler_out);
+int task_set_signal_handler(int signum, uintptr_t handler, uintptr_t* old_handler_out);
 /* Pending signals bitmask for current task. */
 unsigned int task_pending_signals(void);
 /* Update current task signal mask. how=LYTH_SIG_BLOCK/UNBLOCK/SETMASK. */
 int task_sigprocmask(unsigned int how, unsigned int mask, unsigned int* old_mask_out);
 /* Replace current user task image in-place (exec semantics). */
-int task_exec_current_user_from_frame(unsigned int frame_esp,
+int task_exec_current_user_from_frame(uintptr_t frame_esp,
 									  const char* new_name,
-									  unsigned int entry_point,
-									  uint32_t user_physical_base,
-									  uint32_t user_heap_base,
-									  uint32_t user_heap_size,
-									  uint32_t* page_directory,
-									  uint32_t initial_user_esp);
+									  uintptr_t entry_point,
+									  uintptr_t user_physical_base,
+									  uintptr_t user_heap_base,
+									  uintptr_t user_heap_size,
+									  uint64_t* page_directory,
+									  uintptr_t initial_user_esp);
 /* Fork the current user-mode task from a syscall interrupt frame.
    Returns the child task ID in the parent, or -1 on error.
    Must only be called from syscall_interrupt_handler. */
-int task_fork_from_frame(unsigned int frame_esp);
+int task_fork_from_frame(uintptr_t frame_esp);
 /* Inform the task subsystem of the init PID; called once from init_start(). */
 void task_set_init_pid(int pid);
 /* Non-blocking: reap all zombie children of parent_id. Returns count reaped. */
@@ -174,8 +174,8 @@ int task_in_group(unsigned int gid);
 int task_get_groups(unsigned int* gids_out, int max_groups);
 int task_set_groups(const unsigned int* gids, int count);
 int task_shm_create(unsigned int size);
-uint32_t task_shm_attach(int segment_id);
-int task_shm_detach(uint32_t address);
+uintptr_t task_shm_attach(int segment_id);
+int task_shm_detach(uintptr_t address);
 int task_shm_unlink(int segment_id);
 int task_shm_list(shm_segment_info_t* out, int max_segments);
 int task_mq_create(unsigned int max_messages, unsigned int msg_size);
@@ -190,8 +190,8 @@ int task_mq_read_event_id(int queue_id);
 int task_mq_write_event_id(int queue_id);
 
 /* ---- mmap per-process ---- */
-uint32_t task_mmap(uint32_t length, uint32_t flags);
-int      task_munmap(uint32_t addr, uint32_t length);
+uintptr_t task_mmap(uintptr_t length, uintptr_t flags);
+int task_munmap(uintptr_t addr, uintptr_t length);
 mmap_region_t* task_current_mmap_regions(void);
 
 #endif

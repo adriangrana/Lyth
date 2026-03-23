@@ -16,7 +16,7 @@ ISO_DIR = $(BUILD_DIR)/iso
 KERNEL_BIN = $(BUILD_DIR)/kernel.bin
 ISO_IMAGE = $(DIST_DIR)/lyth.iso
 GDB_PORT ?= 1234
-QEMU = qemu-system-i386
+QEMU = qemu-system-x86_64
 QEMU_DISPLAY ?= sdl,show-cursor=off
 FB_MOUSE_CURSOR ?= 0
 AUTOTEST ?= 0
@@ -96,8 +96,10 @@ COMPOSITOR_OBJ = $(BUILD_DIR)/gui_compositor.o
 HPET_OBJ       = $(BUILD_DIR)/hpet.o
 SLAB_OBJ       = $(BUILD_DIR)/slab.o
 MMAP_OBJ       = $(BUILD_DIR)/mmap.o
+AHCI_OBJ       = $(BUILD_DIR)/ahci.o
 
-CFLAGS = -m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-frame-pointer -fno-optimize-sibling-calls \
+CFLAGS = -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx -mno-sse2 \
+	-ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-frame-pointer -fno-optimize-sibling-calls \
 	-ffile-prefix-map=$(CURDIR)=. \
 	-DFB_MOUSE_CURSOR_ENABLED=$(FB_MOUSE_CURSOR) \
 	-DLYTH_AUTOTEST_ENABLED=$(AUTOTEST) \
@@ -118,14 +120,14 @@ CFLAGS = -m32 -ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-fr
 	-Iinclude/kernel/tests \
 	-Iinclude/drivers/hpet \
 	-Iinclude/gui
-LDFLAGS = -m elf_i386 -T arch/x86/linker.ld --build-id=none
+LDFLAGS = -m elf_x86_64 -T arch/x86/linker.ld --build-id=none
 
 FONT_PSF = assets/font.psf
 FONT_TOOL = tools/psf2h.py
 FONT_HEADER = include/font_psf.h
 GRUB_CFG = arch/x86/boot/grub.cfg
 
-OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ) $(PCI_OBJ) $(E1000_OBJ) $(NETBUF_OBJ) $(NETIF_OBJ) $(ETHERNET_OBJ) $(ARP_OBJ) $(IPV4_OBJ) $(ICMP_OBJ) $(UDP_NET_OBJ) $(TCP_NET_OBJ) $(SOCKET_OBJ) $(DHCP_OBJ) $(DNS_OBJ) $(WINDOW_OBJ) $(COMPOSITOR_OBJ) $(HPET_OBJ) $(SLAB_OBJ) $(MMAP_OBJ)
+OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ) $(PCI_OBJ) $(E1000_OBJ) $(NETBUF_OBJ) $(NETIF_OBJ) $(ETHERNET_OBJ) $(ARP_OBJ) $(IPV4_OBJ) $(ICMP_OBJ) $(UDP_NET_OBJ) $(TCP_NET_OBJ) $(SOCKET_OBJ) $(DHCP_OBJ) $(DNS_OBJ) $(WINDOW_OBJ) $(COMPOSITOR_OBJ) $(HPET_OBJ) $(SLAB_OBJ) $(MMAP_OBJ) $(AHCI_OBJ)
 
 $(FONT_HEADER): $(FONT_PSF) $(FONT_TOOL)
 	$(PYTHON) $(FONT_TOOL) $(FONT_PSF) $(FONT_HEADER)
@@ -211,10 +213,11 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(CC) $(CFLAGS) -c drivers/hpet/hpet.c -o $(HPET_OBJ)
 	$(CC) $(CFLAGS) -c kernel/mem/slab.c -o $(SLAB_OBJ)
 	$(CC) $(CFLAGS) -c kernel/mem/mmap.c -o $(MMAP_OBJ)
-	$(AS) --32 arch/x86/gdt.s -o $(GDT_ASM_OBJ)
-	$(AS) --32 arch/x86/interrupts.s -o $(INTERRUPTS_ASM_OBJ)
-	$(AS) --32 arch/x86/boot/boot.s -o $(BOOT_OBJ)
-	$(AS) --32 arch/x86/boot/ap_trampoline.s -o $(AP_TRAMP_OBJ)
+	$(CC) $(CFLAGS) -c drivers/disk/ahci.c -o $(AHCI_OBJ)
+	$(AS) --64 arch/x86/gdt64.s -o $(GDT_ASM_OBJ)
+	$(AS) --64 arch/x86/interrupts64.s -o $(INTERRUPTS_ASM_OBJ)
+	$(AS) --64 arch/x86/boot/boot64.s -o $(BOOT_OBJ)
+	$(AS) --64 arch/x86/boot/ap_trampoline64.s -o $(AP_TRAMP_OBJ)
 	$(LD) $(LDFLAGS) -o $(KERNEL_BIN) $(OBJS)
 
 create-iso: compile $(DIST_DIR) ## genera dist/lyth.iso lista para arrancar con GRUB

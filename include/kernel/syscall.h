@@ -1,6 +1,7 @@
 #ifndef SYSCALL_H
 #define SYSCALL_H
 
+#include <stdint.h>
 #include "signal.h"
 #include "rlimit.h"
 
@@ -91,28 +92,28 @@ typedef void (*sys_signal_handler_t)(int);
 #define SYSCALL_SIG_DFL ((sys_signal_handler_t)0)
 #define SYSCALL_SIG_IGN ((sys_signal_handler_t)1)
 
-unsigned int syscall_callback(unsigned int number,
-                              unsigned int arg0,
-                              unsigned int arg1,
-                              unsigned int arg2,
-                              unsigned int arg3);
-unsigned int syscall_exec_interrupt(unsigned int frame_esp,
-                                    unsigned int path,
-                                    unsigned int foreground);
-unsigned int syscall_execv_interrupt(unsigned int frame_esp,
-                                     unsigned int path,
-                                     unsigned int foreground,
-                                     unsigned int argv,
-                                     unsigned int argc);
-unsigned int syscall_execve_interrupt(unsigned int frame_esp,
-                                      unsigned int path,
-                                      unsigned int argv_ptr,
-                                      unsigned int envp_ptr);
-unsigned int syscall_invoke(unsigned int number,
-                            unsigned int arg0,
-                            unsigned int arg1,
-                            unsigned int arg2,
-                            unsigned int arg3);
+uintptr_t syscall_callback(uintptr_t number,
+                              uintptr_t arg0,
+                              uintptr_t arg1,
+                              uintptr_t arg2,
+                              uintptr_t arg3);
+uintptr_t syscall_exec_interrupt(uintptr_t frame_rsp,
+                                    uintptr_t path,
+                                    uintptr_t foreground);
+uintptr_t syscall_execv_interrupt(uintptr_t frame_rsp,
+                                     uintptr_t path,
+                                     uintptr_t foreground,
+                                     uintptr_t argv,
+                                     uintptr_t argc);
+uintptr_t syscall_execve_interrupt(uintptr_t frame_rsp,
+                                      uintptr_t path,
+                                      uintptr_t argv_ptr,
+                                      uintptr_t envp_ptr);
+uintptr_t syscall_invoke(uintptr_t number,
+                            uintptr_t arg0,
+                            uintptr_t arg1,
+                            uintptr_t arg2,
+                            uintptr_t arg3);
 
 void syscall_write(const char* text);
 unsigned int syscall_get_ticks(void);

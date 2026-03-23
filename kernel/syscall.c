@@ -305,7 +305,7 @@ static void user_heap_split_block(user_heap_block_t* block, unsigned int size) {
     next_block->next = block->next;
 
     block->size = size;
-    block->next = (unsigned int)(uintptr_t)next_block;
+    block->next = (uintptr_t)next_block;
 }
 
 static void user_heap_coalesce(void) {
@@ -366,36 +366,36 @@ static void user_heap_free(void* ptr) {
     user_heap_coalesce();
 }
 
-unsigned int syscall_exec_interrupt(unsigned int frame_esp,
-                                    unsigned int path,
-                                    unsigned int foreground) {
+uintptr_t syscall_exec_interrupt(uintptr_t frame_esp,
+                                    uintptr_t path,
+                                    uintptr_t foreground) {
     (void)foreground;
 
     if (!task_current_is_user_mode()) {
         task_set_errno(1); /* EPERM */
-        return (unsigned int)-1;
+        return (uintptr_t)-1;
     }
 
     if (!syscall_validate_user_string((const char*)path, SYSCALL_MAX_PATH_LENGTH)) {
         task_set_errno(22); /* EINVAL */
-        return (unsigned int)-1;
+        return (uintptr_t)-1;
     }
 
     if (usermode_exec_current_vfs_argv((const char*)path,
                                        0, 0, 0, 0,
                                        frame_esp) < 0) {
         task_set_errno(2); /* ENOENT / generic */
-        return (unsigned int)-1;
+        return (uintptr_t)-1;
     }
 
     return 0;
 }
 
-unsigned int syscall_execv_interrupt(unsigned int frame_esp,
-                                     unsigned int path,
-                                     unsigned int foreground,
-                                     unsigned int argv,
-                                     unsigned int argc) {
+uintptr_t syscall_execv_interrupt(uintptr_t frame_esp,
+                                     uintptr_t path,
+                                     uintptr_t foreground,
+                                     uintptr_t argv,
+                                     uintptr_t argc) {
     const char* kpath = (const char*)path;
     const char** uargv = (const char**)argv;
     int uargc = (int)argc;
@@ -406,12 +406,12 @@ unsigned int syscall_execv_interrupt(unsigned int frame_esp,
 
     if (!task_current_is_user_mode()) {
         task_set_errno(1); /* EPERM */
-        return (unsigned int)-1;
+        return (uintptr_t)-1;
     }
 
     if (!syscall_validate_user_string(kpath, SYSCALL_MAX_PATH_LENGTH)) {
         task_set_errno(22);
-        return (unsigned int)-1;
+        return (uintptr_t)-1;
     }
 
     if (uargv != 0 && uargc > 0) {
@@ -419,12 +419,12 @@ unsigned int syscall_execv_interrupt(unsigned int frame_esp,
         if (!syscall_validate_user_buffer(uargv,
                 (unsigned int)((unsigned int)lim * sizeof(char*)))) {
             task_set_errno(22);
-            return (unsigned int)-1;
+            return (uintptr_t)-1;
         }
         for (int i = 0; i < lim; i++) {
             if (!syscall_validate_user_string(uargv[i], SYSCALL_MAX_PATH_LENGTH)) {
                 task_set_errno(22);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             kargv[valid_argc++] = uargv[i];
         }
@@ -435,17 +435,17 @@ unsigned int syscall_execv_interrupt(unsigned int frame_esp,
                                        0, 0,
                                        frame_esp) < 0) {
         task_set_errno(2);
-        return (unsigned int)-1;
+        return (uintptr_t)-1;
     }
 
     return 0;
 }
 
 /* execve: path + NULL-terminated argv[] + NULL-terminated envp[] */
-unsigned int syscall_execve_interrupt(unsigned int frame_esp,
-                                      unsigned int path,
-                                      unsigned int argv_ptr,
-                                      unsigned int envp_ptr) {
+uintptr_t syscall_execve_interrupt(uintptr_t frame_esp,
+                                      uintptr_t path,
+                                      uintptr_t argv_ptr,
+                                      uintptr_t envp_ptr) {
     const char* kpath = (const char*)path;
     const char** uargv = (const char**)argv_ptr;
     const char** uenvp = (const char**)envp_ptr;
@@ -454,11 +454,11 @@ unsigned int syscall_execve_interrupt(unsigned int frame_esp,
     int argc = 0, envc = 0;
 
     if (!task_current_is_user_mode()) {
-        task_set_errno(1); return (unsigned int)-1;
+        task_set_errno(1); return (uintptr_t)-1;
     }
 
     if (!syscall_validate_user_string(kpath, SYSCALL_MAX_PATH_LENGTH)) {
-        task_set_errno(22); return (unsigned int)-1;
+        task_set_errno(22); return (uintptr_t)-1;
     }
 
     /* Copy NULL-terminated argv */
@@ -490,23 +490,23 @@ unsigned int syscall_execve_interrupt(unsigned int frame_esp,
                                        envc, (const char* const*)kenvp,
                                        frame_esp) < 0) {
         task_set_errno(2);
-        return (unsigned int)-1;
+        return (uintptr_t)-1;
     }
 
     return 0;
 }
 
-unsigned int syscall_callback(unsigned int number,
-                              unsigned int arg0,
-                              unsigned int arg1,
-                              unsigned int arg2,
-                              unsigned int arg3) {
+uintptr_t syscall_callback(uintptr_t number,
+                              uintptr_t arg0,
+                              uintptr_t arg1,
+                              uintptr_t arg2,
+                              uintptr_t arg3) {
     (void)arg3;
 
     switch (number) {
         case SYSCALL_WRITE:
             if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_TEXT_LENGTH)) {
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             terminal_print((const char*)arg0);
             return 0;
@@ -524,9 +524,9 @@ unsigned int syscall_callback(unsigned int number,
 
         case SYSCALL_ALLOC:
             if (syscall_from_user_mode()) {
-                return (unsigned int)user_heap_alloc(arg0);
+                return (uintptr_t)user_heap_alloc(arg0);
             }
-            return (unsigned int)kmalloc(arg0);
+            return (uintptr_t)kmalloc(arg0);
 
         case SYSCALL_FREE:
             if (syscall_from_user_mode()) {
@@ -541,37 +541,37 @@ unsigned int syscall_callback(unsigned int number,
             return 0;
 
         case SYSCALL_FS_COUNT:
-            if (syscall_deny_user_legacy_fs()) return (unsigned int)-1;
-            return (unsigned int)fs_count();
+            if (syscall_deny_user_legacy_fs()) return (uintptr_t)-1;
+            return (uintptr_t)fs_count();
 
         case SYSCALL_FS_NAME_AT:
-            if (syscall_deny_user_legacy_fs()) return (unsigned int)-1;
-            return (unsigned int)fs_name_at((int)arg0);
+            if (syscall_deny_user_legacy_fs()) return (uintptr_t)-1;
+            return (uintptr_t)fs_name_at((int)arg0);
 
         case SYSCALL_FS_NAME_COPY: {
             const char* name = fs_name_at((int)arg0);
 
-            if (syscall_deny_user_legacy_fs()) return (unsigned int)-1;
+            if (syscall_deny_user_legacy_fs()) return (uintptr_t)-1;
 
             if (!syscall_validate_user_buffer((const void*)arg1, arg2)) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
-            return (unsigned int)syscall_copy_string_to_buffer(name, (char*)arg1, arg2);
+            return (uintptr_t)syscall_copy_string_to_buffer(name, (char*)arg1, arg2);
         }
 
         case SYSCALL_FS_READ:
-            if (syscall_deny_user_legacy_fs()) return (unsigned int)-1;
+            if (syscall_deny_user_legacy_fs()) return (uintptr_t)-1;
             if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH) ||
                 !syscall_validate_user_buffer((const void*)arg1, arg2)) {
                 task_set_errno(22); /* EINVAL/EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
-            return (unsigned int)fs_read((const char*)arg0, (char*)arg1, arg2);
+            return (uintptr_t)fs_read((const char*)arg0, (char*)arg1, arg2);
 
         case SYSCALL_FS_SIZE:
-            if (syscall_deny_user_legacy_fs()) return (unsigned int)-1;
+            if (syscall_deny_user_legacy_fs()) return (uintptr_t)-1;
             if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH)) {
                 task_set_errno(22); /* EINVAL */
                 return 0;
@@ -583,11 +583,11 @@ unsigned int syscall_callback(unsigned int number,
         case SYSCALL_VFS_OPEN:
             if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH)) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if ((arg1 & ~syscall_vfs_flag_mask()) != 0U) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 /* Enforce per-process soft FD limit */
@@ -595,12 +595,12 @@ unsigned int syscall_callback(unsigned int number,
                 task_get_fd_rlimit(&fd_soft, 0);
                 if (fd_soft > 0U && (unsigned int)task_current_open_fd_count() >= fd_soft) {
                     task_set_errno(24); /* EMFILE */
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
 
                 int fd = vfs_open_flags((const char*)arg0, arg1);
                 if (fd < 0) task_set_errno(13); /* EACCES/ENOENT generic */
-                return (unsigned int)fd;
+                return (uintptr_t)fd;
             }
 
         case SYSCALL_VFS_CLOSE:
@@ -610,91 +610,91 @@ unsigned int syscall_callback(unsigned int number,
         case SYSCALL_VFS_READ:
             if (!syscall_validate_user_buffer((const void*)arg1, arg2)) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 int n = vfs_read((int)arg0, (unsigned char*)arg1, arg2);
                 if (n == -2) task_set_errno(11);      /* EAGAIN */
                 else if (n < 0) task_set_errno(9);    /* EBADF/EACCES generic */
-                return (unsigned int)n;
+                return (uintptr_t)n;
             }
 
         case SYSCALL_VFS_WRITE:
             if (!syscall_validate_user_buffer((const void*)arg1, arg2)) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 int n = vfs_write((int)arg0, (const unsigned char*)arg1, arg2);
                 if (n == -2) task_set_errno(11);      /* EAGAIN */
                 else if (n == -3) task_set_errno(32); /* EPIPE */
                 else if (n < 0) task_set_errno(9);    /* EBADF/EACCES generic */
-                return (unsigned int)n;
+                return (uintptr_t)n;
             }
 
         case SYSCALL_VFS_SEEK:
         {
             int off = vfs_seek((int)arg0, (int)arg1, (int)arg2);
             if (off < 0) task_set_errno(22); /* EINVAL/EBADF generic */
-            return (unsigned int)off;
+            return (uintptr_t)off;
         }
 
         case SYSCALL_VFS_READDIR:
             if (arg3 == 0U || arg3 > VFS_NAME_MAX) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (!syscall_validate_user_buffer((const void*)arg2, arg3)) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 int rc = vfs_readdir((int)arg0, arg1, (char*)arg2, arg3);
                 if (rc < 0) task_set_errno(9); /* EBADF/ENOENT generic */
-                return (unsigned int)rc;
+                return (uintptr_t)rc;
             }
 
         case SYSCALL_VFS_CREATE:
             if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH)) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if ((arg1 & ~(VFS_FLAG_FILE | VFS_FLAG_DIR)) != 0U ||
                 ((arg1 & (VFS_FLAG_FILE | VFS_FLAG_DIR)) == 0U) ||
                 ((arg1 & VFS_FLAG_FILE) && (arg1 & VFS_FLAG_DIR))) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 int rc = vfs_create((const char*)arg0, arg1);
                 if (rc < 0) task_set_errno(13); /* EACCES/ENOSPC generic */
-                return (unsigned int)rc;
+                return (uintptr_t)rc;
             }
 
         case SYSCALL_VFS_DELETE:
             if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH)) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 int rc = vfs_delete((const char*)arg0);
                 if (rc < 0) task_set_errno(13); /* EACCES/ENOENT generic */
-                return (unsigned int)rc;
+                return (uintptr_t)rc;
             }
 
         case SYSCALL_VFS_CHOWN:
             if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH)) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (!ugdb_find_by_uid(arg1) || !ugdb_find_group_by_gid(arg2)) {
                 task_set_errno(22); /* EINVAL unknown uid/gid */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 int rc = vfs_chown((const char*)arg0, arg1, arg2);
                 if (rc < 0) task_set_errno(1); /* EPERM/EACCES generic */
-                return (unsigned int)rc;
+                return (uintptr_t)rc;
             }
 
         case SYSCALL_VFS_GETOWNER:
@@ -702,19 +702,19 @@ unsigned int syscall_callback(unsigned int number,
                 !syscall_validate_user_buffer((const void*)arg1, sizeof(unsigned int)) ||
                 !syscall_validate_user_buffer((const void*)arg2, sizeof(unsigned int))) {
                 task_set_errno(14); /* EFAULT/EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 unsigned int* uid_out = (unsigned int*)(uintptr_t)arg1;
                 unsigned int* gid_out = (unsigned int*)(uintptr_t)arg2;
                 int rc = vfs_get_owner((const char*)arg0, uid_out, gid_out);
                 if (rc < 0) task_set_errno(2); /* ENOENT/EINVAL generic */
-                return (unsigned int)rc;
+                return (uintptr_t)rc;
             }
 
         /* ---- process management ---- */
         case SYSCALL_GETPID:
-            return (unsigned int)task_current_id();
+            return (uintptr_t)task_current_id();
 
         case SYSCALL_GETUID:
             return task_current_uid();
@@ -727,21 +727,21 @@ unsigned int syscall_callback(unsigned int number,
         case SYSCALL_SETUID:
             if (!ugdb_find_by_uid(arg0)) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (task_set_current_uid(arg0) != 0) {
                 task_set_errno(1); /* EPERM */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             return 0;
         case SYSCALL_SETGID:
             if (!ugdb_find_group_by_gid(arg0)) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (task_set_current_gid(arg0) != 0) {
                 task_set_errno(1); /* EPERM */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             return 0;
         case SYSCALL_GETGROUPS:
@@ -750,21 +750,21 @@ unsigned int syscall_callback(unsigned int number,
             unsigned int* gids_out = (unsigned int*)(uintptr_t)arg1;
             if (max_groups < 0) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (max_groups > 0 &&
                 !syscall_validate_user_buffer(gids_out,
                     (unsigned int)max_groups * (unsigned int)sizeof(unsigned int))) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 int n = task_get_groups(gids_out, max_groups);
                 if (n < 0) {
                     task_set_errno(9); /* EBADF generic */
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
-                return (unsigned int)n;
+                return (uintptr_t)n;
             }
         }
         case SYSCALL_SETGROUPS:
@@ -774,30 +774,30 @@ unsigned int syscall_callback(unsigned int number,
             int i;
             if (count < 0 || count > TASK_MAX_SUPP_GROUPS) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (count > 0 &&
                 !syscall_validate_user_buffer(gids,
                     (unsigned int)count * (unsigned int)sizeof(unsigned int))) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             for (i = 0; i < count; i++) {
                 if (!ugdb_find_group_by_gid(gids[i])) {
                     task_set_errno(22); /* EINVAL unknown gid */
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
             }
             if (task_set_groups(gids, count) != 0) {
                 task_set_errno(1); /* EPERM */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             return 0;
         }
 
         case SYSCALL_ALARM:
             /* arg0 = seconds; returns remaining seconds of previous alarm */
-            return (unsigned int)task_alarm(arg0);
+            return (uintptr_t)task_alarm(arg0);
 
         case SYSCALL_SETITIMER: {
             /* arg0 = value_us, arg1 = interval_us, arg2 = old syscall_itimerval_t* (may be 0) */
@@ -806,10 +806,10 @@ unsigned int syscall_callback(unsigned int number,
             int ret;
             if (old != 0 && !syscall_validate_user_buffer(old, sizeof(syscall_itimerval_t))) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             ret = task_setitimer(arg0, arg1, &old_val, &old_itv);
-            if (ret != 0) { task_set_errno(22); return (unsigned int)-1; }
+            if (ret != 0) { task_set_errno(22); return (uintptr_t)-1; }
             if (old) { old->value_us = old_val; old->interval_us = old_itv; }
             return 0;
         }
@@ -820,7 +820,7 @@ unsigned int syscall_callback(unsigned int number,
             unsigned int val = 0, itv = 0;
             if (!out || !syscall_validate_user_buffer(out, sizeof(syscall_itimerval_t))) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             task_getitimer(&val, &itv);
             out->value_us    = val;
@@ -831,27 +831,27 @@ unsigned int syscall_callback(unsigned int number,
         case SYSCALL_SHM_CREATE:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1); /* EPERM */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 int shmid = task_shm_create(arg0);
                 if (shmid < 0) {
                     task_set_errno(12); /* ENOMEM / EINVAL generic */
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
-                return (unsigned int)shmid;
+                return (uintptr_t)shmid;
             }
 
         case SYSCALL_SHM_ATTACH:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1); /* EPERM */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 uint32_t address = task_shm_attach((int)arg0);
                 if (address == 0U) {
                     task_set_errno(22); /* EINVAL / ENOMEM generic */
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 return address;
             }
@@ -859,57 +859,57 @@ unsigned int syscall_callback(unsigned int number,
         case SYSCALL_SHM_DETACH:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1); /* EPERM */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (task_shm_detach(arg0) != 0) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             return 0;
 
         case SYSCALL_SHM_UNLINK:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1); /* EPERM */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (task_shm_unlink((int)arg0) != 0) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             return 0;
 
         case SYSCALL_MQ_CREATE:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 int queue_id = task_mq_create(arg0, arg1);
                 if (queue_id < 0) {
                     task_set_errno(22);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
-                return (unsigned int)queue_id;
+                return (uintptr_t)queue_id;
             }
 
         case SYSCALL_MQ_SEND:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (!syscall_validate_user_buffer((const void*)(uintptr_t)arg1, arg2)) {
                 task_set_errno(14);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 int rc = task_mq_send((int)arg0, (const void*)(uintptr_t)arg1, arg2);
                 if (rc == MQ_E_FULL) {
                     task_set_errno(11);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 if (rc != 0) {
                     task_set_errno(22);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 return 0;
             }
@@ -917,11 +917,11 @@ unsigned int syscall_callback(unsigned int number,
         case SYSCALL_MQ_SEND_TIMED:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (!syscall_validate_user_buffer((const void*)(uintptr_t)arg1, arg2)) {
                 task_set_errno(14);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 unsigned int timeout_ticks = (arg3 == 0xFFFFFFFFU)
@@ -933,11 +933,11 @@ unsigned int syscall_callback(unsigned int number,
                                             timeout_ticks);
                 if (rc == MQ_E_TIMEOUT) {
                     task_set_errno(arg3 == 0U ? 11 : 110);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 if (rc != 0) {
                     task_set_errno(22);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 return 0;
             }
@@ -945,12 +945,12 @@ unsigned int syscall_callback(unsigned int number,
         case SYSCALL_MQ_RECV:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (!syscall_validate_user_buffer((const void*)(uintptr_t)arg1, arg2) ||
                 (arg3 != 0 && !syscall_validate_user_buffer((const void*)(uintptr_t)arg3, sizeof(unsigned int)))) {
                 task_set_errno(14);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 unsigned int received_size = 0;
@@ -960,11 +960,11 @@ unsigned int syscall_callback(unsigned int number,
                                          arg3 ? &received_size : 0);
                 if (rc == MQ_E_EMPTY) {
                     task_set_errno(11);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 if (rc != 0) {
                     task_set_errno(22);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 if (arg3 != 0) {
                     *(unsigned int*)(uintptr_t)arg3 = received_size;
@@ -975,11 +975,11 @@ unsigned int syscall_callback(unsigned int number,
         case SYSCALL_MQ_RECV_TIMED:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (!syscall_validate_user_buffer((const void*)(uintptr_t)arg1, arg2)) {
                 task_set_errno(14);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 unsigned int received_size = 0U;
@@ -993,11 +993,11 @@ unsigned int syscall_callback(unsigned int number,
                                                &received_size);
                 if (rc == MQ_E_TIMEOUT) {
                     task_set_errno(arg3 == 0U ? 11 : 110);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 if (rc != 0) {
                     task_set_errno(22);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 return received_size;
             }
@@ -1005,23 +1005,23 @@ unsigned int syscall_callback(unsigned int number,
         case SYSCALL_MQ_UNLINK:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (task_mq_unlink((int)arg0) != 0) {
                 task_set_errno(22);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             return 0;
 
         case SYSCALL_MQ_OPEN:
             if (!task_current_is_user_mode()) {
                 task_set_errno(1);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if ((arg1 & ~syscall_mq_open_flag_mask()) != 0U ||
                 (arg1 & VFS_O_ACCMODE) == 0U) {
                 task_set_errno(22);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 unsigned int fd_soft = 0U;
@@ -1030,22 +1030,22 @@ unsigned int syscall_callback(unsigned int number,
                 task_get_fd_rlimit(&fd_soft, 0);
                 if (fd_soft > 0U && (unsigned int)task_current_open_fd_count() >= fd_soft) {
                     task_set_errno(24);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
 
                 fd = task_mq_open((int)arg0, arg1);
                 if (fd < 0) {
                     task_set_errno(22);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
 
-                return (unsigned int)fd;
+                return (uintptr_t)fd;
             }
 
         case SYSCALL_KILL: {
             int ok = task_send_signal((int)arg0, LYTH_SIGTERM);
             if (!ok) task_set_errno(3); /* ESRCH */
-            return ok ? 0U : (unsigned int)-1;
+            return ok ? 0U : (uintptr_t)-1;
         }
 
         case SYSCALL_WAIT:
@@ -1054,33 +1054,33 @@ unsigned int syscall_callback(unsigned int number,
 
         case SYSCALL_WAITPID: {
             /* arg0 = pid, arg1 = user int* status_out */
-            uint32_t status_uptr = arg1;
+            uintptr_t status_uptr = arg1;
             int ret;
 
             if (status_uptr != 0 &&
                 !syscall_validate_user_buffer((const void*)status_uptr,
                                               sizeof(int))) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             ret = task_waitpid((int)arg0, status_uptr);
-            return (unsigned int)ret;
+            return (uintptr_t)ret;
         }
 
         case SYSCALL_EXEC: {
             int spawn_id;
             if (!syscall_validate_user_string((const char*)arg0, SYSCALL_MAX_PATH_LENGTH)) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             spawn_id = usermode_spawn_elf_vfs((const char*)arg0, (int)arg1);
             if (spawn_id < 0) task_set_errno(2); /* ENOENT / generic */
-            return (unsigned int)spawn_id;
+            return (uintptr_t)spawn_id;
         }
 
         case SYSCALL_GET_ERRNO:
-            return (unsigned int)task_get_errno();
+            return (uintptr_t)task_get_errno();
 
         case SYSCALL_EXECV: {
             /* arg0=path, arg1=foreground, arg2=argv (user char**), arg3=argc */
@@ -1094,20 +1094,20 @@ unsigned int syscall_callback(unsigned int number,
 
             if (!syscall_validate_user_string(path, SYSCALL_MAX_PATH_LENGTH)) {
                 task_set_errno(22);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (uargv != 0 && uargc > 0) {
                 int lim = uargc < 16 ? uargc : 16;
                 if (!syscall_validate_user_buffer(uargv,
                         (unsigned int)((unsigned int)lim * sizeof(char*)))) {
                     task_set_errno(22);
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 for (int i = 0; i < lim; i++) {
                     if (!syscall_validate_user_string(uargv[i],
                                                       SYSCALL_MAX_PATH_LENGTH)) {
                         task_set_errno(22);
-                        return (unsigned int)-1;
+                        return (uintptr_t)-1;
                     }
                     kargv[valid_argc++] = uargv[i];
                 }
@@ -1116,30 +1116,30 @@ unsigned int syscall_callback(unsigned int number,
                             valid_argc, (const char* const*)kargv,
                             0, 0, fg);
             if (spawn_id < 0) task_set_errno(2);
-            return (unsigned int)spawn_id;
+            return (uintptr_t)spawn_id;
         }
 
         case SYSCALL_SIGNAL: {
             int signum = (int)arg0;
-            unsigned int handler = arg1;
-            unsigned int old_handler = 0;
+            uintptr_t handler = arg1;
+            uintptr_t old_handler = 0;
             int ok;
 
             if (!task_current_is_user_mode()) {
                 task_set_errno(1); /* EPERM */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             if (handler > LYTH_SIG_IGN &&
                 !syscall_validate_user_buffer((const void*)handler, 1)) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             ok = task_set_signal_handler(signum, handler, &old_handler);
             if (!ok) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             return old_handler;
@@ -1148,7 +1148,7 @@ unsigned int syscall_callback(unsigned int number,
         case SYSCALL_KILLSIG: {
             int ok = task_send_signal((int)arg0, (int)arg1);
             if (!ok) task_set_errno(22); /* EINVAL/ESRCH */
-            return ok ? 0U : (unsigned int)-1;
+            return ok ? 0U : (uintptr_t)-1;
         }
 
         case SYSCALL_SIGPENDING:
@@ -1164,13 +1164,13 @@ unsigned int syscall_callback(unsigned int number,
             if (old_mask_user != 0 &&
                 !syscall_validate_user_buffer(old_mask_user, sizeof(unsigned int))) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             ok = task_sigprocmask(how, mask, &old_mask);
             if (!ok) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             if (old_mask_user != 0) {
@@ -1184,7 +1184,7 @@ unsigned int syscall_callback(unsigned int number,
             /* arg0 = pointer to rtc_time_t in caller's address space */
             if (!syscall_validate_user_buffer((void*)arg0, sizeof(rtc_time_t))) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             rtc_read((rtc_time_t*)arg0);
             return 0;
@@ -1203,17 +1203,17 @@ unsigned int syscall_callback(unsigned int number,
 
             if (nfds > VFS_MAX_FD) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (nfds > 0U && !syscall_validate_user_buffer(pfds, nfds * sizeof(syscall_pollfd_t))) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             for (;;) {
                 int ready = syscall_poll_scan(pfds, nfds, table);
                 if (ready > 0) {
-                    return (unsigned int)ready;
+                    return (uintptr_t)ready;
                 }
 
                 if (timeout_ms == 0U) {
@@ -1245,13 +1245,13 @@ unsigned int syscall_callback(unsigned int number,
 
             if (nfds > VFS_MAX_FD || nfds > 32U) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             if (read_mask_io != 0) {
                 if (!syscall_validate_user_buffer(read_mask_io, sizeof(unsigned int))) {
                     task_set_errno(14); /* EFAULT */
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 in_r = *read_mask_io;
             }
@@ -1259,7 +1259,7 @@ unsigned int syscall_callback(unsigned int number,
             if (write_mask_io != 0) {
                 if (!syscall_validate_user_buffer(write_mask_io, sizeof(unsigned int))) {
                     task_set_errno(14); /* EFAULT */
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 in_w = *write_mask_io;
             }
@@ -1274,7 +1274,7 @@ unsigned int syscall_callback(unsigned int number,
                 int ready = syscall_select_scan(nfds, in_r, in_w, &out_r, &out_w, table, &bad_fd);
                 if (ready < 0) {
                     task_set_errno(9); /* EBADF */
-                    return (unsigned int)-1;
+                    return (uintptr_t)-1;
                 }
                 if (ready > 0) {
                     if (read_mask_io != 0) {
@@ -1283,7 +1283,7 @@ unsigned int syscall_callback(unsigned int number,
                     if (write_mask_io != 0) {
                         *write_mask_io = out_w;
                     }
-                    return (unsigned int)ready;
+                    return (uintptr_t)ready;
                 }
 
                 if (timeout_ms == 0U) {
@@ -1313,29 +1313,29 @@ unsigned int syscall_callback(unsigned int number,
 
             if ((flags & ~SYSCALL_PIPE_NONBLOCK) != 0U) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             if (!syscall_validate_user_buffer(fds_user, sizeof(int) * 2U)) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             fdt = task_current_fd_table();
             if (fdt == 0) {
                 task_set_errno(9); /* EBADF */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             if (syscall_fd_alloc_pair(fdt, &fd0, &fd1) != 0) {
                 task_set_errno(24); /* EMFILE */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             if (pipe_create(&rd, &wr,
                             (flags & SYSCALL_PIPE_NONBLOCK) ? PIPE_FLAG_NONBLOCK : 0U) != 0) {
                 task_set_errno(12); /* ENOMEM */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
 
             rd->ref_count = 1U;
@@ -1363,11 +1363,11 @@ unsigned int syscall_callback(unsigned int number,
             rlimit_t* rl_user = (rlimit_t*)(uintptr_t)arg1;
             if ((int)arg0 != (int)RLIMIT_NOFILE) {
                 task_set_errno(22); /* EINVAL – only NOFILE supported */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (!syscall_validate_user_buffer(rl_user, sizeof(rlimit_t))) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             {
                 unsigned int soft = 0U, hard = 0U;
@@ -1383,15 +1383,15 @@ unsigned int syscall_callback(unsigned int number,
             const rlimit_t* rl_user = (const rlimit_t*)(uintptr_t)arg1;
             if ((int)arg0 != (int)RLIMIT_NOFILE) {
                 task_set_errno(22); /* EINVAL – only NOFILE supported */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (!syscall_validate_user_buffer(rl_user, sizeof(rlimit_t))) {
                 task_set_errno(14); /* EFAULT */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (task_set_fd_rlimit(rl_user->rlim_cur, rl_user->rlim_max) != 0) {
                 task_set_errno(22); /* EINVAL or EPERM */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             return 0;
         }
@@ -1415,15 +1415,15 @@ unsigned int syscall_callback(unsigned int number,
             /* arg0 = addr, arg1 = length */
             if (!task_current_is_user_mode()) {
                 task_set_errno(1);
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (!paging_address_is_user_accessible(arg0, arg1)) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             if (task_munmap(arg0, arg1) != 0) {
                 task_set_errno(22); /* EINVAL */
-                return (unsigned int)-1;
+                return (uintptr_t)-1;
             }
             return 0;
         }
@@ -1433,25 +1433,29 @@ unsigned int syscall_callback(unsigned int number,
     }
 }
 
-unsigned int syscall_invoke(unsigned int number,
-                            unsigned int arg0,
-                            unsigned int arg1,
-                            unsigned int arg2,
-                            unsigned int arg3) {
-    unsigned int result;
+uintptr_t syscall_invoke(uintptr_t number,
+                            uintptr_t arg0,
+                            uintptr_t arg1,
+                            uintptr_t arg2,
+                            uintptr_t arg3) {
+    uintptr_t result;
 
+    /* In 64-bit mode we still use int $0x80 for syscalls.
+     * Args in: RAX=number, RDI=arg0, RSI=arg1, RDX=arg2, R10=arg3.
+     * Result in RAX. */
     __asm__ volatile (
+        "mov %[a3], %%r10\n\t"
         "int $0x80"
         : "=a"(result)
-        : "a"(number), "b"(arg0), "c"(arg1), "d"(arg2), "S"(arg3)
-        : "memory"
+        : "a"(number), "D"(arg0), "S"(arg1), "d"(arg2), [a3] "r"(arg3)
+        : "memory", "rcx", "r10", "r11"
     );
 
     return result;
 }
 
 void syscall_write(const char* text) {
-    syscall_invoke(SYSCALL_WRITE, (unsigned int)text, 0, 0, 0);
+    syscall_invoke(SYSCALL_WRITE, (uintptr_t)text, 0, 0, 0);
 }
 
 unsigned int syscall_get_ticks(void) {
@@ -1471,11 +1475,11 @@ void* syscall_alloc(unsigned int size) {
 }
 
 void syscall_free(void* ptr) {
-    syscall_invoke(SYSCALL_FREE, (unsigned int)ptr, 0, 0, 0);
+    syscall_invoke(SYSCALL_FREE, (uintptr_t)ptr, 0, 0, 0);
 }
 
 void syscall_exit(int exit_code) {
-    syscall_invoke(SYSCALL_EXIT, (unsigned int)exit_code, 0, 0, 0);
+    syscall_invoke(SYSCALL_EXIT, (uintptr_t)exit_code, 0, 0, 0);
 }
 
 int syscall_fs_count(void) {
@@ -1484,81 +1488,81 @@ int syscall_fs_count(void) {
 
 int syscall_fs_name(int index, char* buffer, unsigned int buffer_size) {
     return (int)syscall_invoke(SYSCALL_FS_NAME_COPY,
-                               (unsigned int)index,
-                               (unsigned int)buffer,
+                               (uintptr_t)index,
+                               (uintptr_t)buffer,
                                buffer_size,
                                0);
 }
 
 int syscall_fs_read(const char* name, char* buffer, unsigned int buffer_size) {
     return (int)syscall_invoke(SYSCALL_FS_READ,
-                               (unsigned int)name,
-                               (unsigned int)buffer,
+                               (uintptr_t)name,
+                               (uintptr_t)buffer,
                                buffer_size,
                                0);
 }
 
 unsigned int syscall_fs_size(const char* name) {
-    return syscall_invoke(SYSCALL_FS_SIZE, (unsigned int)name, 0, 0, 0);
+    return syscall_invoke(SYSCALL_FS_SIZE, (uintptr_t)name, 0, 0, 0);
 }
 
 int syscall_vfs_open(const char* path) {
     return (int)syscall_invoke(SYSCALL_VFS_OPEN,
-                               (unsigned int)path,
+                               (uintptr_t)path,
                                VFS_O_RDWR,
                                0, 0);
 }
 
 int syscall_vfs_open_flags(const char* path, unsigned int open_flags) {
     return (int)syscall_invoke(SYSCALL_VFS_OPEN,
-                               (unsigned int)path,
+                               (uintptr_t)path,
                                open_flags,
                                0, 0);
 }
 
 void syscall_vfs_close(int fd) {
-    syscall_invoke(SYSCALL_VFS_CLOSE, (unsigned int)fd, 0, 0, 0);
+    syscall_invoke(SYSCALL_VFS_CLOSE, (uintptr_t)fd, 0, 0, 0);
 }
 
 int syscall_vfs_read(int fd, unsigned char* buf, unsigned int size) {
     return (int)syscall_invoke(SYSCALL_VFS_READ,
-                               (unsigned int)fd,
-                               (unsigned int)buf,
+                               (uintptr_t)fd,
+                               (uintptr_t)buf,
                                size, 0);
 }
 
 int syscall_vfs_write(int fd, const unsigned char* buf, unsigned int size) {
     return (int)syscall_invoke(SYSCALL_VFS_WRITE,
-                               (unsigned int)fd,
-                               (unsigned int)buf,
+                               (uintptr_t)fd,
+                               (uintptr_t)buf,
                                size, 0);
 }
 
 int syscall_vfs_seek(int fd, int offset, int whence) {
     return (int)syscall_invoke(SYSCALL_VFS_SEEK,
-                               (unsigned int)fd,
-                               (unsigned int)offset,
-                               (unsigned int)whence, 0);
+                               (uintptr_t)fd,
+                               (uintptr_t)offset,
+                               (uintptr_t)whence, 0);
 }
 
 int syscall_vfs_readdir(int fd, unsigned int index,
                         char* name_out, unsigned int name_max) {
     return (int)syscall_invoke(SYSCALL_VFS_READDIR,
-                               (unsigned int)fd,
+                               (uintptr_t)fd,
                                index,
-                               (unsigned int)name_out,
+                               (uintptr_t)name_out,
                                name_max);
 }
 
 int syscall_vfs_create(const char* path, unsigned int flags) {
     return (int)syscall_invoke(SYSCALL_VFS_CREATE,
-                               (unsigned int)path,
+                               (uintptr_t)path,
                                flags, 0, 0);
 }
 
 int syscall_vfs_delete(const char* path) {
     return (int)syscall_invoke(SYSCALL_VFS_DELETE,
-                               (unsigned int)path,
+                               (uintptr_t)path,
                                0, 0, 0);
 }
 
@@ -1567,31 +1571,31 @@ int syscall_getpid(void) {
 }
 
 int syscall_kill(int id) {
-    return (int)syscall_invoke(SYSCALL_KILL, (unsigned int)id, 0, 0, 0);
+    return (int)syscall_invoke(SYSCALL_KILL, (uintptr_t)id, 0, 0, 0);
 }
 
 int syscall_killsig(int id, int signum) {
     return (int)syscall_invoke(SYSCALL_KILLSIG,
-                               (unsigned int)id,
-                               (unsigned int)signum,
+                               (uintptr_t)id,
+                               (uintptr_t)signum,
                                0, 0);
 }
 
 void syscall_wait(int id) {
-    syscall_invoke(SYSCALL_WAIT, (unsigned int)id, 0, 0, 0);
+    syscall_invoke(SYSCALL_WAIT, (uintptr_t)id, 0, 0, 0);
 }
 
 int syscall_waitpid(int pid, int* status) {
     return (int)syscall_invoke(SYSCALL_WAITPID,
-                               (unsigned int)pid,
-                               (unsigned int)(uintptr_t)status,
+                               (uintptr_t)pid,
+                               (uintptr_t)status,
                                0, 0);
 }
 
 int syscall_exec(const char* path, int foreground) {
     return (int)syscall_invoke(SYSCALL_EXEC,
-                               (unsigned int)path,
-                               (unsigned int)foreground,
+                               (uintptr_t)path,
+                               (uintptr_t)foreground,
                                0, 0);
 }
 
@@ -1606,27 +1610,27 @@ int syscall_fork(void) {
 int syscall_execv(const char* path, int foreground,
                   const char* const* argv, int argc) {
     return (int)syscall_invoke(SYSCALL_EXECV,
-                               (unsigned int)path,
-                               (unsigned int)foreground,
-                               (unsigned int)argv,
-                               (unsigned int)argc);
+                               (uintptr_t)path,
+                               (uintptr_t)foreground,
+                               (uintptr_t)argv,
+                               (uintptr_t)argc);
 }
 
 int syscall_execve(const char* path,
                    const char* const* argv,
                    const char* const* envp) {
     return (int)syscall_invoke(SYSCALL_EXECVE,
-                               (unsigned int)path,
-                               (unsigned int)argv,
-                               (unsigned int)envp,
+                               (uintptr_t)path,
+                               (uintptr_t)argv,
+                               (uintptr_t)envp,
                                0);
 }
 
 sys_signal_handler_t syscall_signal(int signum, sys_signal_handler_t handler) {
     return (sys_signal_handler_t)(uintptr_t)
         syscall_invoke(SYSCALL_SIGNAL,
-                       (unsigned int)signum,
-                       (unsigned int)(uintptr_t)handler,
+                       (uintptr_t)signum,
+                       (uintptr_t)handler,
                        0, 0);
 }
 
@@ -1638,13 +1642,13 @@ int syscall_sigprocmask(unsigned int how, unsigned int mask, unsigned int* old_m
     return (int)syscall_invoke(SYSCALL_SIGPROCMASK,
                                how,
                                mask,
-                               (unsigned int)(uintptr_t)old_mask_out,
+                               (uintptr_t)old_mask_out,
                                0);
 }
 
 int syscall_get_time(void* rtc_time_buf) {
     return (int)syscall_invoke(SYSCALL_GET_TIME,
-                               (unsigned int)(uintptr_t)rtc_time_buf,
+                               (uintptr_t)rtc_time_buf,
                                0, 0, 0);
 }
 
@@ -1654,7 +1658,7 @@ unsigned int syscall_get_monotonic_ms(void) {
 
 int syscall_poll(syscall_pollfd_t* pfds, unsigned int nfds, unsigned int timeout_ms) {
     return (int)syscall_invoke(SYSCALL_POLL,
-                               (unsigned int)(uintptr_t)pfds,
+                               (uintptr_t)pfds,
                                nfds,
                                timeout_ms,
                                0);
@@ -1666,30 +1670,30 @@ int syscall_select(unsigned int nfds,
                    unsigned int timeout_ms) {
     return (int)syscall_invoke(SYSCALL_SELECT,
                                nfds,
-                               (unsigned int)(uintptr_t)read_mask_io,
-                               (unsigned int)(uintptr_t)write_mask_io,
+                               (uintptr_t)read_mask_io,
+                               (uintptr_t)write_mask_io,
                                timeout_ms);
 }
 
 int syscall_pipe(int fds_out[2], unsigned int flags) {
     return (int)syscall_invoke(SYSCALL_PIPE,
-                               (unsigned int)(uintptr_t)fds_out,
+                               (uintptr_t)fds_out,
                                flags,
                                0,
                                0);
 }
 int syscall_getrlimit(int resource, rlimit_t* rl) {
     return (int)syscall_invoke(SYSCALL_GETRLIMIT,
-                               (unsigned int)resource,
-                               (unsigned int)(uintptr_t)rl,
+                               (uintptr_t)resource,
+                               (uintptr_t)rl,
                                0,
                                0);
 }
 
 int syscall_setrlimit(int resource, const rlimit_t* rl) {
     return (int)syscall_invoke(SYSCALL_SETRLIMIT,
-                               (unsigned int)resource,
-                               (unsigned int)(uintptr_t)rl,
+                               (uintptr_t)resource,
+                               (uintptr_t)rl,
                                0,
                                0);
 }
@@ -1720,7 +1724,7 @@ int syscall_setgid(unsigned int gid) {
 
 int syscall_vfs_chown(const char* path, unsigned int uid, unsigned int gid) {
     return (int)syscall_invoke(SYSCALL_VFS_CHOWN,
-                               (unsigned int)(uintptr_t)path,
+                               (uintptr_t)path,
                                uid,
                                gid,
                                0);
@@ -1728,24 +1732,24 @@ int syscall_vfs_chown(const char* path, unsigned int uid, unsigned int gid) {
 
 int syscall_vfs_getowner(const char* path, unsigned int* uid_out, unsigned int* gid_out) {
     return (int)syscall_invoke(SYSCALL_VFS_GETOWNER,
-                               (unsigned int)(uintptr_t)path,
-                               (unsigned int)(uintptr_t)uid_out,
-                               (unsigned int)(uintptr_t)gid_out,
+                               (uintptr_t)path,
+                               (uintptr_t)uid_out,
+                               (uintptr_t)gid_out,
                                0);
 }
 
 int syscall_getgroups(int max_groups, unsigned int* gids_out) {
     return (int)syscall_invoke(SYSCALL_GETGROUPS,
-                               (unsigned int)max_groups,
-                               (unsigned int)(uintptr_t)gids_out,
+                               (uintptr_t)max_groups,
+                               (uintptr_t)gids_out,
                                0,
                                0);
 }
 
 int syscall_setgroups(int count, const unsigned int* gids) {
     return (int)syscall_invoke(SYSCALL_SETGROUPS,
-                               (unsigned int)count,
-                               (unsigned int)(uintptr_t)gids,
+                               (uintptr_t)count,
+                               (uintptr_t)gids,
                                0,
                                0);
 }
@@ -1759,13 +1763,13 @@ int syscall_setitimer(unsigned int value_us, unsigned int interval_us,
     return (int)syscall_invoke(SYSCALL_SETITIMER,
                                value_us,
                                interval_us,
-                               (unsigned int)(uintptr_t)old_out,
+                               (uintptr_t)old_out,
                                0);
 }
 
 int syscall_getitimer(syscall_itimerval_t* out) {
     return (int)syscall_invoke(SYSCALL_GETITIMER,
-                               (unsigned int)(uintptr_t)out,
+                               (uintptr_t)out,
                                0, 0, 0);
 }
 
@@ -1775,19 +1779,19 @@ int syscall_shm_create(unsigned int size) {
 
 void* syscall_shm_attach(int segment_id) {
     return (void*)(uintptr_t)syscall_invoke(SYSCALL_SHM_ATTACH,
-                                            (unsigned int)segment_id,
+                                            (uintptr_t)segment_id,
                                             0U, 0U, 0U);
 }
 
 int syscall_shm_detach(void* address) {
     return (int)syscall_invoke(SYSCALL_SHM_DETACH,
-                               (unsigned int)(uintptr_t)address,
+                               (uintptr_t)address,
                                0U, 0U, 0U);
 }
 
 int syscall_shm_unlink(int segment_id) {
     return (int)syscall_invoke(SYSCALL_SHM_UNLINK,
-                               (unsigned int)segment_id,
+                               (uintptr_t)segment_id,
                                0U, 0U, 0U);
 }
 
@@ -1797,7 +1801,7 @@ int syscall_mq_create(unsigned int max_messages, unsigned int msg_size) {
 
 int syscall_mq_open(int queue_id, unsigned int open_flags) {
     return (int)syscall_invoke(SYSCALL_MQ_OPEN,
-                               (unsigned int)queue_id,
+                               (uintptr_t)queue_id,
                                open_flags,
                                0U,
                                0U);
@@ -1805,39 +1809,39 @@ int syscall_mq_open(int queue_id, unsigned int open_flags) {
 
 int syscall_mq_send(int queue_id, const void* message, unsigned int size) {
     return (int)syscall_invoke(SYSCALL_MQ_SEND,
-                               (unsigned int)queue_id,
-                               (unsigned int)(uintptr_t)message,
+                               (uintptr_t)queue_id,
+                               (uintptr_t)message,
                                size,
                                0U);
 }
 
 int syscall_mq_send_timed(int queue_id, const void* message, unsigned int size, unsigned int timeout_ms) {
     return (int)syscall_invoke(SYSCALL_MQ_SEND_TIMED,
-                               (unsigned int)queue_id,
-                               (unsigned int)(uintptr_t)message,
+                               (uintptr_t)queue_id,
+                               (uintptr_t)message,
                                size,
                                timeout_ms);
 }
 
 int syscall_mq_recv(int queue_id, void* buffer, unsigned int buffer_size, unsigned int* received_size_out) {
     return (int)syscall_invoke(SYSCALL_MQ_RECV,
-                               (unsigned int)queue_id,
-                               (unsigned int)(uintptr_t)buffer,
+                               (uintptr_t)queue_id,
+                               (uintptr_t)buffer,
                                buffer_size,
-                               (unsigned int)(uintptr_t)received_size_out);
+                               (uintptr_t)received_size_out);
 }
 
 int syscall_mq_recv_timed(int queue_id, void* buffer, unsigned int buffer_size, unsigned int timeout_ms) {
     return (int)syscall_invoke(SYSCALL_MQ_RECV_TIMED,
-                               (unsigned int)queue_id,
-                               (unsigned int)(uintptr_t)buffer,
+                               (uintptr_t)queue_id,
+                               (uintptr_t)buffer,
                                buffer_size,
                                timeout_ms);
 }
 
 int syscall_mq_unlink(int queue_id) {
     return (int)syscall_invoke(SYSCALL_MQ_UNLINK,
-                               (unsigned int)queue_id,
+                               (uintptr_t)queue_id,
                                0U, 0U, 0U);
 }
 
@@ -1848,6 +1852,6 @@ void* syscall_mmap(unsigned int length, unsigned int flags) {
 
 int syscall_munmap(void* addr, unsigned int length) {
     return (int)syscall_invoke(SYSCALL_MUNMAP,
-                               (unsigned int)(uintptr_t)addr,
+                               (uintptr_t)addr,
                                length, 0U, 0U);
 }

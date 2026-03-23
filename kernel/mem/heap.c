@@ -27,8 +27,8 @@ typedef struct heap_block {
 } heap_block_t;
 
 typedef struct {
-    uint32_t phys_addr;
-    uint32_t size;
+    uintptr_t phys_addr;
+    uintptr_t size;
 } heap_region_t;
 
 static heap_block_t* heap_head = 0;
@@ -76,7 +76,7 @@ static void coalesce_blocks(void) {
 }
 
 /* Add a new memory region to the heap free list */
-static int heap_add_region(uint32_t phys, uint32_t size) {
+static int heap_add_region(uintptr_t phys, uintptr_t size) {
     heap_block_t* new_block;
     heap_block_t* last;
 
@@ -88,7 +88,7 @@ static int heap_add_region(uint32_t phys, uint32_t size) {
     regions[region_count].size = size;
     region_count++;
 
-    new_block = (heap_block_t*)(uint32_t)phys;
+    new_block = (heap_block_t*)phys;
     new_block->magic = HEAP_BLOCK_MAGIC;
     new_block->size = size - sizeof(heap_block_t);
     new_block->free = 1;
@@ -114,13 +114,13 @@ static int heap_add_region(uint32_t phys, uint32_t size) {
 
 /* Try to grow the heap by allocating more physical memory */
 static int heap_grow(void) {
-    uint32_t phys = physmem_alloc_region(HEAP_GROW_SIZE, 4096);
+    uintptr_t phys = (uintptr_t)physmem_alloc_region(HEAP_GROW_SIZE, 4096);
     if (!phys) return 0;
     return heap_add_region(phys, HEAP_GROW_SIZE);
 }
 
 void heap_init(void) {
-    uint32_t phys;
+    uintptr_t phys;
 
     heap_head = 0;
     region_count = 0;
@@ -152,7 +152,7 @@ void* kmalloc(unsigned int size) {
 
     size = align_up(size);
 
-    uint32_t flags = spinlock_acquire_irqsave(&heap_lock);
+    uint64_t flags = spinlock_acquire_irqsave(&heap_lock);
 
     /* First-fit search */
     block = heap_head;
@@ -199,7 +199,7 @@ void kfree(void* ptr) {
         return;
     }
 
-    uint32_t flags = spinlock_acquire_irqsave(&heap_lock);
+    uint64_t flags = spinlock_acquire_irqsave(&heap_lock);
     block = ((heap_block_t*)ptr) - 1;
 
     if (block->magic != HEAP_BLOCK_MAGIC) {
@@ -224,7 +224,7 @@ void heap_get_stats(heap_stats_t* stats) {
         return;
     }
 
-    uint32_t flags = spinlock_acquire_irqsave(&heap_lock);
+    uint64_t flags = spinlock_acquire_irqsave(&heap_lock);
     block = heap_head;
     while (block != 0) {
         blocks++;
