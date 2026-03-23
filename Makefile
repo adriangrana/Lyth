@@ -24,8 +24,13 @@ QEMU_NET = -netdev user,id=net0 -device e1000,netdev=net0
 QEMU_FLAGS = -boot d -cdrom $(ISO_IMAGE) -m 128 -no-reboot -no-shutdown -vga std -display $(QEMU_DISPLAY) $(QEMU_NET)
 DISK_IMG  ?= disk.img
 AUTOTEST_ISO_IMAGE = $(DIST_DIR)/lyth-autotest.iso
+EFI_BOOT  = arch/x86/boot/efi/bootx64.efi
+EFI_IMG   = $(BUILD_DIR)/efi.img
+OVMF_CODE ?= /usr/share/OVMF/OVMF_CODE_4M.fd
+OVMF_VARS ?= /usr/share/OVMF/OVMF_VARS_4M.fd
+OVMF_VARS_LOCAL = $(BUILD_DIR)/OVMF_VARS_4M.fd
 
-.PHONY: help compile create-iso create-autotest-iso execute debug gdb-wait gdb-connect clean run disk-create disk-fat16 disk-fat32 harness-serial harness-image repro-check
+.PHONY: help compile create-iso create-autotest-iso execute execute-uefi debug gdb-wait gdb-connect clean run disk-create disk-fat16 disk-fat32 harness-serial harness-image repro-check
 
 BOOT_OBJ = $(BUILD_DIR)/boot.o
 GDT_ASM_OBJ = $(BUILD_DIR)/gdt_asm.o
@@ -220,17 +225,44 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(AS) --64 arch/x86/boot/ap_trampoline64.s -o $(AP_TRAMP_OBJ)
 	$(LD) $(LDFLAGS) -o $(KERNEL_BIN) $(OBJS)
 
-create-iso: compile $(DIST_DIR) ## genera dist/lyth.iso lista para arrancar con GRUB
+create-iso: compile $(DIST_DIR) ## genera dist/lyth.iso lista para arrancar con GRUB (BIOS + UEFI)
 	rm -rf $(ISO_DIR) $(ISO_IMAGE)
 	mkdir -p $(ISO_DIR)/boot/grub
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.bin
 	cp $(GRUB_CFG) $(ISO_DIR)/boot/grub/grub.cfg
+	@if [ -f "$(EFI_BOOT)" ]; then \
+		echo "[iso] Hybrid BIOS + UEFI"; \
+		dd if=/dev/zero of=$(EFI_IMG) bs=1K count=1440 2>/dev/null; \
+		mkfs.vfat -F 12 $(EFI_IMG) >/dev/null 2>&1; \
+		mmd -i $(EFI_IMG) ::/EFI ::/EFI/BOOT ::/boot ::/boot/grub; \
+		mcopy -i $(EFI_IMG) $(EFI_BOOT) ::/EFI/BOOT/BOOTX64.EFI; \
+		mcopy -i $(EFI_IMG) $(GRUB_CFG) ::/boot/grub/grub.cfg; \
+		cp $(EFI_IMG) $(ISO_DIR)/boot/efi.img; \
+	else \
+		echo "[iso] BIOS only (no EFI bootloader found)"; \
+	fi
 	find $(ISO_DIR) -exec touch -h -d "@$(SOURCE_DATE_EPOCH)" {} +
 	$(GRUB_MKRESCUE) -o $(ISO_IMAGE) $(ISO_DIR) -- \
 		-volume_date c $(ISO_VOLUME_DATE) \
 		-volume_date m $(ISO_VOLUME_DATE) \
 		-volume_date uuid $(ISO_VOLUME_DATE) \
 		-alter_date_r m $(ISO_VOLUME_DATE) /
+	@if [ -f "$(EFI_BOOT)" ]; then \
+		xorriso \
+			-indev $(ISO_IMAGE) -outdev $(ISO_IMAGE).tmp \
+			-boot_image grub bin_path=boot/grub/i386-pc/eltorito.img \
+			-boot_image grub grub2_boot_info=on \
+			-boot_image any emul_type=no_emulation \
+			-boot_image any boot_info_table=on \
+			-boot_image any load_size=2048 \
+			-boot_image any next \
+			-boot_image any efi_path=boot/efi.img \
+			-boot_image any platform_id=0xEF \
+			-boot_image any emul_type=no_emulation \
+			-alter_date m 202603231200 /boot/efi.img -- \
+			-commit && mv $(ISO_IMAGE).tmp $(ISO_IMAGE) && echo "[iso] EFI boot entry added" \
+			|| echo "[iso] WARN: could not add EFI boot entry"; \
+	fi
 
 create-autotest-iso: AUTOTEST=1
 create-autotest-iso: compile $(DIST_DIR) ## genera dist/lyth-autotest.iso con autotest userland embebido
@@ -238,21 +270,52 @@ create-autotest-iso: compile $(DIST_DIR) ## genera dist/lyth-autotest.iso con au
 	mkdir -p $(ISO_DIR)/boot/grub
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.bin
 	cp $(GRUB_CFG) $(ISO_DIR)/boot/grub/grub.cfg
+	@if [ -f "$(EFI_BOOT)" ]; then \
+		dd if=/dev/zero of=$(EFI_IMG) bs=1K count=1440 2>/dev/null; \
+		mkfs.vfat -F 12 $(EFI_IMG) >/dev/null 2>&1; \
+		mmd -i $(EFI_IMG) ::/EFI ::/EFI/BOOT ::/boot ::/boot/grub; \
+		mcopy -i $(EFI_IMG) $(EFI_BOOT) ::/EFI/BOOT/BOOTX64.EFI; \
+		mcopy -i $(EFI_IMG) $(GRUB_CFG) ::/boot/grub/grub.cfg; \
+		cp $(EFI_IMG) $(ISO_DIR)/boot/efi.img; \
+	fi
 	find $(ISO_DIR) -exec touch -h -d "@$(SOURCE_DATE_EPOCH)" {} +
 	$(GRUB_MKRESCUE) -o $(AUTOTEST_ISO_IMAGE) $(ISO_DIR) -- \
 		-volume_date c $(ISO_VOLUME_DATE) \
 		-volume_date m $(ISO_VOLUME_DATE) \
 		-volume_date uuid $(ISO_VOLUME_DATE) \
 		-alter_date_r m $(ISO_VOLUME_DATE) /
+	@if [ -f "$(EFI_BOOT)" ]; then \
+		xorriso \
+			-indev $(AUTOTEST_ISO_IMAGE) -outdev $(AUTOTEST_ISO_IMAGE).tmp \
+			-boot_image grub bin_path=boot/grub/i386-pc/eltorito.img \
+			-boot_image grub grub2_boot_info=on \
+			-boot_image any emul_type=no_emulation \
+			-boot_image any boot_info_table=on \
+			-boot_image any load_size=2048 \
+			-boot_image any next \
+			-boot_image any efi_path=boot/efi.img \
+			-boot_image any platform_id=0xEF \
+			-boot_image any emul_type=no_emulation \
+			-alter_date m 202603231200 /boot/efi.img -- \
+			-commit && mv $(AUTOTEST_ISO_IMAGE).tmp $(AUTOTEST_ISO_IMAGE) && echo "[iso] EFI boot entry added" \
+			|| echo "[iso] WARN: could not add EFI boot entry"; \
+	fi
 
 execute: create-iso ## arranca la ISO actual en QEMU con cursor del host oculto
-	$(QEMU) $(QEMU_FLAGS) $(shell [ -f "$(DISK_IMG)" ] && echo "-hda $(DISK_IMG)")
+	$(QEMU) $(QEMU_FLAGS) $(shell [ -f "$(DISK_IMG)" ] && echo "-drive file=$(DISK_IMG),format=raw,index=0,media=disk")
+
+execute-uefi: create-iso ## arranca la ISO en QEMU con firmware UEFI (OVMF)
+	cp -n $(OVMF_VARS) $(OVMF_VARS_LOCAL) 2>/dev/null || true
+	$(QEMU) $(QEMU_FLAGS) \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(OVMF_VARS_LOCAL) \
+		$(shell [ -f "$(DISK_IMG)" ] && echo "-drive file=$(DISK_IMG),format=raw,index=0,media=disk")
 
 debug: create-iso ## arranca QEMU con trazas de interrupciones (-d int)
-	$(QEMU) $(QEMU_FLAGS) $(shell [ -f "$(DISK_IMG)" ] && echo "-hda $(DISK_IMG)") -d int
+	$(QEMU) $(QEMU_FLAGS) $(shell [ -f "$(DISK_IMG)" ] && echo "-drive file=$(DISK_IMG),format=raw,index=0,media=disk") -d int
 
 gdb-wait: create-iso ## arranca QEMU congelado y expone GDB remoto en localhost:1234
-	$(QEMU) $(QEMU_FLAGS) $(shell [ -f "$(DISK_IMG)" ] && echo "-hda $(DISK_IMG)") -s -S
+	$(QEMU) $(QEMU_FLAGS) $(shell [ -f "$(DISK_IMG)" ] && echo "-drive file=$(DISK_IMG),format=raw,index=0,media=disk") -s -S
 
 gdb-connect: ## imprime el comando GDB recomendado para conectarse al kernel
 	@echo gdb -ex "target remote localhost:$(GDB_PORT)" -ex "symbol-file $(KERNEL_BIN)"

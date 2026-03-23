@@ -14,6 +14,7 @@ Subsistemas principales y sus archivos:
 | Subsistema | Archivos principales |
 |---|---|
 | Arranque | `arch/x86/boot/boot64.s`, `arch/x86/boot/grub.cfg` |
+| Arranque UEFI | `arch/x86/boot/efi/bootx64.efi` (GRUB EFI) |
 | Kernel init | `kernel/kernel.c` |
 | GDT / TSS | `kernel/gdt.c`, `arch/x86/gdt64.s` |
 | IDT / PIC / PIT | `kernel/idt.c`, `kernel/interrupts.c`, `arch/x86/interrupts64.s` |
@@ -50,7 +51,15 @@ Subsistemas principales y sus archivos:
 
 ## Flujo de arranque
 
-1. GRUB carga el kernel con Multiboot. `boot64.s` solicita modo gráfico `1024×768×32`, activa long mode (paginación de 4 niveles) y salta a `kernel_main()`.
+### BIOS (legacy)
+1. GRUB carga el kernel con Multiboot desde el El Torito boot catalog (eltorito.img). `boot64.s` solicita modo gráfico `1024×768×32`, activa long mode (paginación de 4 niveles) y salta a `kernel_main()`.
+
+### UEFI
+1. OVMF (u otro firmware UEFI) localiza la entrada El Torito EFI en la ISO, monta el `efi.img` FAT y ejecuta `/EFI/BOOT/BOOTX64.EFI` (GRUB EFI).
+2. GRUB EFI usa `search --file /boot/kernel.bin` para localizar el volumen de la ISO, carga el kernel con `multiboot` y transfiere el control.
+3. GRUB sale de EFI Boot Services, conmuta a modo protegido 32-bit y entra en el entry point del kernel — el mismo código que en BIOS.
+
+### Común (post-GRUB)
 2. `kernel_main()` inicializa en orden: GDT + TSS (64-bit), consola (detecta framebuffer 16/24/32 bpp o VGA), memoria física (bitmap Multiboot), heap, VFS (monta ramfs en `/`), ugdb (usuarios/grupos), scheduler.
 3. `ata_init()` detecta unidades ATA; `ahci_init()` detecta controladores AHCI/SATA vía PCI; `blkdev` escanea MBR/GPT; las particiones FAT16/FAT32 se montan automáticamente.
 4. `acpi_init()` busca el RSDP (EBDA + ROM BIOS), valida el RSDT y parsea la tabla MADT para obtener la dirección del Local APIC, las entradas IOAPIC y los Interrupt Source Overrides. También parsea la FADT para obtener los puertos PM1a/PM1b (shutdown) y el reset register (reboot).
@@ -452,9 +461,10 @@ Capa de abstracción sobre ATA. Al registrar una unidad:
 | Target | Descripción |
 |---|---|
 | `make compile` | Compila todos los `.c`/`.s` y enlaza `build/kernel.bin` |
-| `make create-iso` | Genera `dist/lyth.iso` con `grub-mkrescue` |
+| `make create-iso` | Genera `dist/lyth.iso` híbrida BIOS + UEFI |
 | `make create-autotest-iso` | Genera `dist/lyth-autotest.iso` con `AUTOTEST=1` y script de prueba embebido |
-| `make execute` | Arranca la ISO en QEMU (SDL, cursor host oculto) |
+| `make execute` | Arranca la ISO en QEMU (BIOS, SDL, cursor host oculto) |
+| `make execute-uefi` | Arranca la ISO en QEMU con firmware OVMF (UEFI) |
 | `make run` | `clean` + `compile` + `create-iso` + `execute` |
 | `make debug` | Como `execute` pero con `-d int` en QEMU |
 | `make gdb-wait` | Arranca QEMU congelado con GDB stub en `localhost:1234` |

@@ -7,7 +7,7 @@
 - [x] Stack inicial
 - [x] ACPI (MADT, LAPIC/IOAPIC discovery, FADT shutdown/reboot)
 - [x] Soporte hardware real (AHCI/SATA, ACPI power, framebuffer flexible)
-- [ ] UEFI
+- [x] UEFI (arranque híbrido BIOS + UEFI via GRUB EFI)
 - [x] SMP (multicore)
 
 ## 2. Consola y salida

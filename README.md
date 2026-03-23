@@ -12,6 +12,7 @@ Lyth OS cubre los subsistemas clásicos de un kernel real: arranque, gestión de
 
 ### Arranque y arquitectura
 - Arranque Multiboot con GRUB, solicita modo gráfico `1024×768×32` con fallback a VGA
+- **ISO híbrida BIOS + UEFI**: boot legacy vía El Torito, boot UEFI vía GRUB EFI (`BOOTX64.EFI`)
 - Kernel ELF64 x86_64 en long mode con paginación de 4 niveles (PML4), GDT de 64 bits y TSS
 - SMP: detección de CPUs vía MADT, boot de APs con INIT/SIPI, GDT/TSS per-CPU
 - ACPI: MADT (APIC/IOAPIC), FADT (shutdown, reboot), parseo de DSDT para S5 sleep type
@@ -95,7 +96,8 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 | `binutils` (`as`, `ld`) | Ensamblar y enlazar |
 | `grub-mkrescue` + `xorriso` | Generar la ISO booteable |
 | `qemu-system-x86_64` | Ejecutar la ISO |
-| `mtools` *(opcional)* | Crear imágenes de disco FAT para probar el driver ATA |
+| `ovmf` *(opcional)* | Firmware UEFI para `make execute-uefi` |
+| `mtools` *(opcional)* | Crear imágenes de disco FAT y la imagen EFI |
 
 ---
 
@@ -168,8 +170,9 @@ make run
 
 # Pasos individuales
 make compile        # solo compilar
-make create-iso     # generar dist/lyth.iso
-make execute        # arrancar la ISO en QEMU
+make create-iso     # generar dist/lyth.iso (híbrida BIOS + UEFI)
+make execute        # arrancar la ISO en QEMU (BIOS)
+make execute-uefi   # arrancar la ISO en QEMU con OVMF (UEFI)
 
 # Con trazas de interrupciones
 make debug
