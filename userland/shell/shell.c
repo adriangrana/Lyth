@@ -40,6 +40,7 @@
 #include "acpi.h"
 #include "serial.h"
 #include "video.h"
+#include "xhci.h"
 
 #define SHELL_MAX_ARGS 8
 #define SHELL_TOKEN_MAX 64
@@ -1024,6 +1025,33 @@ static void shell_print_banner(void) {
         }
         vfs_close(fd);
     }
+    /* Show detected devices */
+    shell_print_text_with_color("Dispositivos: ", current_theme_hint_color);
+    {
+        int found = 0;
+        if (xhci_is_enabled()) {
+            xhci_controller_t* ctrl = xhci_get_controller();
+            if (ctrl) {
+                for (int i = 0; i < ctrl->device_count; i++) {
+                    if (ctrl->devices[i].is_hid_keyboard) {
+                        if (found) terminal_print(", ");
+                        shell_print_text_with_color("USB teclado", 0x0A);
+                        found++;
+                    }
+                    if (ctrl->devices[i].is_hid_mouse) {
+                        if (found) terminal_print(", ");
+                        shell_print_text_with_color("USB raton", 0x0A);
+                        found++;
+                    }
+                }
+            }
+        }
+        if (!found) {
+            shell_print_text_with_color("PS/2 teclado", 0x0A);
+        }
+        terminal_print("\n");
+    }
+
     shell_print_text_with_color("Escribe 'help' para ver comandos.\n", current_theme_hint_color);
     terminal_print_line("");
 }

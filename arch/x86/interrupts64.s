@@ -52,6 +52,7 @@
 .global irq11_stub
 .global irq12_stub
 .global irq14_stub
+.global xhci_irq_stub
 .global syscall_stub
 .global apic_spurious_stub
 
@@ -60,6 +61,7 @@
 .extern keyboard_interrupt_handler
 .extern e1000_interrupt_handler
 .extern mouse_interrupt_handler
+.extern xhci_interrupt_handler_asm
 .extern syscall_interrupt_handler
 .extern ata_irq14_handler
 
@@ -224,6 +226,16 @@ irq11_stub:
     push    $43
     SAVE_ALL
     call    e1000_interrupt_handler
+    RESTORE_ALL
+    add     $16, %rsp
+    iretq
+
+/* xHCI USB controller IRQ */
+xhci_irq_stub:
+    push    $0
+    push    $48
+    SAVE_ALL
+    call    xhci_interrupt_handler_asm
     RESTORE_ALL
     add     $16, %rsp
     iretq

@@ -2,7 +2,7 @@
 #define KERNEL_VERSION_H
 
 #ifndef LYTH_KERNEL_VERSION
-#define LYTH_KERNEL_VERSION "0.5.0"
+#define LYTH_KERNEL_VERSION "0.6.0"
 #endif
 
 #define LYTH_KERNEL_NAME "Lyth OS"

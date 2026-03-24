@@ -133,6 +133,36 @@ void pci_init(void) {
 	}
 
 	klog_write(KLOG_LEVEL_INFO, "pci", "Bus PCI escaneado");
+
+	/* Log device count to serial for debugging */
+	extern void serial_print(const char*);
+	extern void serial_print_uint(unsigned int);
+	extern void serial_print_hex(unsigned int);
+	serial_print("[pci] Devices found: ");
+	serial_print_uint(device_count);
+	serial_print("\n");
+	for (int i = 0; i < device_count; i++) {
+		pci_device_t* p = &devices[i];
+		serial_print("[pci]  ");
+		serial_print_uint(p->bus);
+		serial_print(":");
+		serial_print_uint(p->slot);
+		serial_print(".");
+		serial_print_uint(p->func);
+		serial_print(" class=");
+		serial_print_hex((uint32_t)p->class_code);
+		serial_print("/");
+		serial_print_hex((uint32_t)p->subclass);
+		serial_print("/");
+		serial_print_hex((uint32_t)p->prog_if);
+		serial_print(" VID=");
+		serial_print_hex(p->vendor_id);
+		serial_print(" DID=");
+		serial_print_hex(p->device_id);
+		serial_print(" BAR0=");
+		serial_print_hex(p->bar[0]);
+		serial_print("\n");
+	}
 }
 
 int pci_device_count(void) {

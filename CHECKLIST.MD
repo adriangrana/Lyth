@@ -21,15 +21,15 @@
 ## 3. Interrupciones y tiempo
 - [x] IDT / PIC
 - [x] APIC / IOAPIC (ruteo dinámico al BSP real)
-- [x] HPET
+- [x] HPET (High Precision Event Timer)
 - [x] Timers por proceso
 - [x] RTC / reloj del sistema
 - [x] sleep por syscall
 - [x] Fuente de tiempo monotónica
 
 ## 4. Input
-- [x] Teclado completo
-- [x] Ratón
+- [x] Teclado completo (PS/2 + USB)
+- [x] Ratón (PS/2 + USB)
 - [x] Sistema de input unificado
 
 ## 5. Shell
@@ -143,8 +143,8 @@
 - [x] AHCI/SATA (DMA, LBA48)
 - [x] Capa de dispositivo de bloques
 - [x] Disco
-- [ ] USB
-- [ ] Video
+- [x] USB (xHCI host controller + hubs + HID boot protocol)
+- [ ] Video (aceleración gráfica)
 - [x] Red (E1000)
 - [x] PCI
 - [x] RTC

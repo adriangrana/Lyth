@@ -39,10 +39,14 @@ typedef struct {
 	unsigned char modifiers;
 } keyboard_event_t;
 
+void keyboard_init(void);
 void keyboard_handle_interrupt(void);
 int keyboard_poll_event(keyboard_event_t* event);
 void keyboard_set_layout(keyboard_layout_t layout);
 keyboard_layout_t keyboard_get_layout(void);
 const char* keyboard_layout_name(keyboard_layout_t layout);
+
+/* Inject an event from external sources (e.g. USB HID keyboard) */
+void keyboard_inject_event(keyboard_event_type_t type, char character, unsigned char modifiers);
 
 #endif

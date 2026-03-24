@@ -7,6 +7,7 @@
 #include "interrupts.h"
 #include "input.h"
 #include "mouse.h"
+#include "keyboard.h"
 #include "heap.h"
 #include "fs.h"
 #include "vfs.h"
@@ -37,6 +38,8 @@
 #include "socket.h"
 #include "ahci.h"
 #include "video.h"
+#include "xhci.h"
+#include "usb_hid.h"
 #include "paging.h"
 
 /* from lib/string.c — avoid including string.h (size_t conflict) */
@@ -217,6 +220,7 @@ void kernel_main(unsigned long mbi_ptr) {
     print_framebuffer_info();
     print_memory_info();
 
+    keyboard_init();
     mouse_init();
     if (fb_active() && mouse_is_enabled()) {
         mouse_get_state(&mouse_state);
@@ -249,10 +253,35 @@ void kernel_main(unsigned long mbi_ptr) {
     terminal_print("Init: PCI...");
     serial_print("[boot] pci_init...\n");
     pci_init();
+    /* Show PCI count on screen for debug */
+    terminal_print("(");
+    {
+        char tmp[8];
+        int cnt = pci_device_count();
+        int pos = 0;
+        if (cnt == 0) { tmp[pos++] = '0'; }
+        else {
+            int d = 100;
+            int started = 0;
+            while (d > 0) {
+                int digit = cnt / d;
+                if (digit || started) { tmp[pos++] = '0' + digit; started = 1; }
+                cnt %= d;
+                d /= 10;
+            }
+        }
+        tmp[pos] = 0;
+        terminal_print(tmp);
+    }
+    terminal_print(")");
     terminal_print(" NET...");
     serial_print("[boot] net/e1000_init...\n");
     net_init();
     e1000_init();
+    terminal_print(" USB...");
+    serial_print("[boot] xhci_init...\n");
+    xhci_init();
+    usb_hid_init();
     terminal_print_line(" OK");
     klog_write(KLOG_LEVEL_INFO, "net",  "Stack de red inicializado");
 
@@ -340,7 +369,7 @@ void kernel_main(unsigned long mbi_ptr) {
 
     /* Spawn the init task (PID 1) — owns the shell and event loop. */
     init_start();
-
+    
     while (1) {
         __asm__ __volatile__("hlt");
     }

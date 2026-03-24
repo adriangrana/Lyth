@@ -26,4 +26,7 @@ void mouse_handle_interrupt(void);
 int mouse_poll_event(mouse_event_t* event);
 void mouse_get_state(mouse_state_t* state);
 
+/* Inject a mouse event from external sources (e.g. USB HID mouse) */
+void mouse_inject_event(int dx, int dy, unsigned char buttons);
+
 #endif

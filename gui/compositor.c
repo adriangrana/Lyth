@@ -7,6 +7,7 @@
 #include "physmem.h"
 #include "string.h"
 #include "timer.h"
+#include "usb_hid.h"
 
 #define MENU_BAR_HEIGHT 22
 
@@ -899,6 +900,9 @@ void gui_run(void) {
     last_frame_ms = timer_get_uptime_ms();
 
     while (gui_running) {
+        /* Poll USB HID so keyboard/mouse events arrive */
+        usb_hid_poll();
+
         while (input_poll_event(&ev)) {
             if (ev.device_type == INPUT_DEVICE_KEYBOARD) {
                 if ((ev.type == INPUT_EVENT_CHAR && ev.character == 27) ||
@@ -921,8 +925,8 @@ void gui_run(void) {
             }
 
             if (ev.device_type == INPUT_DEVICE_MOUSE) {
-                mouse_x -= ev.delta_x;
-                mouse_y -= ev.delta_y;
+                mouse_x += ev.delta_x;
+                mouse_y += ev.delta_y;
 
                 if (mouse_x < 0) mouse_x = 0;
                 if (mouse_y < 0) mouse_y = 0;

@@ -30,6 +30,7 @@ Lyth OS cubre los subsistemas clásicos de un kernel real: arranque, gestión de
 ### Entrada
 - Driver de teclado PS/2 con layouts `us` / `es`, `AltGr`, `Caps Lock`, `Num Lock` y teclas extendidas
 - Driver de ratón PS/2 con cursor overlay en framebuffer
+- **USB HID**: teclado y ratón USB vía xHCI (boot protocol), polling asíncrono
 - Capa de eventos de entrada genérica desacoplada de la shell
 
 ### Shell interactiva
@@ -86,6 +87,9 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 
 ### Drivers y debug
 - ATA PIO (master/slave), AHCI/SATA (DMA, LBA48), RTC CMOS, serie COM1, GDB remoto integrado
+- **xHCI USB**: controlador host USB 3.x completo con soporte de hubs, enumeración recursiva y route strings
+- **USB HID**: driver de boot protocol para teclados y ratones USB con polling asíncrono, recuperación de STALL/BABBLE
+- HPET (High Precision Event Timer) para temporización de alta resolución
 - ACPI shutdown/reboot (FADT S5, reset register, fallback PS/2 + triple fault)
 - Framebuffer flexible: 16/24/32 bpp
 - Panic screen con volcado de registros y backtrace
@@ -221,6 +225,7 @@ drivers/
   input/            teclado PS/2, ratón PS/2, eventos genéricos
   video/            capa de abstracción de vídeo (framebuffer)
   disk/             driver ATA PIO, AHCI/SATA, capa blkdev (MBR/GPT)
+  usb/              xHCI host controller, USB HID (teclado/ratón)
   rtc/              reloj en tiempo real (CMOS)
   serial/           salida de debug por COM1
 fs/                 VFS, ramfs, FAT16, FAT32, devfs, pipes
@@ -243,7 +248,8 @@ tools/              scripts auxiliares
 | Discos | `disk` (read / mount / fsck / gpt), `shutdown`, `reboot` |
 | Shell | `echo`, `env`, `set`, `unset`, `source`, `history`, `repeat`, `shm`, `shmdemo`, `mq` |
 | Entrada | `keymap`, `mouse` |
-| Visual | `color`, `theme`, `gfxdemo` |
+| Red | `ping`, `ifconfig`, `netstat`, `arp`, `dhcp`, `nslookup`, `nc` |
+| Gráficos | `gui`, `color`, `theme`, `gfxdemo` |
 | Usuarios | `whoami`, `id`, `groups`, `su`, `login`, `logout`, `who`, `users` |
 | Administración | `useradd`, `userdel`, `usermod`, `groupadd`, `groupdel`, `gpasswd`, `passwd`, `ulimit` |
 | Debug | `elfinfo`, `vfs`, `disk` |

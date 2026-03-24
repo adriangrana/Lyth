@@ -502,6 +502,24 @@ void terminal_backspace(void) {
         last_blink = timer_get_ticks();
     }
 }
+void terminal_write_uint(unsigned int value) {
+    char buffer[16];
+    int index = 0;
+
+    if (value == 0) {
+        terminal_put_char('0');
+        return;
+    }
+
+    while (value > 0) {
+        buffer[index++] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+
+    while (index > 0) {
+        terminal_put_char(buffer[--index]);
+    }
+}
 
 void terminal_print(const char* str) {
     int i = 0;

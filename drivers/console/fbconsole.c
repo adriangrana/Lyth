@@ -227,21 +227,12 @@ static void fb_copy_rect_up(int x, int y, int width, int height, int delta_y) {
 
     bytes_per_pixel = fbinfo.bpp / 8;
     base = (uint8_t*)fbinfo.addr;
+    int row_bytes = width * bytes_per_pixel;
 
     for (int row = 0; row < height; row++) {
-        int src_y = y + row + delta_y;
-        int dst_y = y + row;
-
-        for (int col = 0; col < width; col++) {
-            int src_x = x + col;
-            int dst_x = x + col;
-            uint8_t* src = base + (src_y * (int)fbinfo.pitch) + (src_x * bytes_per_pixel);
-            uint8_t* dst = base + (dst_y * (int)fbinfo.pitch) + (dst_x * bytes_per_pixel);
-
-            for (int byte = 0; byte < bytes_per_pixel; byte++) {
-                dst[byte] = src[byte];
-            }
-        }
+        uint8_t* src = base + ((y + row + delta_y) * (int)fbinfo.pitch) + (x * bytes_per_pixel);
+        uint8_t* dst = base + ((y + row) * (int)fbinfo.pitch) + (x * bytes_per_pixel);
+        memmove(dst, src, row_bytes);
     }
 }
 

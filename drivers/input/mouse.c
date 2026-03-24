@@ -271,3 +271,11 @@ void mouse_get_state(mouse_state_t* state) {
 
     *state = mouse_state;
 }
+
+void mouse_inject_event(int dx, int dy, unsigned char buttons) {
+    mouse_state.x += dx;
+    mouse_state.y += dy;
+    mouse_state.buttons = buttons;
+    mouse_state.packets_received++;
+    queue_mouse_event(dx, dy, buttons);
+}

@@ -1,9 +1,84 @@
 #include "keyboard.h"
+#include "klog.h"
 
 static inline unsigned char inb(unsigned short port) {
     unsigned char result;
     __asm__ volatile ("inb %1, %0" : "=a"(result) : "Nd"(port));
     return result;
+}
+
+static inline void outb_kb(unsigned short port, unsigned char value) {
+    __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static void kb_io_wait(void) {
+    outb_kb(0x80, 0);
+}
+
+static int kb_wait_input_ready(void) {
+    for (int timeout = 0; timeout < 100000; timeout++) {
+        if ((inb(0x64) & 0x02) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int kb_wait_output_ready(void) {
+    for (int timeout = 0; timeout < 100000; timeout++) {
+        if (inb(0x64) & 0x01)
+            return 1;
+    }
+    return 0;
+}
+
+static void kb_flush_output_buffer(void) {
+    for (int i = 0; i < 32; i++) {
+        if ((inb(0x64) & 0x01) == 0)
+            return;
+        (void)inb(0x60);
+        kb_io_wait();
+    }
+}
+
+void keyboard_init(void) {
+    unsigned char config;
+
+    /* Flush any pending data from the controller */
+    kb_flush_output_buffer();
+
+    /* Enable first PS/2 port (keyboard) */
+    if (!kb_wait_input_ready()) {
+        klog_write(KLOG_LEVEL_WARN, "kbd", "Timeout habilitando puerto PS/2");
+        return;
+    }
+    outb_kb(0x64, 0xAE);   /* Enable first PS/2 port */
+    kb_io_wait();
+
+    /* Read controller configuration byte */
+    if (!kb_wait_input_ready()) return;
+    outb_kb(0x64, 0x20);   /* Read config command */
+    if (!kb_wait_output_ready()) {
+        klog_write(KLOG_LEVEL_WARN, "kbd", "No se pudo leer config i8042");
+        return;
+    }
+    config = inb(0x60);
+
+    /* Set bit 0: enable IRQ1 (keyboard interrupt)
+       Clear bit 4: enable first PS/2 port clock */
+    config |= 0x01;
+    config &= (unsigned char)~0x10;
+
+    /* Write config back */
+    if (!kb_wait_input_ready()) return;
+    outb_kb(0x64, 0x60);   /* Write config command */
+    if (!kb_wait_input_ready()) return;
+    outb_kb(0x60, config);
+    kb_io_wait();
+
+    /* Flush again after config change */
+    kb_flush_output_buffer();
+
+    klog_write(KLOG_LEVEL_INFO, "kbd", "Controlador PS/2 teclado inicializado");
 }
 
 #define KEYBOARD_EVENT_QUEUE_SIZE 256
@@ -800,4 +875,14 @@ const char* keyboard_layout_name(keyboard_layout_t layout) {
         default:
             return "us";
     }
+}
+
+void keyboard_inject_event(keyboard_event_type_t type, char character, unsigned char modifiers) {
+    int next_head = (event_head + 1) % KEYBOARD_EVENT_QUEUE_SIZE;
+    if (next_head == event_tail) return;
+
+    event_queue[event_head].type = type;
+    event_queue[event_head].character = character;
+    event_queue[event_head].modifiers = modifiers;
+    event_head = next_head;
 }

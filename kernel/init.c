@@ -19,6 +19,7 @@
 #include "terminal.h"
 #include "shell_input.h"
 #include "compositor.h"
+#include "usb_hid.h"
 
 static int init_task_pid = -1;
 
@@ -40,6 +41,9 @@ static void init_step(void) {
     if (init_task_pid > 0) {
         task_reap_zombies_for(init_task_pid);
     }
+
+    /* Poll USB HID devices for input before draining the queue. */
+    usb_hid_poll();
 
     /* Drain the input queue. */
     while (input_poll_event(&event)) {

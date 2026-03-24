@@ -21,7 +21,10 @@ Subsistemas principales y sus archivos:
 | Vídeo | `drivers/video/video.c`, `include/drivers/video/video.h` |
 | ACPI / APIC | `kernel/acpi.c`, `kernel/apic.c` |
 | SMP | `kernel/smp.c`, `arch/x86/boot/ap_trampoline64.s`, `include/kernel/spinlock.h` |
+| HPET | `drivers/hpet/hpet.c` |
 | PCI | `drivers/net/pci.c` |
+| xHCI (USB 3.x) | `drivers/usb/xhci.c`, `include/drivers/usb/xhci.h` |
+| USB HID | `drivers/usb/usb_hid.c`, `include/drivers/usb/usb_hid.h`, `include/drivers/usb/usb.h` |
 | Red (E1000) | `drivers/net/e1000.c` |
 | Stack de red | `net/ethernet.c`, `net/arp.c`, `net/ipv4.c`, `net/icmp.c`, `net/udp.c`, `net/tcp.c`, `net/socket.c`, `net/dhcp.c`, `net/dns.c` |
 | Scheduler | `kernel/task/task.c`, `kernel/task/timer.c` |
@@ -437,11 +440,122 @@ Cada tarea mantiene `uid`, `gid`, `euid`, `egid` y un array de grupos suplementa
 
 ## Entrada
 
-- **`keyboard.c`**: traduce scancodes set 1/2, layouts `us`/`es`, `AltGr`, `Caps Lock`, `Num Lock`, teclas extendidas (`Delete`, `Home`, `End`, `Page Up/Down`). Publica `keyboard_event_t` en una cola.
-- **`mouse.c`**: decodifica paquetes PS/2 de 3 bytes, mantiene posición acumulada y estado de botones.
+- **`keyboard.c`**: traduce scancodes set 1/2, layouts `us`/`es`, `AltGr`, `Caps Lock`, `Num Lock`, teclas extendidas (`Delete`, `Home`, `End`, `Page Up/Down`). Publica `keyboard_event_t` en una cola. También recibe eventos de teclados USB vía `keyboard_handle_usb_report()`.
+- **`mouse.c`**: decodifica paquetes PS/2 de 3 bytes, mantiene posición acumulada y estado de botones. También recibe eventos de ratones USB vía `mouse_handle_usb_report()`.
 - **`input.c`**: convierte eventos de teclado y ratón en `input_event_t` para consumidores desacoplados.
 
-IRQ1 (teclado) → vector 33; IRQ12 (ratón) → vector 44.
+IRQ1 (teclado) → vector 33; IRQ12 (ratón) → vector 44; xHCI → vector 48.
+
+---
+
+## USB (xHCI + HID)
+
+### Arquitectura
+
+```
+usb_hid_init() → registra dispositivos y lanza polling
+        ↓
+usb_hid_poll() ← invocado periódicamente desde el scheduler
+        ↓
+xhci_check_event() → consume Transfer Events del Event Ring
+        ↓
+process_kbd_report() / process_mouse_report() → inyecta en input subsystem
+```
+
+### xHCI Host Controller (`drivers/usb/xhci.c`)
+
+El driver xHCI implementa el estándar USB 3.x eXtensible Host Controller Interface:
+
+- **Detección PCI**: busca class `0x0C03` prog_if `0x30`. Soporta múltiples controladores (usa el primero).
+- **MMIO**: BAR0 de 64 bits mapeado con `paging_map_mmio()`.
+- **BIOS/OS Handoff**: implementa el protocolo de handoff del xHCI (bit BIOS_OWNED → OS_OWNED en capabilities extendidas).
+- **Command Ring**: anillo de 256 TRBs con ciclo bit y Link TRB.
+- **Event Ring**: anillo de 256 TRBs con ERSTe (Event Ring Segment Table Entry), ERDP cacheado e interrupter 0.
+- **DCBAA**: Device Context Base Address Array para hasta 64 slots.
+- **Scratchpad Buffers**: asignados según HCSPARAMS2.
+- **Interrupción**: IRQ PCI ruteada a vector 48 vía IOAPIC (nivel).
+
+#### Enumeración de dispositivos
+1. Escanea todos los puertos (`PORTSC`), detecta Connected (CCS).
+2. Resetea el puerto (USB2 warm reset, USB3 hot reset), obtiene velocidad.
+3. `Enable Slot` → `Address Device` (BSR=0 para dirección directa).
+4. `GET_DESCRIPTOR(DEVICE)` → identifica vendor/device, clase.
+5. `SET_CONFIGURATION` → habilita el dispositivo.
+6. Parsea el Configuration Descriptor completo: interfaces, endpoints, HID descriptors.
+7. `Configure Endpoint` con Input Context para cada Interrupt IN endpoint.
+8. Para dispositivos HID Boot: `SET_PROTOCOL(BOOT)` + `SET_IDLE(0)`.
+
+#### Soporte de Hubs USB
+- Detecta dispositivos con `bDeviceClass == 0x09` (hub).
+- `GET_HUB_DESCRIPTOR`: obtiene número de puertos downstream.
+- `SET_PORT_FEATURE(PORT_POWER)`: enciende cada puerto del hub.
+- `SET_PORT_FEATURE(PORT_RESET)` + `GET_PORT_STATUS`: resetea y obtiene estado de cada puerto conectado.
+- `Address Device` con route string calculado recursivamente (4 bits por nivel, hasta 5 niveles según spec).
+- `Evaluate Context` para marcar el slot como hub en el xHCI (Hub bit, número de puertos).
+- Enumeración recursiva: los hubs detrás de hubs se enumeran correctamente.
+
+#### Comandos soportados
+| Comando | TRB Type |
+|---|---|
+| No Op | NOOP_CMD |
+| Enable Slot | ENABLE_SLOT |
+| Address Device | ADDRESS_DEVICE |
+| Configure Endpoint | CONFIGURE_EP |
+| Evaluate Context | EVALUATE_CONTEXT |
+| Reset Endpoint | RESET_EP |
+| Set TR Dequeue Pointer | SET_TR_DEQUEUE |
+
+### USB HID (`drivers/usb/usb_hid.c`)
+
+Driver de HID Boot Protocol para teclados y ratones USB:
+
+- **Registro de dispositivos**: escanea los dispositivos xHCI enumerados, registra hasta 8 HID devices (teclados + ratones).
+- **Polling asíncrono**: `usb_hid_poll()` se invoca ~100 veces/segundo, consume Transfer Events del Event Ring sin bloquear.
+- **Boot Protocol**: reportes de 8 bytes para teclado (modifier + 6 keys), 3 bytes para ratón (buttons + dx + dy).
+- **Recuperación de errores**: STALL → Reset Endpoint + Set TR Dequeue Pointer. BABBLE → misma recuperación con buffers de tamaño correcto.
+- **Reset diferido**: las recuperaciones de endpoint se difieren fuera del bucle de eventos para no robar eventos de otros dispositivos.
+- **Integración con input**: convierte reportes HID en `keyboard_event_t` y `mouse_event_t` para la capa de eventos genérica.
+
+---
+
+## HPET (High Precision Event Timer)
+
+`drivers/hpet/hpet.c` implementa el timer HPET como fuente de temporización de alta resolución.
+
+- **Detección**: busca la tabla ACPI con firma `HPET`. Extrae la dirección base MMIO.
+- **Configuración**: lee el periodo del contador (femtosegundos por tick), habilita el contador global.
+- **API**: `hpet_read_counter()` devuelve el valor actual del contador; `hpet_delay_us()` espera microsegundos con precisión de nanosegundos.
+- **Uso**: empleado para delays precisos en la enumeración USB (port reset, power-on delays) donde el PIT (resolución de 10 ms) es demasiado grueso.
+
+---
+
+## GUI (Compositor)
+
+### Arquitectura
+
+```
+gui/compositor.c  →  Back-buffer RGB32 (1024×768×4 = 3 MB)
+        ↓
+composite()  →  desktop + ventanas + cursor
+        ↓
+flip()  →  fb_present_rgb32()  →  framebuffer hardware
+```
+
+### Compositor (`gui/compositor.c`)
+- **Back-buffer**: buffer en memoria de `width × height × 4` bytes (RGB32). Todas las operaciones de dibujo escriben aquí.
+- **Primitivas**: `bb_putpixel`, `bb_fill_rect`, `bb_hline`, `bb_fill_gradient_v`, `bb_fill_circle`, `bb_fill_rrect`, `bb_draw_char`, `bb_draw_string`.
+- **Pipeline**: cada frame ejecuta `draw_desktop()` → sort windows por z-order → `draw_window()` cada una → `draw_cursor()` → `flip()`.
+- **Cursor software**: sprite 12×18 con máscara, seguimiento de posición del ratón.
+- **Movimiento de ventanas**: drag con clic en barra de título. Caché del fondo para optimización durante drag.
+
+### Ventanas (`gui/window.c`)
+- Hasta 8 ventanas simultáneas con z-ordering.
+- Estructura: posición, tamaño, título, callback de dibujo, widgets.
+- Widgets: botones, labels, imágenes, callbacks de click.
+- Eventos: movimiento de ratón, clicks, cierre de ventana.
+
+### Presentación (`drivers/console/fbconsole.c`)
+- `fb_present_rgb32()`: copia el back-buffer al framebuffer hardware. Fast path con `memcpy` por fila para formato BGR32; conversión por pixel para otros formatos (24-bit, 16-bit).
 
 ---
 
