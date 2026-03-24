@@ -545,6 +545,8 @@ compose_frame()   →  Phase 1: re-render windows with needs_redraw
 present_dirty()   →  memcpy dirty scanlines to framebuffer (32bpp fast path)
 ```
 
+El bucle principal del compositor (`gui_run()`) tambi\u00e9n invoca `e1000_poll_rx()` en cada iteraci\u00f3n para mantener activo el stack de red (recepci\u00f3n de paquetes DHCP, ARP, DNS, ICMP, etc.).
+
 ### Per-window surfaces (`gui/window.c`)
 - Cada ventana tiene su propia `gui_surface_t` (pixel buffer respaldado por `physmem_alloc_region`).
 - El contenido solo se re-renderiza cuando `needs_redraw == 1` (ej: cambio de texto, nuevo dato).
@@ -565,15 +567,17 @@ present_dirty()   →  memcpy dirty scanlines to framebuffer (32bpp fast path)
 
 ### Escritorio (`gui/desktop.c`)
 - Superficie cacheada con gradiente de fondo + taskbar inferior.
-- Taskbar: botón "Lyth", lista de ventanas abiertas, reloj RTC actualizado cada segundo.
-- Menú de inicio con 5 entradas (Terminal, Task Manager, System Info, Network, Settings).
+- Taskbar: botón "Lyth", lista de ventanas abiertas, icono de estado de red, reloj RTC actualizado cada segundo.
+- **Icono de red**: sprite de 9×9 píxeles (forma de monitor) dibujado en verde (Ethernet conectado) o rojo (desconectado). Click abre un popup con estado, interfaz, IP y botón "Open Network Config".
+- **Menú de inicio**: 5 entradas (Terminal, Task Manager, System Info, Network, Settings); se abre con tecla Super/Windows o click en "Lyth"; navegación con flechas arriba/abajo y Enter; Escape cierra.
+- **Menú contextual**: click derecho sobre una ventana en la taskbar muestra Close, Minimize, Maximize.
 - Tema Catppuccin Mocha (`#1E1E2E` bg, `#CDD6F4` text, `#3B82F6` accent).
 
 ### Apps integradas (`gui/apps/`)
-- **Terminal** (`terminal.c`): grid 80×24, scrollback 256 líneas, comandos built-in (help, clear, uptime, mem, ps, uname, echo).
-- **Task Manager** (`taskman.c`): lista de procesos vía `task_list()`, barra de memoria.
+- **Terminal** (`terminal.c`): grid 80×24, scrollback 256 líneas, 25+ comandos built-in: gestión de archivos (ls, cat, cd, pwd, mkdir, rm, touch, cp, mv, stat, chmod), sistema (ps, kill, mem, uptime, uname, date, dmesg, env, history), red (ping, dhcp, arp, nslookup, route, ifconfig), y utilidades (echo, clear, help, whoami, hostname). Polling de `e1000_poll_rx()` integrado para comandos de red.
+- **Task Manager** (`taskman.c`): lista de procesos vía `task_list()`, barra de memoria; selección con flechas arriba/abajo, kill proceso (K), cierre forzado de ventana asociada (W).
 - **System Info** (`sysinfo.c`): OS, arquitectura, display, memoria, uptime, tareas.
-- **Network Config** (`netcfg.c`): interfaces vía `netif_get()`, MAC/IP/mask/GW/DNS.
+- **Network Config** (`netcfg.c`): modos DHCP y Manual con radio buttons; campos editables para IP, máscara, gateway y DNS; polling asíncrono de `e1000_poll_rx()` + `dhcp_get_result()` para DHCP no bloqueante.
 - **Settings** (`settings.c`): métricas de rendimiento: FPS, frame time, compose/present µs, dirty rects, píxeles copiados.
 
 ### Optimización de drag

@@ -31,6 +31,7 @@
 - [x] Teclado completo (PS/2 + USB)
 - [x] Ratón (PS/2 + USB)
 - [x] Sistema de input unificado
+- [x] Tecla Super/Windows para GUI
 
 ## 5. Shell
 - [x] Parser
@@ -193,7 +194,10 @@
 - [x] Compositor con dirty rects y doble buffer
 - [x] Cursor software con save-under (invalidación mínima)
 - [x] Escritorio con taskbar, menú de inicio y reloj RTC
-- [x] Apps integradas: Terminal, Task Manager, System Info, Network Config, Settings
+- [x] Icono de estado de red en taskbar con popup informativo
+- [x] Menú contextual de taskbar (click derecho: Close, Minimize, Maximize)
+- [x] Navegación de menú de inicio con teclado (Super, flechas, Enter, Escape)
+- [x] Apps integradas: Terminal (25+ comandos), Task Manager (kill/close), System Info, Network Config (DHCP/Manual), Settings
 - [x] Eventos de ventana / input gráfico
 - [x] Widgets básicos (botones, labels)
 - [x] Métricas de rendimiento en tiempo real (FPS, frame time, dirty rects)

@@ -370,6 +370,13 @@ static void queue_navigation_event(unsigned char scancode) {
         queue_event(KEY_EVENT_PAGE_DOWN, 0);
         return;
     }
+
+    /* Windows / Super key: set1 0x5B (left), 0x5C (right); set2 0x1F, 0x27 */
+    if (scancode == 0x5B || scancode == 0x5C ||
+        scancode == 0x1F || scancode == 0x27) {
+        queue_event(KEY_EVENT_SUPER, 0);
+        return;
+    }
 }
 
 static int queue_keypad_or_navigation_set1(unsigned char scancode) {

@@ -312,6 +312,15 @@ static void process_kbd_report(const usb_kbd_report_t* report) {
         }
     }
 
+    /* Detect Super (GUI) key press transition */
+    {
+        int gui_now  = (report->modifiers & (USB_HID_MOD_LGUI | USB_HID_MOD_RGUI)) ? 1 : 0;
+        int gui_prev = (prev_kbd_report.modifiers & (USB_HID_MOD_LGUI | USB_HID_MOD_RGUI)) ? 1 : 0;
+        if (gui_now && !gui_prev) {
+            keyboard_inject_event(KEY_EVENT_SUPER, 0, modifiers);
+        }
+    }
+
     /* Save for next comparison */
     prev_kbd_report = *report;
 }

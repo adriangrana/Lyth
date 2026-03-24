@@ -96,3 +96,15 @@ void klog_dump_to_terminal(void) {
 int klog_count(void) {
     return klog_size;
 }
+
+int klog_read_entry(int index, klog_level_t* level_out,
+                    char* comp_out, int comp_max,
+                    char* msg_out, int msg_max) {
+    klog_entry_t* entry;
+    if (index < 0 || index >= klog_size) return -1;
+    entry = &klog_entries[(klog_start + index) % KLOG_MAX_ENTRIES];
+    if (level_out) *level_out = entry->level;
+    if (comp_out) klog_copy_text(comp_out, (unsigned int)comp_max, entry->component);
+    if (msg_out) klog_copy_text(msg_out, (unsigned int)msg_max, entry->message);
+    return 0;
+}

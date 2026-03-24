@@ -27,6 +27,7 @@
 #include "timer.h"
 #include "usb_hid.h"
 #include "task.h"
+#include "e1000.h"
 
 /* ---- screen state ---- */
 static int scr_w, scr_h;
@@ -405,7 +406,7 @@ static void handle_mouse(input_event_t* ev, gui_window_t** dragging_win) {
 
     if (ev->buttons & 0x01) {
         /* Check desktop UI clicks (taskbar, start menu) */
-        if (desktop_handle_click(mouse_x, mouse_y)) {
+        if (desktop_handle_click(mouse_x, mouse_y, 1)) {
             return;
         }
 
@@ -438,6 +439,13 @@ static void handle_mouse(input_event_t* ev, gui_window_t** dragging_win) {
                 int ry = mouse_y - gui_window_content_y(w);
                 w->on_click(w, rx, ry, 1);
             }
+        }
+    }
+
+    /* right-click handling */
+    if (ev->buttons & 0x02) {
+        if (desktop_handle_click(mouse_x, mouse_y, 2)) {
+            return;
         }
     }
 }
@@ -531,6 +539,7 @@ void gui_run(void) {
         unsigned int coalesced = 0;
 
         usb_hid_poll();
+        e1000_poll_rx();
 
         /* drain all pending input, coalescing mouse moves */
         while (input_poll_event(&ev)) {

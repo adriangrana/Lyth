@@ -15,7 +15,7 @@ void desktop_paint_region(gui_surface_t* dst, int x0, int y0, int x1, int y1);
 void desktop_on_tick(void);
 
 /* Input handlers - return 1 if consumed */
-int desktop_handle_click(int mx, int my);
+int desktop_handle_click(int mx, int my, int button);
 int desktop_handle_key(int event_type, char key);
 
 /* Height of the top menu bar area */

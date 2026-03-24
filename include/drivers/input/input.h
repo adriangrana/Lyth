@@ -29,7 +29,8 @@ typedef enum {
     INPUT_EVENT_F2 = KEY_EVENT_F2,
     INPUT_EVENT_F3 = KEY_EVENT_F3,
     INPUT_EVENT_F4 = KEY_EVENT_F4,
-    INPUT_EVENT_CTRL_C = KEY_EVENT_CTRL_C
+    INPUT_EVENT_CTRL_C = KEY_EVENT_CTRL_C,
+    INPUT_EVENT_SUPER = KEY_EVENT_SUPER
 } input_event_type_t;
 
 typedef struct {
