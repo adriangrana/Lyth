@@ -95,6 +95,22 @@ Más de 40 syscalls: `open/read/write/close`, `fork`, `exec/execv/execve`, `exit
 - Panic screen con volcado de registros y backtrace
 - Buffer de logs `dmesg` con niveles `DEBUG/INFO/WARN/ERROR`
 
+### Interfaz gráfica (comando `gui`)
+- **Compositor por dirty rects**: backbuffer de pantalla, solo recompone y presenta regiones cambiadas
+- **Ventanas con superficie propia**: cada ventana tiene su pixel buffer; solo se re-renderiza si cambió el contenido (`needs_redraw`)
+- **Cursor software con save-under**: el cursor solo invalida su bounding rect (12×18 px), no la pantalla entera
+- **Escritorio**: taskbar inferior con botón Lyth, lista de ventanas abiertas y reloj RTC en tiempo real
+- **Menú de inicio**: Terminal, Task Manager, System Info, Network Config, Settings
+- **Apps integradas** (en `gui/apps/`):
+  - **Terminal**: emulador de terminal con grid de caracteres, scrollback y comandos built-in
+  - **Task Manager**: lista de procesos con PID, estado, prioridad y barra de memoria
+  - **System Info**: arquitectura, display, memoria, uptime, tareas activas
+  - **Network Config**: interfaces de red con MAC, IP, máscara, gateway, DNS
+  - **Settings**: métricas de rendimiento en tiempo real (FPS, frame time, dirty rects, píxeles copiados)
+- **Arrastre de ventanas**: coalescing de eventos de ratón, invalidación old+new rect sin re-render interno
+- **Frame pacing**: 60 Hz target con `hlt` cuando no hay trabajo; sin límite durante drag
+- Tema visual Catppuccin Mocha
+
 ---
 
 ## Requisitos
@@ -231,6 +247,8 @@ drivers/
 fs/                 VFS, ramfs, FAT16, FAT32, devfs, pipes
 userland/shell/     shell interactiva, editor de línea, parser
 lib/                helpers de cadenas y UTF-8
+gui/              compositor, ventanas, cursor, escritorio
+  apps/           aplicaciones gráficas (terminal, taskman, sysinfo, netcfg, settings)
 include/            headers organizados por subsistema
 docs/               documentación técnica detallada
 tools/              scripts auxiliares

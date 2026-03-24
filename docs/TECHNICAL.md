@@ -534,28 +534,57 @@ Driver de HID Boot Protocol para teclados y ratones USB:
 ### Arquitectura
 
 ```
-gui/compositor.c  →  Back-buffer RGB32 (1024×768×4 = 3 MB)
-        ↓
-composite()  →  desktop + ventanas + cursor
-        ↓
-flip()  →  fb_present_rgb32()  →  framebuffer hardware
+gui/compositor.c  →  Backbuffer RGB32 (screen_w × screen_h × 4)
+                      ↓
+                   Dirty rect list (max 64 rects)
+                      ↓
+compose_frame()   →  Phase 1: re-render windows with needs_redraw
+                  →  Phase 2: sort windows by z_order
+                  →  Phase 3: composite each dirty region
+                      ↓
+present_dirty()   →  memcpy dirty scanlines to framebuffer (32bpp fast path)
 ```
 
-### Compositor (`gui/compositor.c`)
-- **Back-buffer**: buffer en memoria de `width × height × 4` bytes (RGB32). Todas las operaciones de dibujo escriben aquí.
-- **Primitivas**: `bb_putpixel`, `bb_fill_rect`, `bb_hline`, `bb_fill_gradient_v`, `bb_fill_circle`, `bb_fill_rrect`, `bb_draw_char`, `bb_draw_string`.
-- **Pipeline**: cada frame ejecuta `draw_desktop()` → sort windows por z-order → `draw_window()` cada una → `draw_cursor()` → `flip()`.
-- **Cursor software**: sprite 12×18 con máscara, seguimiento de posición del ratón.
-- **Movimiento de ventanas**: drag con clic en barra de título. Caché del fondo para optimización durante drag.
+### Per-window surfaces (`gui/window.c`)
+- Cada ventana tiene su propia `gui_surface_t` (pixel buffer respaldado por `physmem_alloc_region`).
+- El contenido solo se re-renderiza cuando `needs_redraw == 1` (ej: cambio de texto, nuevo dato).
+- **Mover una ventana** no marca `needs_redraw`: solo cambia posición e invalida rects viejos/nuevos.
+- Hasta 32 ventanas simultáneas con z-ordering por inserción sort.
+- Widgets: botones, labels, callbacks de click; hasta 48 widgets por ventana.
 
-### Ventanas (`gui/window.c`)
-- Hasta 8 ventanas simultáneas con z-ordering.
-- Estructura: posición, tamaño, título, callback de dibujo, widgets.
-- Widgets: botones, labels, imágenes, callbacks de click.
-- Eventos: movimiento de ratón, clicks, cierre de ventana.
+### Dirty rects (`gui/compositor.c`)
+- **Dirty list**: hasta 64 rectángulos pendientes por frame.
+- Se unen rects que se solapan para evitar fragmentación excesiva.
+- Si overflow → marca pantalla completa (fallback seguro).
+- Solo las ventanas que intersectan un dirty rect se componen; el resto se saltan.
+
+### Cursor software (`gui/cursor.c`)
+- Sprite de 12×18 píxeles (outline + fill).
+- Save-under: antes de dibujar, guarda los píxeles de debajo; al borrar, los restaura.
+- Solo invalida su bounding rect (no la pantalla entera).
+
+### Escritorio (`gui/desktop.c`)
+- Superficie cacheada con gradiente de fondo + taskbar inferior.
+- Taskbar: botón "Lyth", lista de ventanas abiertas, reloj RTC actualizado cada segundo.
+- Menú de inicio con 5 entradas (Terminal, Task Manager, System Info, Network, Settings).
+- Tema Catppuccin Mocha (`#1E1E2E` bg, `#CDD6F4` text, `#3B82F6` accent).
+
+### Apps integradas (`gui/apps/`)
+- **Terminal** (`terminal.c`): grid 80×24, scrollback 256 líneas, comandos built-in (help, clear, uptime, mem, ps, uname, echo).
+- **Task Manager** (`taskman.c`): lista de procesos vía `task_list()`, barra de memoria.
+- **System Info** (`sysinfo.c`): OS, arquitectura, display, memoria, uptime, tareas.
+- **Network Config** (`netcfg.c`): interfaces vía `netif_get()`, MAC/IP/mask/GW/DNS.
+- **Settings** (`settings.c`): métricas de rendimiento: FPS, frame time, compose/present µs, dirty rects, píxeles copiados.
+
+### Optimización de drag
+- Coalescing de eventos de mouse: se acumula el delta y solo se procesa la posición final por frame.
+- Invalidación separada de old rect + new rect (sin unión bruta).
+- `needs_redraw` nunca se activa durante drag → la superficie se reutiliza tal cual.
+- Frame pacing desactivado durante drag para máxima responsividad.
 
 ### Presentación (`drivers/console/fbconsole.c`)
-- `fb_present_rgb32()`: copia el back-buffer al framebuffer hardware. Fast path con `memcpy` por fila para formato BGR32; conversión por pixel para otros formatos (24-bit, 16-bit).
+- `fb_present_rgb32()`: copia backbuffer al framebuffer hardware. Fast path con `memcpy` por fila para BGR32; conversión por pixel para otros formatos.
+- En modo dirty: solo copia scanlines dentro de dirty rects (32bpp direct memcpy).
 
 ---
 

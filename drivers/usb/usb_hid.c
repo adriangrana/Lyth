@@ -568,54 +568,6 @@ void usb_hid_init(void) {
         }
     }
 
-    /* Keyboard blocking test: try a single blocking interrupt transfer
-       to check if the keyboard device responds at all. Wait up to 2s. */
-    for (int i = 0; i < hid_dev_count; i++) {
-        hid_dev_t* hd = &hid_devs[i];
-        if (!hd->is_keyboard) continue;
-
-        serial_print("[usb-hid] KBD blocking test: slot=");
-        serial_print_uint(hd->slot_id);
-        serial_print(" ep=");
-        serial_print_uint(hd->ep_dci);
-        serial_print("\n");
-
-        /* The pre-queued TRB is already pending. Just wait for a
-           Transfer Event matching this endpoint for up to 2 seconds. */
-        {
-            xhci_trb_t evt;
-            int got_kbd = 0;
-            for (int attempt = 0; attempt < 2000; attempt++) {
-                if (xhci_check_event(&evt) == 0) {
-                    uint32_t type = XHCI_TRB_GET_TYPE(evt.control);
-                    if (type == XHCI_TRB_TRANSFER_EVENT &&
-                        XHCI_TRB_SLOT_ID(evt.control) == (uint8_t)hd->slot_id &&
-                        XHCI_TRB_EP_ID(evt.control) == (uint8_t)hd->ep_dci) {
-                        uint8_t cc = XHCI_TRB_COMP_CODE(evt.status);
-                        serial_print("[usb-hid] KBD blocking test: cc=");
-                        serial_print_uint(cc);
-                        serial_print("\n");
-                        got_kbd = 1;
-                        /* Re-queue for async polling */
-                        memset(hd->buf, 0, hd->buf_len);
-                        xhci_queue_interrupt_in(hd->slot_id, hd->ep_dci,
-                                                 hd->buf_phys, hd->buf_len);
-                        break;
-                    }
-                    /* Not our event — some other device, just continue */
-                }
-                delay_ms(1);
-            }
-            if (!got_kbd) {
-                serial_print("[usb-hid] KBD blocking test: TIMEOUT\n");
-                /* Re-queue anyway for async polling */
-                xhci_queue_interrupt_in(hd->slot_id, hd->ep_dci,
-                                         hd->buf_phys, hd->buf_len);
-            }
-        }
-        break; /* Only test first keyboard */
-    }
-
     physmem_free_frame(led_buf_phys);
     usb_hid_ready = 1;
 

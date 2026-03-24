@@ -99,6 +99,13 @@ DHCP_OBJ       = $(BUILD_DIR)/dhcp.o
 DNS_OBJ        = $(BUILD_DIR)/dns.o
 WINDOW_OBJ     = $(BUILD_DIR)/gui_window.o
 COMPOSITOR_OBJ = $(BUILD_DIR)/gui_compositor.o
+CURSOR_OBJ     = $(BUILD_DIR)/gui_cursor.o
+DESKTOP_OBJ    = $(BUILD_DIR)/gui_desktop.o
+APP_TERMINAL_OBJ = $(BUILD_DIR)/gui_app_terminal.o
+APP_TASKMAN_OBJ  = $(BUILD_DIR)/gui_app_taskman.o
+APP_SYSINFO_OBJ  = $(BUILD_DIR)/gui_app_sysinfo.o
+APP_NETCFG_OBJ   = $(BUILD_DIR)/gui_app_netcfg.o
+APP_SETTINGS_OBJ = $(BUILD_DIR)/gui_app_settings.o
 HPET_OBJ       = $(BUILD_DIR)/hpet.o
 SLAB_OBJ       = $(BUILD_DIR)/slab.o
 MMAP_OBJ       = $(BUILD_DIR)/mmap.o
@@ -130,6 +137,7 @@ CFLAGS = -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx -mno-sse2 \
 	-Iinclude/kernel/tests \
 	-Iinclude/drivers/hpet \
 	-Iinclude/gui \
+	-Iinclude/gui/apps \
 	-Iinclude/drivers/usb
 LDFLAGS = -m elf_x86_64 -T arch/x86/linker.ld --build-id=none
 
@@ -138,7 +146,7 @@ FONT_TOOL = tools/psf2h.py
 FONT_HEADER = include/font_psf.h
 GRUB_CFG = arch/x86/boot/grub.cfg
 
-OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(VIDEO_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ) $(PCI_OBJ) $(E1000_OBJ) $(NETBUF_OBJ) $(NETIF_OBJ) $(ETHERNET_OBJ) $(ARP_OBJ) $(IPV4_OBJ) $(ICMP_OBJ) $(UDP_NET_OBJ) $(TCP_NET_OBJ) $(SOCKET_OBJ) $(DHCP_OBJ) $(DNS_OBJ) $(WINDOW_OBJ) $(COMPOSITOR_OBJ) $(HPET_OBJ) $(SLAB_OBJ) $(MMAP_OBJ) $(AHCI_OBJ) $(XHCI_OBJ) $(USB_HID_OBJ)
+OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(VIDEO_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ) $(PCI_OBJ) $(E1000_OBJ) $(NETBUF_OBJ) $(NETIF_OBJ) $(ETHERNET_OBJ) $(ARP_OBJ) $(IPV4_OBJ) $(ICMP_OBJ) $(UDP_NET_OBJ) $(TCP_NET_OBJ) $(SOCKET_OBJ) $(DHCP_OBJ) $(DNS_OBJ) $(WINDOW_OBJ) $(COMPOSITOR_OBJ) $(CURSOR_OBJ) $(DESKTOP_OBJ) $(APP_TERMINAL_OBJ) $(APP_TASKMAN_OBJ) $(APP_SYSINFO_OBJ) $(APP_NETCFG_OBJ) $(APP_SETTINGS_OBJ) $(HPET_OBJ) $(SLAB_OBJ) $(MMAP_OBJ) $(AHCI_OBJ) $(XHCI_OBJ) $(USB_HID_OBJ)
 
 $(FONT_HEADER): $(FONT_PSF) $(FONT_TOOL)
 	$(PYTHON) $(FONT_TOOL) $(FONT_PSF) $(FONT_HEADER)
@@ -222,6 +230,13 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(CC) $(CFLAGS) -c net/dns.c -o $(DNS_OBJ)
 	$(CC) $(CFLAGS) -c gui/window.c -o $(WINDOW_OBJ)
 	$(CC) $(CFLAGS) -c gui/compositor.c -o $(COMPOSITOR_OBJ)
+	$(CC) $(CFLAGS) -c gui/cursor.c -o $(CURSOR_OBJ)
+	$(CC) $(CFLAGS) -c gui/desktop.c -o $(DESKTOP_OBJ)
+	$(CC) $(CFLAGS) -c gui/apps/terminal.c -o $(APP_TERMINAL_OBJ)
+	$(CC) $(CFLAGS) -c gui/apps/taskman.c -o $(APP_TASKMAN_OBJ)
+	$(CC) $(CFLAGS) -c gui/apps/sysinfo.c -o $(APP_SYSINFO_OBJ)
+	$(CC) $(CFLAGS) -c gui/apps/netcfg.c -o $(APP_NETCFG_OBJ)
+	$(CC) $(CFLAGS) -c gui/apps/settings.c -o $(APP_SETTINGS_OBJ)
 	$(CC) $(CFLAGS) -c drivers/hpet/hpet.c -o $(HPET_OBJ)
 	$(CC) $(CFLAGS) -c kernel/mem/slab.c -o $(SLAB_OBJ)
 	$(CC) $(CFLAGS) -c kernel/mem/mmap.c -o $(MMAP_OBJ)

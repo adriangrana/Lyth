@@ -1,31 +1,78 @@
 #include "string.h"
 
 void* memcpy(void* dest, const void* src, size_t n) {
-    uint8_t* d = (uint8_t*)dest;
-    const uint8_t* s = (const uint8_t*)src;
-    for (size_t i = 0; i < n; i++)
-        d[i] = s[i];
-    return dest;
+    void* ret = dest;
+    __asm__ volatile (
+        "rep movsb"
+        : "+D"(dest), "+S"(src), "+c"(n)
+        :
+        : "memory"
+    );
+    return ret;
 }
 
 void* memset(void* s, int c, size_t n) {
-    uint8_t* p = (uint8_t*)s;
-    for (size_t i = 0; i < n; i++)
-        p[i] = (uint8_t)c;
+    /* Fill 8 bytes at a time with rep stosq, then remainder with rep stosb */
+    uint64_t val8 = (uint8_t)c;
+    val8 |= val8 << 8;
+    val8 |= val8 << 16;
+    val8 |= val8 << 32;
+
+    size_t qwords = n >> 3;
+    size_t tail   = n & 7;
+    void* p = s;
+
+    __asm__ volatile (
+        "rep stosq"
+        : "+D"(p), "+c"(qwords)
+        : "a"(val8)
+        : "memory"
+    );
+    __asm__ volatile (
+        "rep stosb"
+        : "+D"(p), "+c"(tail)
+        : "a"(val8)
+        : "memory"
+    );
     return s;
 }
 
+void* memset32(void* dest, uint32_t val, size_t count) {
+    /* Fill count uint32_t words. Use rep stosd for hardware-accelerated fill. */
+    void* ret = dest;
+    __asm__ volatile (
+        "rep stosl"
+        : "+D"(dest), "+c"(count)
+        : "a"(val)
+        : "memory"
+    );
+    return ret;
+}
+
 void* memmove(void* dest, const void* src, size_t n) {
-    uint8_t* d = (uint8_t*)dest;
-    const uint8_t* s = (const uint8_t*)src;
-    if (d < s) {
-        for (size_t i = 0; i < n; i++)
-            d[i] = s[i];
+    void* ret = dest;
+    if (dest < src || (uint8_t*)dest >= (const uint8_t*)src + n) {
+        /* No overlap or dest before src — forward copy */
+        __asm__ volatile (
+            "rep movsb"
+            : "+D"(dest), "+S"(src), "+c"(n)
+            :
+            : "memory"
+        );
     } else {
-        for (size_t i = n; i > 0; i--)
-            d[i - 1] = s[i - 1];
+        /* Overlap with dest > src — copy backward */
+        uint8_t* d = (uint8_t*)dest + n - 1;
+        const uint8_t* s = (const uint8_t*)src + n - 1;
+        __asm__ volatile (
+            "std\n\t"
+            "rep movsb\n\t"
+            "cld"
+            : "+D"(d), "+S"(s), "+c"(n)
+            :
+            : "memory"
+        );
     }
-    return dest;
+    return ret;
 }
 
 int memcmp(const void* s1, const void* s2, size_t n) {

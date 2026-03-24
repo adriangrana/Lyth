@@ -7,6 +7,7 @@ typedef unsigned int size_t;
 
 void* memcpy(void* dest, const void* src, size_t n);
 void* memset(void* s, int c, size_t n);
+void* memset32(void* dest, uint32_t val, size_t count);
 void* memmove(void* dest, const void* src, size_t n);
 int memcmp(const void* s1, const void* s2, size_t n);
 int strcmp(const char* a, const char* b);

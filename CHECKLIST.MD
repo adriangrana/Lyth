@@ -188,11 +188,17 @@
 
 ## 15. Interfaz gráfica
 - [x] Framebuffer
-- [x] Ventanas
-- [x] GUI básica
-- [x] Compositor básico
+- [x] Ventanas con superficie propia (per-window pixel buffer)
+- [x] GUI modular (apps en gui/apps/)
+- [x] Compositor con dirty rects y doble buffer
+- [x] Cursor software con save-under (invalidación mínima)
+- [x] Escritorio con taskbar, menú de inicio y reloj RTC
+- [x] Apps integradas: Terminal, Task Manager, System Info, Network Config, Settings
 - [x] Eventos de ventana / input gráfico
-- [x] Widgets básicos
+- [x] Widgets básicos (botones, labels)
+- [x] Métricas de rendimiento en tiempo real (FPS, frame time, dirty rects)
+- [x] Arrastre fluido de ventanas (coalescing de mouse, invalidación optimizada)
+- [ ] Aceleración gráfica (GPU)
 
 ## 16. UX
 - [x] Shell usable

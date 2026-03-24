@@ -1210,7 +1210,7 @@ static void xhci_enumerate_device(int dev_idx) {
             desc18_ok = 1;
             break;
         }
-        delay_ms(10);
+        delay_ms(5);
     }
     if (!desc18_ok) {
         serial_print("[usb] Failed to get full device descriptor slot=");
@@ -1516,7 +1516,7 @@ static void xhci_enumerate_hub(int hub_dev_idx) {
             USB_HUB_REQ_SET_FEATURE,
             USB_HUB_FEAT_PORT_POWER, p, 0, 0);
     }
-    delay_ms(pwrdelay > 0 ? (uint32_t)pwrdelay : 100);
+    delay_ms(pwrdelay > 0 ? (uint32_t)pwrdelay : 20);
 
     /* Check each port for a connected device */
     for (int p = 1; p <= nports; p++) {
@@ -1541,7 +1541,7 @@ static void xhci_enumerate_hub(int hub_dev_idx) {
             USB_REQ_DIR_OUT | USB_REQ_TYPE_CLASS | USB_REQ_RECIP_OTHER,
             USB_HUB_REQ_SET_FEATURE,
             USB_HUB_FEAT_PORT_RESET, p, 0, 0);
-        delay_ms(60);
+        delay_ms(20);
 
         /* Read status again after reset */
         memset(buf, 0, 4);
@@ -1591,7 +1591,7 @@ static void xhci_enumerate_hub(int hub_dev_idx) {
             continue;
         }
 
-        delay_ms(50);
+        delay_ms(10);
         xhci_enumerate_device(dev_idx);
 
         /* Recursive: if child is also a hub, enumerate it */
@@ -1731,7 +1731,7 @@ static void xhci_enumerate_ports(void) {
         }
 
         /* Enumerate (get descriptors, configure HID endpoints) */
-        delay_ms(50);  /* Give device time after SET_ADDRESS (real HW needs more) */
+        delay_ms(10);  /* Post-address stabilization */
         xhci_enumerate_device(dev_idx);
 
         /* If this device is a hub, enumerate its downstream ports */

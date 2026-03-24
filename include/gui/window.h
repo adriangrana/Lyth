@@ -4,33 +4,14 @@
 #include <stdint.h>
 
 /* ---- layout constants ---- */
-#define GUI_TITLEBAR_HEIGHT  32
+#define GUI_TITLEBAR_HEIGHT  28
 #define GUI_BORDER_WIDTH      1
-#define GUI_MAX_WINDOWS      16
+#define GUI_MAX_WINDOWS      32
 #define GUI_MAX_TITLE        64
-#define GUI_MAX_WIDGETS      32
-#define GUI_TASKBAR_HEIGHT   48
-#define GUI_CLOSE_BTN_SIZE   12
-#define GUI_CORNER_RADIUS     6
-
-/* ---- colours (0xRRGGBB) ---- */
-#define GUI_COL_DESKTOP      0x008080
-#define GUI_COL_TITLEBAR     0x000080
-#define GUI_COL_TITLEBAR_IA  0x808080
-#define GUI_COL_TITLE_TEXT   0xFFFFFF
-#define GUI_COL_WINDOW_BG    0xC0C0C0
-#define GUI_COL_BORDER       0x000000
-#define GUI_COL_BORDER_LIGHT 0xFFFFFF
-#define GUI_COL_BORDER_DARK  0x808080
-#define GUI_COL_BTN_FACE     0xC0C0C0
-#define GUI_COL_BTN_TEXT     0x000000
-#define GUI_COL_BTN_HOVER    0xD4D0C8
-#define GUI_COL_CLOSE_BG     0xC04040
-#define GUI_COL_CLOSE_FG     0xFFFFFF
-#define GUI_COL_TASKBAR      0xC0C0C0
-#define GUI_COL_TASKBAR_TEXT 0x000000
-#define GUI_COL_START_BTN    0x008000
-#define GUI_COL_START_TEXT   0xFFFFFF
+#define GUI_MAX_WIDGETS      48
+#define GUI_TASKBAR_HEIGHT   36
+#define GUI_FONT_W            8
+#define GUI_FONT_H           16
 
 /* ---- window flags ---- */
 #define GUI_WIN_VISIBLE    (1 << 0)
@@ -38,6 +19,22 @@
 #define GUI_WIN_CLOSEABLE  (1 << 2)
 #define GUI_WIN_DRAGGABLE  (1 << 3)
 #define GUI_WIN_MINIMIZED  (1 << 4)
+#define GUI_WIN_NO_DECOR   (1 << 6)
+
+/* ---- surface: pixel buffer ---- */
+typedef struct {
+    uint32_t* pixels;
+    int width;
+    int height;
+    int stride;
+    uint32_t alloc_phys;
+    uint32_t alloc_size;
+} gui_surface_t;
+
+/* ---- rectangle ---- */
+typedef struct {
+    int x, y, w, h;
+} gui_rect_t;
 
 /* ---- widget types ---- */
 typedef enum {
@@ -48,9 +45,9 @@ typedef enum {
 
 typedef struct gui_widget {
     gui_widget_type_t type;
-    int x, y;           /* relative to window content area */
+    int x, y;
     int width, height;
-    char text[48];
+    char text[128];
     uint32_t fg_color;
     uint32_t bg_color;
     void (*on_click)(struct gui_widget* w);
@@ -60,32 +57,32 @@ typedef struct gui_widget {
 struct gui_window;
 typedef void (*gui_paint_fn)(struct gui_window*);
 typedef void (*gui_close_fn)(struct gui_window*);
-typedef void (*gui_key_fn)(struct gui_window*, char key);
+typedef void (*gui_key_fn)(struct gui_window*, int event_type, char key);
 typedef void (*gui_click_fn)(struct gui_window*, int x, int y, int button);
 
 typedef struct gui_window {
     int id;
     int x, y;
-    int width, height;       /* total size including decorations */
+    int width, height;
     char title[GUI_MAX_TITLE];
     uint32_t flags;
 
-    /* drag state */
     int dragging;
     int drag_off_x, drag_off_y;
 
-    /* widgets */
+    gui_surface_t surface;
+    int needs_redraw;
+
     gui_widget_t widgets[GUI_MAX_WIDGETS];
     int widget_count;
 
-    /* callbacks */
     gui_paint_fn on_paint;
     gui_close_fn on_close;
     gui_key_fn   on_key;
     gui_click_fn on_click;
 
-    /* z-order (higher = on top) */
     int z_order;
+    void* app_data;
 } gui_window_t;
 
 /* ---- window API ---- */
@@ -94,15 +91,12 @@ gui_window_t* gui_window_create(const char* title, int x, int y,
 void gui_window_destroy(gui_window_t* win);
 void gui_window_focus(gui_window_t* win);
 void gui_window_move(gui_window_t* win, int x, int y);
-void gui_window_fit_to_content(gui_window_t* win, int padding_right,
-                               int padding_bottom, int min_width,
-                               int min_height);
+void gui_window_invalidate(gui_window_t* win);
 int  gui_window_content_x(gui_window_t* win);
 int  gui_window_content_y(gui_window_t* win);
 int  gui_window_content_w(gui_window_t* win);
 int  gui_window_content_h(gui_window_t* win);
 
-/* widget helpers */
 gui_widget_t* gui_add_label(gui_window_t* win, int x, int y,
                             const char* text, uint32_t fg);
 gui_widget_t* gui_add_button(gui_window_t* win, int x, int y,
@@ -111,8 +105,21 @@ gui_widget_t* gui_add_button(gui_window_t* win, int x, int y,
 gui_widget_t* gui_add_panel(gui_window_t* win, int x, int y,
                             int w, int h, uint32_t bg);
 
-/* internal: iterate windows in z-order (used by compositor) */
 int  gui_window_count(void);
 gui_window_t* gui_window_get(int index);
+
+/* ---- surface drawing ops (fast, no clipping beyond bounds) ---- */
+void gui_surface_alloc(gui_surface_t* s, int w, int h);
+void gui_surface_free(gui_surface_t* s);
+void gui_surface_clear(gui_surface_t* s, uint32_t c);
+void gui_surface_fill(gui_surface_t* s, int x, int y, int w, int h, uint32_t c);
+void gui_surface_hline(gui_surface_t* s, int x, int y, int w, uint32_t c);
+void gui_surface_putpixel(gui_surface_t* s, int x, int y, uint32_t c);
+void gui_surface_draw_char(gui_surface_t* s, int x, int y, unsigned char ch,
+                           uint32_t fg, uint32_t bg, int draw_bg);
+void gui_surface_draw_string(gui_surface_t* s, int x, int y, const char* str,
+                             uint32_t fg, uint32_t bg, int draw_bg);
+void gui_surface_draw_string_n(gui_surface_t* s, int x, int y, const char* str,
+                               int max_chars, uint32_t fg, uint32_t bg, int draw_bg);
 
 #endif
