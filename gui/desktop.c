@@ -17,6 +17,7 @@
 #include "rtc.h"
 #include "physmem.h"
 #include "netif.h"
+#include "login.h"
 
 /* forward declarations for app launchers */
 void terminal_app_open(void);
@@ -435,6 +436,10 @@ void desktop_init(int screen_w, int screen_h) {
 
     memcpy(menu_items[menu_item_count].label, "Settings", 9);
     menu_items[menu_item_count].action = settings_app_open;
+    menu_item_count++;
+
+    memcpy(menu_items[menu_item_count].label, "Logout", 7);
+    menu_items[menu_item_count].action = login_manager_request_logout;
     menu_item_count++;
 
     rebuild_desktop();

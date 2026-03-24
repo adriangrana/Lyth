@@ -335,13 +335,6 @@ static gui_widget_t* hit_widget(gui_window_t* win, int mx, int my) {
 static void handle_keyboard(input_event_t* ev) {
     int i, count;
 
-    /* ESC or Ctrl+C exits GUI */
-    if ((ev->type == INPUT_EVENT_CHAR && ev->character == 27) ||
-        ev->type == INPUT_EVENT_CTRL_C) {
-        gui_running = 0;
-        return;
-    }
-
     /* Check if desktop wants this key (start menu etc) */
     if (desktop_handle_key(ev->type, ev->character)) {
         return;

@@ -10,17 +10,22 @@
 #include "terminal.h"
 #include "serial.h"
 
-static int ktest_pass  = 0;
-static int ktest_fail  = 0;
+static int ktest_pass   = 0;
+static int ktest_fail   = 0;
+static int ktest_silent = 0;
 static const char* ktest_suite = "(none)";
+
+void ktest_set_silent(int silent) { ktest_silent = silent; }
 
 void ktest_begin(const char* suite_name) {
     ktest_pass  = 0;
     ktest_fail  = 0;
     ktest_suite = suite_name ? suite_name : "(none)";
 
-    terminal_print("[TEST] Suite: ");
-    terminal_print_line(ktest_suite);
+    if (!ktest_silent) {
+        terminal_print("[TEST] Suite: ");
+        terminal_print_line(ktest_suite);
+    }
     serial_print("[TEST] Suite: ");
     serial_print(ktest_suite);
     serial_putc('\n');
@@ -33,17 +38,18 @@ void ktest_check(const char* name, int ok) {
     (void)saved_color;
 
     if (ok) {
-        terminal_set_color(0x0A); /* bright green */
         ktest_pass++;
     } else {
-        terminal_set_color(0x0C); /* bright red */
         ktest_fail++;
     }
 
-    terminal_print(result);
-    terminal_set_color(0x0F);
-    terminal_print(name);
-    terminal_put_char('\n');
+    if (!ktest_silent) {
+        terminal_set_color(ok ? 0x0A : 0x0C);
+        terminal_print(result);
+        terminal_set_color(0x0F);
+        terminal_print(name);
+        terminal_put_char('\n');
+    }
 
     serial_print(ok ? "  PASS  " : "  FAIL  ");
     serial_print(name);
@@ -51,23 +57,24 @@ void ktest_check(const char* name, int ok) {
 }
 
 void ktest_summary(void) {
-    terminal_print("[TEST] ");
-    terminal_print(ktest_suite);
-    terminal_print(": ");
-
-    if (ktest_fail == 0) {
-        terminal_set_color(0x0A);
-        terminal_print("ALL PASS");
-    } else {
-        terminal_set_color(0x0C);
-        terminal_print("FAILED");
+    if (!ktest_silent) {
+        terminal_print("[TEST] ");
+        terminal_print(ktest_suite);
+        terminal_print(": ");
+        if (ktest_fail == 0) {
+            terminal_set_color(0x0A);
+            terminal_print("ALL PASS");
+        } else {
+            terminal_set_color(0x0C);
+            terminal_print("FAILED");
+        }
+        terminal_set_color(0x0F);
+        terminal_print(" (");
+        terminal_print_uint((unsigned int)ktest_pass);
+        terminal_print("/");
+        terminal_print_uint((unsigned int)(ktest_pass + ktest_fail));
+        terminal_print_line(")");
     }
-    terminal_set_color(0x0F);
-    terminal_print(" (");
-    terminal_print_uint((unsigned int)ktest_pass);
-    terminal_print("/");
-    terminal_print_uint((unsigned int)(ktest_pass + ktest_fail));
-    terminal_print_line(")");
 
     serial_print("[TEST] ");
     serial_print(ktest_suite);

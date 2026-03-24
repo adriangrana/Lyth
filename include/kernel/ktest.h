@@ -19,4 +19,7 @@ void ktest_summary(void);
 /* Convenience: begin + run + summary for a one-shot test function. */
 void ktest_run(const char* name, int (*fn)(void));
 
+/* When silent, output goes only to serial (no framebuffer terminal). */
+void ktest_set_silent(int silent);
+
 #endif

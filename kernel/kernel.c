@@ -41,6 +41,8 @@
 #include "xhci.h"
 #include "usb_hid.h"
 #include "paging.h"
+#include "splash.h"
+#include "session.h"
 
 /* from lib/string.c — avoid including string.h (size_t conflict) */
 extern int str_starts_with(const char* str, const char* prefix);
@@ -62,7 +64,15 @@ static void parse_boot_mode(multiboot_info_t* mbi) {
                 else if (str_starts_with(val, "bios"))
                     boot_mode_str = "BIOS";
             }
-            return;
+        }
+        if (str_starts_with(p, "lyth_mode=")) {
+            const char* val = str_after_prefix(p, "lyth_mode=");
+            if (val) {
+                if (str_starts_with(val, "recovery"))
+                    init_set_boot_mode(BOOT_MODE_RECOVERY);
+                else if (str_starts_with(val, "debug"))
+                    init_set_boot_mode(BOOT_MODE_DEBUG);
+            }
         }
     }
 }
@@ -145,6 +155,7 @@ void kernel_main(unsigned long mbi_ptr) {
     /* mbi_ptr: Multiboot info pointer passed in EBX by GRUB */
     multiboot_info_t* mbi = (multiboot_info_t*)(uintptr_t)mbi_ptr;
     mouse_state_t mouse_state;
+    int splash_boot;  /* 1 = splash active, suppress terminal_print */
 
     gdt_init();
     interrupts_init_early();  /* IDT + exception handlers — catch faults early */
@@ -217,8 +228,18 @@ void kernel_main(unsigned long mbi_ptr) {
     klog_write(KLOG_LEVEL_INFO, "devfs", "devfs montado en /dev");
     klog_write(KLOG_LEVEL_INFO, "task", "Scheduler listo");
 
-    print_framebuffer_info();
-    print_memory_info();
+    /* ── Splash screen ─────────────────────────────────────────────
+     * In normal boot mode, show a graphical splash instead of raw
+     * terminal output.  Recovery/debug modes keep the text console. */
+    if (init_get_boot_mode() == BOOT_MODE_NORMAL && fb_active()) {
+        splash_show();
+        splash_set_message("Initializing system...");
+        splash_set_progress(10);
+    } else {
+        print_framebuffer_info();
+        print_memory_info();
+    }
+    splash_boot = (init_get_boot_mode() == BOOT_MODE_NORMAL && fb_active());
 
     keyboard_init();
     mouse_init();
@@ -229,63 +250,77 @@ void kernel_main(unsigned long mbi_ptr) {
     } else {
         klog_write(KLOG_LEVEL_WARN, "mouse", "Ratón PS/2 no disponible");
     }
-    terminal_print("Init: ACPI...");
+    splash_set_message("Detecting hardware...");
+    splash_set_progress(20);
+    init_set_boot_state(BOOT_STATE_SERVICES);
+    if (!splash_boot) terminal_print("Init: ACPI...");
     serial_print("[boot] acpi_init...\n");
     acpi_init();
-    terminal_print(" HPET...");
+    if (!splash_boot) terminal_print(" HPET...");
     serial_print("[boot] hpet_init...\n");
     hpet_init();
-    terminal_print(" APIC...");
+    if (!splash_boot) terminal_print(" APIC...");
     serial_print("[boot] apic_init...\n");
     apic_init();
-    terminal_print(" SMP...");
+    if (!splash_boot) terminal_print(" SMP...");
     serial_print("[boot] smp_init...\n");
     smp_init();
     serial_print("[boot] smp_init done\n");
-    terminal_print(" IRQ...");
+    if (!splash_boot) terminal_print(" IRQ...");
     interrupts_init();
-    terminal_print(" RTC...");
+    if (!splash_boot) terminal_print(" RTC...");
     rtc_init();
-    terminal_print_line(" OK");
+    if (!splash_boot) terminal_print_line(" OK");
+    splash_set_progress(35);
     klog_write(KLOG_LEVEL_INFO, "rtc",  "RTC CMOS inicializado");
     klog_write(KLOG_LEVEL_INFO, "irq",  "IDT/PIC/PIT inicializados");
 
-    terminal_print("Init: PCI...");
+    splash_set_message("Scanning PCI bus...");
+    splash_set_progress(40);
+    if (!splash_boot) terminal_print("Init: PCI...");
     serial_print("[boot] pci_init...\n");
     pci_init();
-    /* Show PCI count on screen for debug */
-    terminal_print("(");
-    {
-        char tmp[8];
-        int cnt = pci_device_count();
-        int pos = 0;
-        if (cnt == 0) { tmp[pos++] = '0'; }
-        else {
-            int d = 100;
-            int started = 0;
-            while (d > 0) {
-                int digit = cnt / d;
-                if (digit || started) { tmp[pos++] = '0' + digit; started = 1; }
-                cnt %= d;
-                d /= 10;
+    if (!splash_boot) {
+        /* Show PCI count on screen for debug */
+        terminal_print("(");
+        {
+            char tmp[8];
+            int cnt = pci_device_count();
+            int pos = 0;
+            if (cnt == 0) { tmp[pos++] = '0'; }
+            else {
+                int d = 100;
+                int started = 0;
+                while (d > 0) {
+                    int digit = cnt / d;
+                    if (digit || started) { tmp[pos++] = '0' + digit; started = 1; }
+                    cnt %= d;
+                    d /= 10;
+                }
             }
+            tmp[pos] = 0;
+            terminal_print(tmp);
         }
-        tmp[pos] = 0;
-        terminal_print(tmp);
+        terminal_print(")");
+        terminal_print(" NET...");
     }
-    terminal_print(")");
-    terminal_print(" NET...");
+    splash_set_message("Initializing network...");
+    splash_set_progress(50);
     serial_print("[boot] net/e1000_init...\n");
     net_init();
     e1000_init();
-    terminal_print(" USB...");
+    if (!splash_boot) terminal_print(" USB...");
+    splash_set_message("Initializing USB...");
+    splash_set_progress(60);
     serial_print("[boot] xhci_init...\n");
     xhci_init();
     usb_hid_init();
-    terminal_print_line(" OK");
+    if (!splash_boot) terminal_print_line(" OK");
     klog_write(KLOG_LEVEL_INFO, "net",  "Stack de red inicializado");
 
-    terminal_print("Init: ATA...");
+    splash_set_message("Detecting storage...");
+    splash_set_progress(70);
+    if (!splash_boot) terminal_print("Init: ATA...");
     serial_print("[boot] ata_init...\n");
     ata_init();
     if (ata_is_present(ATA_DRIVE_MASTER))
@@ -295,7 +330,7 @@ void kernel_main(unsigned long mbi_ptr) {
     if (ata_is_present(ATA_DRIVE_SLAVE))
         klog_write(KLOG_LEVEL_INFO, "ata", "Disco 1 (slave) detectado");
 
-    terminal_print(" BLKDEV...");
+    if (!splash_boot) terminal_print(" BLKDEV...");
     serial_print("[boot] blkdev_init...\n");
     blkdev_init();
     {
@@ -315,11 +350,14 @@ void kernel_main(unsigned long mbi_ptr) {
         klog_write(KLOG_LEVEL_INFO, "blkdev", "Capa de bloques lista");
     }
 
-    terminal_print(" AHCI...");
+    if (!splash_boot) terminal_print(" AHCI...");
     serial_print("[boot] ahci_init...\n");
     /* AHCI/SATA controller ---------------------------------------- */
     ahci_init();
-    terminal_print_line(" OK");
+    if (!splash_boot) terminal_print_line(" OK");
+
+    splash_set_message("Mounting filesystems...");
+    splash_set_progress(80);
 
     /* Auto-mount FAT16 / FAT32 partitions ------------------------- */
     {
@@ -365,9 +403,21 @@ void kernel_main(unsigned long mbi_ptr) {
      klog_write(KLOG_LEVEL_INFO, "tty", "TTY VFS node listo (/dev/tty, fd 0/1/2)");
 
     /* Mini harness de arranque (salida en pantalla + serial COM1). */
+    if (splash_boot) ktest_set_silent(1);
     boot_tests_run();
+    if (splash_boot) ktest_set_silent(0);
 
-    /* Spawn the init task (PID 1) — owns the shell and event loop. */
+    splash_set_message("Starting services...");
+    splash_set_progress(95);
+
+    /* Set final boot state so init task knows it can proceed to GUI. */
+    if (init_get_boot_mode() == BOOT_MODE_NORMAL && fb_active()) {
+        init_set_boot_state(BOOT_STATE_GRAPHICS);
+    } else {
+        init_set_boot_state(BOOT_STATE_RECOVERY);
+    }
+
+    /* Spawn the init task (PID 1) — manages login and session. */
     init_start();
     
     while (1) {

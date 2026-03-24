@@ -586,14 +586,21 @@ static void cmd_ping(const char* arg) {
     uint32_t dst;
     char buf[20];
     netif_t* iface;
+    const char* display_host = arg;
 
     if (!arg || *arg == '\0') {
-        term_puts("Usage: ping <ip>\n", COL_TERM_ERR);
+        term_puts("Usage: ping <ip|host>\n", COL_TERM_ERR);
         return;
     }
     if (!str_to_ip_term(arg, &dst)) {
-        term_puts("Invalid IP address.\n", COL_TERM_ERR);
-        return;
+        /* Not a numeric IP — try DNS resolution */
+        dst = dns_resolve(arg);
+        if (!dst) {
+            term_puts("Could not resolve: ", COL_TERM_ERR);
+            term_puts(arg, COL_TERM_ERR);
+            term_putchar('\n', COL_TERM_ERR);
+            return;
+        }
     }
     iface = netif_get(0);
     if (!iface) {
@@ -603,7 +610,12 @@ static void cmd_ping(const char* arg) {
 
     ip_to_str_term(dst, buf);
     term_puts("PING ", COL_TERM_FG);
-    term_puts(buf, COL_TERM_FG);
+    term_puts(display_host, COL_TERM_FG);
+    if (!str_to_ip_term(display_host, &(uint32_t){0})) {
+        term_puts(" (", COL_TERM_FG);
+        term_puts(buf, COL_TERM_FG);
+        term_puts(")", COL_TERM_FG);
+    }
     term_puts(" ... ", COL_TERM_FG);
 
     ping_replied = 0;
