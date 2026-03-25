@@ -388,6 +388,16 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
     /* 4. Paint overlays on top of everything (launcher / start menu) */
     desktop_paint_overlays(&bb_surf, dx0, dy0, dx1, dy1);
 
+    /* 5. Paint notification toasts (only if overlapping this dirty rect) */
+    if (notify_count() > 0) {
+        int nrx = scr_w - 260 - 10;  /* NOTIFY_W + NOTIFY_RIGHT_MARGIN */
+        int nry = 10;                /* NOTIFY_TOP_MARGIN */
+        int nrh = notify_count() * 60; /* NOTIFY_H + NOTIFY_GAP per toast */
+        if (!(nrx + 260 <= dx0 || dx1 <= nrx ||
+              nry + nrh <= dy0 || dy1 <= nry))
+            notify_paint(&bb_surf, scr_w);
+    }
+
     /* track pixels copied */
     metrics.pixels_copied += (unsigned int)(dr->w * dr->h);
 }
@@ -523,11 +533,11 @@ static void rebuild_bg(gui_window_t *skip_win)
         return;
     }
 
-    /* 4. Compute the dragged window's on-screen rect (clipped) */
-    wx0 = skip_win->x;
-    wy0 = skip_win->y;
-    wx1 = skip_win->x + skip_win->width;
-    wy1 = skip_win->y + skip_win->height;
+    /* 4. Compute the dragged window's on-screen rect + shadow (clipped) */
+    wx0 = skip_win->x - THEME_SHADOW_EXTENT;
+    wy0 = skip_win->y - THEME_SHADOW_EXTENT;
+    wx1 = skip_win->x + skip_win->width + THEME_SHADOW_EXTENT;
+    wy1 = skip_win->y + skip_win->height + THEME_SHADOW_EXTENT;
     if (wx0 < 0) wx0 = 0;
     if (wy0 < 0) wy0 = 0;
     if (wx1 > scr_w) wx1 = scr_w;
@@ -836,6 +846,10 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
         cursor_invalidate_old();
         cursor_set_pos(mouse_x, mouse_y);
         cursor_invalidate_new();
+
+        /* Update dock/taskbar hover state (skip during drag) */
+        if (!*dragging_win && !*resizing_win)
+            desktop_update_hover(mouse_x, mouse_y);
     }
 
     /* dragging a window — defer actual move to frame time */
@@ -941,15 +955,8 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
             *dragging_win = 0;
             drag_pending = 0;
             bg_valid = 0;
-            {
-                int _i, _count = gui_window_count();
-                for (_i = 0; _i < _count; _i++)
-                {
-                    gui_window_t *_w = gui_window_get(_i);
-                    if (_w && _w->needs_redraw && (_w->flags & GUI_WIN_VISIBLE))
-                        gui_dirty_add(_w->x, _w->y, _w->width, _w->height);
-                }
-            }
+            /* Dirty full screen to ensure clean recompose after drag */
+            gui_dirty_screen();
         }
         return;
     }

@@ -86,10 +86,59 @@ int notify_count(void) {
     return c;
 }
 
+/* ---- Local alpha-blend helpers (matching desktop.c pattern) ---- */
+static void n_alpha_fill(gui_surface_t* s, int x0, int y0, int w, int h,
+                          uint32_t col, int alpha) {
+    int row, cx;
+    uint32_t fr = (col >> 16) & 0xFF;
+    uint32_t fg = (col >> 8) & 0xFF;
+    uint32_t fb = col & 0xFF;
+    int ia = 255 - alpha;
+    if (x0 < 0) { w += x0; x0 = 0; }
+    if (y0 < 0) { h += y0; y0 = 0; }
+    if (x0 + w > s->width) w = s->width - x0;
+    if (y0 + h > s->height) h = s->height - y0;
+    if (w <= 0 || h <= 0) return;
+    for (row = y0; row < y0 + h; row++) {
+        uint32_t *p = &s->pixels[row * s->stride + x0];
+        for (cx = 0; cx < w; cx++) {
+            uint32_t bg = p[cx];
+            uint32_t r = (fr * (uint32_t)alpha + ((bg >> 16) & 0xFF) * (uint32_t)ia) / 255;
+            uint32_t g = (fg * (uint32_t)alpha + ((bg >> 8) & 0xFF) * (uint32_t)ia) / 255;
+            uint32_t b = (fb * (uint32_t)alpha + (bg & 0xFF) * (uint32_t)ia) / 255;
+            p[cx] = (r << 16) | (g << 8) | b;
+        }
+    }
+}
+
+static void n_rounded_rect(gui_surface_t* s, int x, int y, int w, int h,
+                            int r, uint32_t col, int alpha) {
+    if (r < 1 || h < 4 || w < 4) { n_alpha_fill(s, x, y, w, h, col, alpha); return; }
+    if (r > 3) r = 3;
+    if (r == 1) {
+        n_alpha_fill(s, x + 1, y, w - 2, 1, col, alpha);
+        n_alpha_fill(s, x, y + 1, w, h - 2, col, alpha);
+        n_alpha_fill(s, x + 1, y + h - 1, w - 2, 1, col, alpha);
+    } else if (r == 2) {
+        n_alpha_fill(s, x + 2, y, w - 4, 1, col, alpha);
+        n_alpha_fill(s, x + 1, y + 1, w - 2, 1, col, alpha);
+        n_alpha_fill(s, x, y + 2, w, h - 4, col, alpha);
+        n_alpha_fill(s, x + 1, y + h - 2, w - 2, 1, col, alpha);
+        n_alpha_fill(s, x + 2, y + h - 1, w - 4, 1, col, alpha);
+    } else {
+        n_alpha_fill(s, x + 3, y, w - 6, 1, col, alpha);
+        n_alpha_fill(s, x + 2, y + 1, w - 4, 1, col, alpha);
+        n_alpha_fill(s, x + 1, y + 2, w - 2, 1, col, alpha);
+        n_alpha_fill(s, x, y + 3, w, h - 6, col, alpha);
+        n_alpha_fill(s, x + 1, y + h - 3, w - 2, 1, col, alpha);
+        n_alpha_fill(s, x + 2, y + h - 2, w - 4, 1, col, alpha);
+        n_alpha_fill(s, x + 3, y + h - 1, w - 6, 1, col, alpha);
+    }
+}
+
 void notify_paint(void* surface, int screen_w) {
     gui_surface_t* s = (gui_surface_t*)surface;
     int i, y;
-    int drawn = 0;
 
     if (!s || !s->pixels) return;
 
@@ -101,34 +150,30 @@ void notify_paint(void* surface, int screen_w) {
         int nx = screen_w - NOTIFY_W - NOTIFY_RIGHT_MARGIN;
         int ny = y;
 
-        /* Background */
-        gui_surface_fill(s, nx, ny, NOTIFY_W, NOTIFY_H, COL_N_BG);
+        /* Shadow (subtle, 1-layer) */
+        n_alpha_fill(s, nx + 2, ny + 2, NOTIFY_W, NOTIFY_H, 0x000000, 20);
 
-        /* Border (top and bottom) */
-        gui_surface_hline(s, nx, ny, NOTIFY_W, COL_N_BORDER);
-        gui_surface_hline(s, nx, ny + NOTIFY_H - 1, NOTIFY_W, COL_N_BORDER);
-        /* Sides */
-        {
-            int r;
-            for (r = ny; r < ny + NOTIFY_H; r++) {
-                gui_surface_putpixel(s, nx, r, COL_N_BORDER);
-                gui_surface_putpixel(s, nx + NOTIFY_W - 1, r, COL_N_BORDER);
-            }
-        }
+        /* Background — translucent glass */
+        n_rounded_rect(s, nx, ny, NOTIFY_W, NOTIFY_H, 3, COL_N_BG, 220);
+
+        /* Accent line at top */
+        n_alpha_fill(s, nx + 3, ny, NOTIFY_W - 6, 1, THEME_COL_ACCENT, 40);
+
+        /* Left accent bar */
+        n_alpha_fill(s, nx, ny + 3, 2, NOTIFY_H - 6, THEME_COL_ACCENT, 100);
 
         /* Title */
-        gui_surface_draw_string_n(s, nx + NOTIFY_PAD, ny + 6,
+        gui_surface_draw_string_n(s, nx + NOTIFY_PAD + 4, ny + 8,
                                   toasts[i].title,
-                                  (NOTIFY_W - 2 * NOTIFY_PAD) / GUI_FONT_W,
-                                  COL_N_TITLE, 0, 0);
+                                  (NOTIFY_W - 2 * NOTIFY_PAD - 4) / GUI_FONT_W,
+                                  THEME_COL_ACCENT, 0, 0);
 
         /* Body */
-        gui_surface_draw_string_n(s, nx + NOTIFY_PAD, ny + 6 + GUI_FONT_H + 4,
+        gui_surface_draw_string_n(s, nx + NOTIFY_PAD + 4, ny + 8 + GUI_FONT_H + 4,
                                   toasts[i].body,
-                                  (NOTIFY_W - 2 * NOTIFY_PAD) / GUI_FONT_W,
+                                  (NOTIFY_W - 2 * NOTIFY_PAD - 4) / GUI_FONT_W,
                                   COL_N_BODY, 0, 0);
 
         y += NOTIFY_H + NOTIFY_GAP;
-        drawn++;
     }
 }

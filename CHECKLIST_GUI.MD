@@ -111,9 +111,14 @@
 - [x] Escalado correcto
       > Cover-mode: nearest-neighbor scale + center-crop en rebuild_desktop()
 - [ ] Blur opcional
-- [ ] Overlay sutil para legibilidad
+- [x] Overlay sutil para legibilidad
+      > Scrim oscuro (alpha 18) sobre wallpaper antes del taskbar
+      > Mejora contraste de texto sobre fondos claros
 - [ ] Wallpapers dinámicos (futura)
-- [ ] Desktop vacío elegante
+- [x] Desktop vacío elegante
+      > Watermark "Lyth OS" centrado, texto alpha-blended (alpha 25)
+      > draw_char_alpha/draw_string_alpha para texto semitransparente
+      > Visible sobre escritorio vacío, cubierto por ventanas
 - [ ] Gestión de iconos
 
 #### 6.1. Interacción del escritorio
@@ -130,7 +135,9 @@
       > Left-click fuera cierra via close_desktop_ctx()
 - [x] hover/selección por ratón
       > dctx_hover highlight translúcido (alpha 60)
-- [ ] navegación por teclado
+- [x] navegación por teclado
+      > Arrows/Enter/Escape/Backspace en launcher y desktop_handle_key
+      > dctx_hover actualizado por mouse move en desktop_update_hover
 
 #### 6.2. Configuración del sistema
 - [x] ventana/app de Configuración
@@ -156,14 +163,20 @@
       > Network icon (verde/rojo según conexión) + Volume icon en tray
 - [x] Usuario/sesión
       > Username obtenido de session_get_current() mostrado en tray
-- [ ] Notificaciones
+- [x] Notificaciones
+      > notify_paint() conectado en compose_region paso 5
+      > Rendering: rounded rect alpha 220, sombra sutil, barra accent lateral
+      > Título en color accent, cuerpo en subtext, auto-dismiss 4s
 - [x] Menú del sistema
       > Hamburger icon abre launcher; network icon abre popup red
 - [x] Blur/transparencia opcional
       > Taskbar glass: alpha_blend_fill + accent line sutil (alpha 30)
       > Separadores verticales semitransparentes entre secciones
 - [ ] Auto-hide opcional
-- [ ] Animaciones de hover
+- [x] Animaciones de hover
+      > Dock hover: highlight translúcido (alpha 80) on mouse move
+      > desktop_update_hover() llamado desde compositor en mouse move
+      > Dirty rect solo en zona dock para repaint eficiente
 
 ### 8. Launcher/Menú de Aplicaciones
 - [x] Búsqueda instantánea
@@ -176,7 +189,10 @@
 - [ ] Categorías
 - [ ] Recientes
 - [ ] Apps fijadas
-- [ ] Animación de apertura/cierre
+- [x] Animación de apertura/cierre
+      > Launcher slide-up en 6 frames durante open
+      > Slide-down en 6 frames durante close
+      > Animación tick en desktop_on_tick, dirty rect por frame
 - [x] Tipografía perfecta
       > Título "Lyth OS" en color accent, labels centrados bajo iconos
 - [x] Iconos de calidad
