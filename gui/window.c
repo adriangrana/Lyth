@@ -1,4 +1,6 @@
 #include "window.h"
+#include "compositor.h"
+#include "desktop.h"
 #include "font_psf.h"
 #include "string.h"
 #include "physmem.h"
@@ -181,6 +183,16 @@ gui_window_t* gui_window_create(const char* title, int x, int y,
             gui_surface_alloc(&win->surface, w, h);
 
             window_used[i] = 1;
+
+            /* bring to front and focus */
+            gui_window_focus(win);
+
+            /* ensure the full window is composited on next frame */
+            gui_dirty_add(x, y, w, h);
+
+            /* taskbar needs to show the new window item */
+            desktop_invalidate_taskbar();
+
             return win;
         }
     }
@@ -190,6 +202,10 @@ gui_window_t* gui_window_create(const char* title, int x, int y,
 void gui_window_destroy(gui_window_t* win) {
     int i;
     if (!win) return;
+    /* dirty the area so desktop underneath gets recomposed */
+    gui_dirty_add(win->x, win->y, win->width, win->height);
+    /* taskbar needs to remove the window item */
+    desktop_invalidate_taskbar();
     for (i = 0; i < GUI_MAX_WINDOWS; i++) {
         if (window_used[i] && &windows[i] == win) {
             gui_surface_free(&win->surface);
@@ -214,15 +230,28 @@ void gui_window_focus(gui_window_t* win) {
 }
 
 void gui_window_move(gui_window_t* win, int x, int y) {
-    if (win) {
-        win->x = x;
-        win->y = y;
-        /* surface content is NOT redrawn -- just repositioned */
-    }
+    int old_x, old_y;
+
+    if (!win) return;
+
+    old_x = win->x;
+    old_y = win->y;
+
+    if (old_x == x && old_y == y) return;
+
+    win->x = x;
+    win->y = y;
+
+    /* invalidar zona vieja y zona nueva */
+    gui_dirty_add(old_x, old_y, win->width, win->height);
+    gui_dirty_add(win->x, win->y, win->width, win->height);
 }
 
 void gui_window_invalidate(gui_window_t* win) {
-    if (win) win->needs_redraw = 1;
+    if (win) {
+        win->needs_redraw = 1;
+        gui_dirty_add(win->x, win->y, win->width, win->height);
+    }
 }
 
 int gui_window_content_x(gui_window_t* win) {

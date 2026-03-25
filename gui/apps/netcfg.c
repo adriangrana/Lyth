@@ -75,7 +75,7 @@ static int  status_color;
 
 /* ---- helpers ---- */
 
-static void str_copy(char* dst, const char* src) {
+static void nc_str_copy(char* dst, const char* src) {
     while (*src) *dst++ = *src++;
     *dst = '\0';
 }
@@ -152,11 +152,11 @@ static void redraw(void) {
 static void do_dhcp(void) {
     netif_t* iface = netif_get(0);
     if (!iface) {
-        str_copy(status_msg, "No interface");
+        nc_str_copy(status_msg, "No interface");
         status_color = COL_STATUS_ERR;
         return;
     }
-    str_copy(status_msg, "Sending DHCP discover...");
+    nc_str_copy(status_msg, "Sending DHCP discover...");
     status_color = COL_NET_DIM;
     redraw();
 
@@ -170,11 +170,11 @@ static void do_dhcp(void) {
             e1000_poll_rx();
         }
         if (res->ok) {
-            str_copy(status_msg, "DHCP configured OK.");
+            nc_str_copy(status_msg, "DHCP configured OK.");
             status_color = COL_STATUS_OK;
             load_fields_from_iface(iface);
         } else {
-            str_copy(status_msg, "DHCP failed / timeout.");
+            nc_str_copy(status_msg, "DHCP failed / timeout.");
             status_color = COL_STATUS_ERR;
         }
     }
@@ -331,21 +331,21 @@ static void net_paint(gui_window_t* win) {
 static void apply_config(void) {
     netif_t* iface = netif_get(0);
     if (!iface) {
-        str_copy(status_msg, "No interface");
+        nc_str_copy(status_msg, "No interface");
         status_color = COL_STATUS_ERR;
         return;
     }
 
     uint32_t ip, mask, gw, dns;
-    if (!str_to_ip(field_buf[0], &ip))   { str_copy(status_msg, "Invalid IP address");  status_color = COL_STATUS_ERR; return; }
-    if (!str_to_ip(field_buf[1], &mask))  { str_copy(status_msg, "Invalid netmask");     status_color = COL_STATUS_ERR; return; }
-    if (!str_to_ip(field_buf[2], &gw))    { str_copy(status_msg, "Invalid gateway");     status_color = COL_STATUS_ERR; return; }
-    if (!str_to_ip(field_buf[3], &dns))   { str_copy(status_msg, "Invalid DNS address"); status_color = COL_STATUS_ERR; return; }
+    if (!str_to_ip(field_buf[0], &ip))   { nc_str_copy(status_msg, "Invalid IP address");  status_color = COL_STATUS_ERR; return; }
+    if (!str_to_ip(field_buf[1], &mask))  { nc_str_copy(status_msg, "Invalid netmask");     status_color = COL_STATUS_ERR; return; }
+    if (!str_to_ip(field_buf[2], &gw))    { nc_str_copy(status_msg, "Invalid gateway");     status_color = COL_STATUS_ERR; return; }
+    if (!str_to_ip(field_buf[3], &dns))   { nc_str_copy(status_msg, "Invalid DNS address"); status_color = COL_STATUS_ERR; return; }
 
     netif_set_addr(iface, ip, mask, gw);
     iface->dns_server = dns;
 
-    str_copy(status_msg, "Configuration applied.");
+    nc_str_copy(status_msg, "Configuration applied.");
     status_color = COL_STATUS_OK;
 }
 
@@ -507,7 +507,7 @@ void netcfg_app_open(void) {
         } else {
             int i;
             for (i = 0; i < NUM_FIELDS; i++) {
-                str_copy(field_buf[i], "0.0.0.0");
+                nc_str_copy(field_buf[i], "0.0.0.0");
                 field_len[i] = 7;
                 field_cursor[i] = 7;
             }

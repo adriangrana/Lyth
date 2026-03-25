@@ -1,0 +1,63 @@
+Si quieres que esto llegue lejos, trabaja con estos cuatro documentos vivos desde ya:
+
+Documento 1 — Arquitectura gráfica
+
+Define:
+
+compositor
+renderer
+surfaces
+scene graph
+damage
+present
+input-to-frame
+Documento 2 — Design system
+
+Define:
+
+colores
+fuentes
+spacing
+radios
+sombras
+componentes
+iconos
+motion rules
+Documento 3 — Performance targets
+
+Define:
+
+objetivos por interacción
+métricas
+presupuesto por frame
+presupuesto de efectos
+presupuesto de VRAM/CPU
+Documento 4 — Product vision visual
+
+Define:
+
+qué hace único a Lyth
+qué no vas a copiar
+qué emociones debe transmitir
+capturas objetivo / moodboards internos
+
+Sin eso, terminas programando por impulsos.
+
+El checklist mínimo indispensable para decir “vamos en serio”
+
+Si quieres una versión corta y dura, esto es lo mínimo:
+
+ compositor limpio sin redraw global arbitrario
+ drag, resize y focus impecables
+ render backend abstracto
+ backend GPU
+ alpha, sombras y blur bien hechos
+ tipografía excelente
+ design system completo
+ shell moderno y coherente
+ apps del sistema consistentes
+ animaciones suaves y sobrias
+ medición obsesiva de rendimiento
+ identidad visual propia
+
+Eso es lo que necesitas para que la vista sea de 10 de verdad, no de captura.

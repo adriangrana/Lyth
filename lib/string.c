@@ -175,3 +175,38 @@ unsigned int str_length(const char* str) {
 
     return length;
 }
+
+void str_copy(char* dst, const char* src, int dst_size) {
+    int i = 0;
+    if (dst_size <= 0) return;
+    while (i < dst_size - 1 && src[i] != '\0') {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+void str_append(char* dst, const char* src, int dst_size) {
+    int dlen = 0, i = 0;
+    while (dlen < dst_size && dst[dlen] != '\0') dlen++;
+    while (dlen + i < dst_size - 1 && src[i] != '\0') {
+        dst[dlen + i] = src[i];
+        i++;
+    }
+    if (dlen + i < dst_size) dst[dlen + i] = '\0';
+}
+
+int str_compare(const char* a, const char* b) {
+    return strcmp(a, b);
+}
+
+void uint_to_str(unsigned int val, char* buf, int buf_size) {
+    char tmp[12];
+    int len = 0, i;
+    if (buf_size <= 0) return;
+    if (val == 0) { tmp[len++] = '0'; }
+    else { while (val) { tmp[len++] = '0' + (val % 10); val /= 10; } }
+    for (i = 0; i < len && i < buf_size - 1; i++)
+        buf[i] = tmp[len - 1 - i];
+    buf[i] = '\0';
+}

@@ -20,4 +20,16 @@ int str_starts_with_ignore_case(const char* str, const char* prefix);
 const char* str_after_prefix(const char* str, const char* prefix);
 unsigned int str_length(const char* str);
 
+/* Copy src into dst, at most dst_size-1 chars, always NUL-terminated. */
+void str_copy(char* dst, const char* src, int dst_size);
+
+/* Append src to the end of dst, respecting dst_size total capacity. */
+void str_append(char* dst, const char* src, int dst_size);
+
+/* Compare two strings lexicographically (wrapper around strcmp). */
+int str_compare(const char* a, const char* b);
+
+/* Convert unsigned int to decimal string.  Writes at most buf_size-1 chars. */
+void uint_to_str(unsigned int val, char* buf, int buf_size);
+
 #endif

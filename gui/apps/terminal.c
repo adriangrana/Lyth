@@ -26,6 +26,7 @@
 #include "dns.h"
 #include "icmp.h"
 #include "e1000.h"
+#include "session.h"
 
 #define TERM_COLS    80
 #define TERM_ROWS    24
@@ -136,8 +137,15 @@ static void term_puts(const char* s, uint32_t color) {
 }
 
 static void term_prompt(void) {
+    const session_t* sess = session_get_current();
+    if (sess) {
+        term_puts(sess->username, COL_TERM_INFO);
+        term_putchar('@', COL_TERM_FG);
+    }
+    term_puts("lyth", COL_TERM_PROMPT);
+    term_putchar(':', COL_TERM_FG);
     term_puts(term.cwd, COL_TERM_PROMPT);
-    term_puts("> ", COL_TERM_FG);
+    term_puts("$ ", COL_TERM_FG);
     term.cmd_len = 0;
     term.hist_pos = -1;
 }
@@ -751,7 +759,13 @@ static void cmd_route(void) {
 }
 
 static void cmd_whoami(void) {
-    term_puts("root\n", COL_TERM_FG);
+    const session_t* sess = session_get_current();
+    if (sess) {
+        term_puts(sess->username, COL_TERM_FG);
+    } else {
+        term_puts("root", COL_TERM_FG);
+    }
+    term_putchar('\n', COL_TERM_FG);
 }
 
 static void cmd_hostname(void) {
@@ -891,13 +905,71 @@ static void term_paint(gui_window_t* win) {
     }
 }
 
+/* ---- Incremental surface update helpers ---- */
+
+static void term_get_layout(gui_window_t* win, int* out_ox, int* out_oy,
+                            int* out_cw, int* out_ch) {
+    *out_ox = GUI_BORDER_WIDTH + 4;
+    *out_oy = (win->flags & GUI_WIN_NO_DECOR) ? 4 : GUI_TITLEBAR_HEIGHT + 2;
+    *out_cw = (win->width - *out_ox * 2) / FONT_PSF_WIDTH;
+    *out_ch = (win->height - *out_oy - 4) / FONT_PSF_HEIGHT;
+    if (*out_cw > TERM_COLS) *out_cw = TERM_COLS;
+    if (*out_ch > TERM_ROWS) *out_ch = TERM_ROWS;
+}
+
+/* Redraw a single visible row into the window surface (no needs_redraw) */
+static void term_redraw_line(gui_window_t* win, int vis_row) {
+    gui_surface_t* s = &win->surface;
+    int ox, oy, cw, ch, col, buf_r;
+    term_get_layout(win, &ox, &oy, &cw, &ch);
+    if (vis_row < 0 || vis_row >= ch) return;
+    buf_r = term.scroll_top + vis_row;
+    if (buf_r < 0 || buf_r >= TERM_BUF_ROWS) return;
+    gui_surface_fill(s, ox, oy + vis_row * FONT_PSF_HEIGHT,
+                     cw * FONT_PSF_WIDTH, FONT_PSF_HEIGHT, COL_TERM_BG);
+    for (col = 0; col < cw; col++) {
+        char c = term.cells[buf_r][col];
+        if (c > ' ') {
+            gui_surface_draw_char(s, ox + col * FONT_PSF_WIDTH,
+                                  oy + vis_row * FONT_PSF_HEIGHT,
+                                  (unsigned char)c,
+                                  term.colors[buf_r][col], 0, 0);
+        }
+    }
+    /* draw cursor if it sits on this line */
+    if (term.buf_row - term.scroll_top == vis_row) {
+        gui_surface_fill(s, ox + term.cur_col * FONT_PSF_WIDTH,
+                         oy + vis_row * FONT_PSF_HEIGHT + FONT_PSF_HEIGHT - 2,
+                         FONT_PSF_WIDTH, 2, COL_TERM_CURSOR);
+    }
+}
+
+/* Mark only one visible row as dirty (screen coords) */
+static void term_dirty_line(gui_window_t* win, int vis_row) {
+    int ox, oy, cw, ch;
+    term_get_layout(win, &ox, &oy, &cw, &ch);
+    if (vis_row < 0 || vis_row >= ch) return;
+    gui_dirty_add(win->x + ox, win->y + oy + vis_row * FONT_PSF_HEIGHT,
+                  cw * FONT_PSF_WIDTH, FONT_PSF_HEIGHT);
+}
+
 static void term_on_key(gui_window_t* win, int event_type, char key) {
     if (event_type == INPUT_EVENT_CHAR && key >= 32 && key < 127) {
         if (term.cmd_len < TERM_MAX_CMD - 1) {
+            int old_row = term.buf_row;
+            int old_scroll = term.scroll_top;
             term.cmd[term.cmd_len++] = key;
             term_putchar(key, COL_TERM_FG);
-            win->needs_redraw = 1;
-            gui_dirty_add(win->x, win->y, win->width, win->height);
+            if (term.buf_row == old_row && term.scroll_top == old_scroll) {
+                /* Same line, no scroll: incremental update */
+                int vis_row = term.buf_row - term.scroll_top;
+                term_redraw_line(win, vis_row);
+                term_dirty_line(win, vis_row);
+            } else {
+                /* Wrapped or scrolled: full repaint */
+                win->needs_redraw = 1;
+                gui_dirty_add(win->x, win->y, win->width, win->height);
+            }
         }
     } else if (event_type == INPUT_EVENT_ENTER) {
         term.cmd[term.cmd_len] = '\0';
@@ -914,8 +986,11 @@ static void term_on_key(gui_window_t* win, int event_type, char key) {
                 term.cur_col--;
                 term.cells[term.buf_row][term.cur_col] = ' ';
             }
-            win->needs_redraw = 1;
-            gui_dirty_add(win->x, win->y, win->width, win->height);
+            {
+                int vis_row = term.buf_row - term.scroll_top;
+                term_redraw_line(win, vis_row);
+                term_dirty_line(win, vis_row);
+            }
         }
     } else if (event_type == INPUT_EVENT_UP) {
         /* navigate history up */
@@ -942,8 +1017,11 @@ static void term_on_key(gui_window_t* win, int event_type, char key) {
                 term_putchar(h[j], COL_TERM_FG);
             }
         }
-        win->needs_redraw = 1;
-        gui_dirty_add(win->x, win->y, win->width, win->height);
+        {
+            int vis_row = term.buf_row - term.scroll_top;
+            term_redraw_line(win, vis_row);
+            term_dirty_line(win, vis_row);
+        }
     } else if (event_type == INPUT_EVENT_DOWN) {
         /* navigate history down */
         int avail = term.hist_count < TERM_HISTORY ? term.hist_count : TERM_HISTORY;
@@ -968,8 +1046,11 @@ static void term_on_key(gui_window_t* win, int event_type, char key) {
                 term_putchar(h[j], COL_TERM_FG);
             }
         }
-        win->needs_redraw = 1;
-        gui_dirty_add(win->x, win->y, win->width, win->height);
+        {
+            int vis_row = term.buf_row - term.scroll_top;
+            term_redraw_line(win, vis_row);
+            term_dirty_line(win, vis_row);
+        }
     }
 }
 
@@ -1004,7 +1085,18 @@ void terminal_app_open(void) {
     term_window->on_close = term_on_close;
 
     term_clear();
-    memcpy(term.cwd, "/", 2);
+    /* Set initial cwd to session home directory */
+    {
+        const session_t* sess = session_get_current();
+        if (sess && sess->home[0]) {
+            /* Ensure /home and /home/<user> directories exist */
+            vfs_create("/home", VFS_FLAG_DIR);
+            vfs_create(sess->home, VFS_FLAG_DIR);
+            str_copy(term.cwd, sess->home, sizeof(term.cwd));
+        } else {
+            memcpy(term.cwd, "/", 2);
+        }
+    }
     term.hist_count = 0;
     term.hist_pos = -1;
     term_puts("Lyth Terminal\n", COL_TERM_PROMPT);

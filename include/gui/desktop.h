@@ -24,4 +24,7 @@ int desktop_get_menubar_height(void);
 /* Access to the pre-rendered desktop surface (gradient + taskbar) */
 gui_surface_t* desktop_get_surface(void);
 
+/* Invalidate the desktop cache so the taskbar window list gets redrawn */
+void desktop_invalidate_taskbar(void);
+
 #endif

@@ -94,41 +94,47 @@ static int splash_string_width(const char* str) {
 
 /* ---- Redraw ---- */
 
-static void splash_redraw(void) {
+/* Cached layout positions so we can clear only what changes */
+static int splash_logo_x, splash_logo_y;
+static int splash_msg_y;
+static int splash_bar_x, splash_bar_y;
+
+static void splash_redraw_full(void) {
     int scr_w = (int)fb_width();
     int scr_h = (int)fb_height();
-    int cx, cy;
 
-    /* Background */
+    /* Full background — only called once during splash_show */
     splash_fill_rect(0, 0, scr_w, scr_h, COL_BG);
 
-    /* Logo centred at ~40% height */
-    cx = (scr_w - splash_string_width(LOGO_TEXT)) / 2;
-    cy = (scr_h * 2) / 5 - FONT_PSF_HEIGHT;
-    splash_draw_string(cx, cy, LOGO_TEXT, COL_LOGO);
+    /* Cache layout positions */
+    splash_logo_x = (scr_w - splash_string_width(LOGO_TEXT)) / 2;
+    splash_logo_y = (scr_h * 2) / 5 - FONT_PSF_HEIGHT;
+    splash_msg_y  = splash_logo_y + FONT_PSF_HEIGHT + FONT_PSF_HEIGHT;
+    splash_bar_x  = (scr_w - BAR_WIDTH) / 2;
+    splash_bar_y  = splash_logo_y + FONT_PSF_HEIGHT * 4;
 
-    /* Status message centred below logo */
+    /* Logo (static, drawn once) */
+    splash_draw_string(splash_logo_x, splash_logo_y, LOGO_TEXT, COL_LOGO);
+}
+
+static void splash_redraw(void) {
+    int scr_w = (int)fb_width();
+
+    /* Clear only the message area, then redraw text */
+    splash_fill_rect(0, splash_msg_y, scr_w, FONT_PSF_HEIGHT, COL_BG);
     if (splash_msg[0]) {
         int mx = (scr_w - splash_string_width(splash_msg)) / 2;
-        int my = cy + FONT_PSF_HEIGHT + FONT_PSF_HEIGHT;
-        splash_draw_string(mx, my, splash_msg, COL_MSG);
+        splash_draw_string(mx, splash_msg_y, splash_msg, COL_MSG);
     }
 
-    /* Progress bar centred below message */
+    /* Redraw progress bar (small fixed-size area) */
+    splash_fill_rect(splash_bar_x, splash_bar_y, BAR_WIDTH, BAR_HEIGHT, COL_BAR_BG);
     {
-        int bx = (scr_w - BAR_WIDTH) / 2;
-        int by = cy + FONT_PSF_HEIGHT * 4;
-        int fill_w;
-
-        /* bar background */
-        splash_fill_rect(bx, by, BAR_WIDTH, BAR_HEIGHT, COL_BAR_BG);
-
-        /* bar fill */
-        fill_w = (BAR_WIDTH * splash_progress) / 100;
+        int fill_w = (BAR_WIDTH * splash_progress) / 100;
         if (fill_w < 0) fill_w = 0;
         if (fill_w > BAR_WIDTH) fill_w = BAR_WIDTH;
         if (fill_w > 0) {
-            splash_fill_rect(bx, by, fill_w, BAR_HEIGHT, COL_BAR_FG);
+            splash_fill_rect(splash_bar_x, splash_bar_y, fill_w, BAR_HEIGHT, COL_BAR_FG);
         }
     }
 }
@@ -140,7 +146,7 @@ void splash_show(void) {
     splash_visible = 1;
     splash_progress = 0;
     splash_msg[0] = '\0';
-    splash_redraw();
+    splash_redraw_full();
 }
 
 void splash_set_message(const char* msg) {

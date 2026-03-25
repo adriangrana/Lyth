@@ -186,6 +186,12 @@ void mouse_init(void) {
         return;
     }
 
+    /* Set sample rate to 200 Hz for smoother input during drag.
+     * PS/2 command 0xF3 followed by rate byte (valid: 10,20,40,60,80,100,200) */
+    if (mouse_expect_ack(0xF3, "El raton no acepto comando de sample rate")) {
+        mouse_expect_ack(200, "El raton no acepto sample rate 200");
+    }
+
     if (!mouse_expect_ack(0xF4, "El raton no entro en streaming")) {
         return;
     }

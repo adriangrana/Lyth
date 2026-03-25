@@ -221,6 +221,10 @@ void kernel_main(unsigned long mbi_ptr) {
     vfs_init();
     vfs_mount("/", ramfs_create_root());
     vfs_mount("/dev", devfs_create_root());
+    /* Create essential directory structure */
+    vfs_create("/etc", VFS_FLAG_DIR);
+    vfs_create("/home", VFS_FLAG_DIR);
+    vfs_create("/tmp", VFS_FLAG_DIR);
     task_system_init();
     klog_write(KLOG_LEVEL_INFO, "mem", "Heap, physmem y paging inicializados");
     klog_write(KLOG_LEVEL_INFO, "fs", "FS en memoria listo");

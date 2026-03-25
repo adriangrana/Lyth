@@ -115,6 +115,37 @@ static void tm_paint(gui_window_t* win) {
         oy += 14;
     }
 
+    /* ---- Applications (open windows) ---- */
+    {
+        int wcount = gui_window_count();
+        int wi;
+
+        gui_surface_fill(s, ox, oy, win->width - ox * 2, row_h, 0x2A2B3D);
+        gui_surface_draw_string(s, ox + 4, oy + 2, "Applications", 0x89B4FA, 0, 0);
+        oy += row_h;
+
+        for (wi = 0; wi < wcount; wi++) {
+            gui_window_t* aw = gui_window_get(wi);
+            if (!aw || !(aw->flags & GUI_WIN_VISIBLE)) continue;
+            if (aw == win) continue; /* skip ourselves */
+            if (oy + row_h > win->height - 60) break;
+
+            const char* state_str = (aw->flags & GUI_WIN_MINIMIZED) ? "Minimized" : "Running";
+            uint32_t state_col = (aw->flags & GUI_WIN_MINIMIZED) ? COL_TM_SLEEPING : COL_TM_RUNNING;
+
+            gui_surface_draw_string(s, ox + 8, oy + 2, aw->title, COL_TM_TEXT, 0, 0);
+            gui_surface_draw_string(s, ox + 220, oy + 2, state_str, state_col, 0, 0);
+            oy += row_h;
+            gui_surface_hline(s, ox, oy - 1, win->width - ox * 2, 0x25253A);
+        }
+        oy += 6;
+    }
+
+    /* ---- Processes header ---- */
+    gui_surface_fill(s, ox, oy, win->width - ox * 2, row_h, 0x2A2B3D);
+    gui_surface_draw_string(s, ox + 4, oy + 2, "Processes", 0x89B4FA, 0, 0);
+    oy += row_h;
+
     /* header */
     gui_surface_fill(s, ox, oy, win->width - ox * 2, row_h, COL_TM_HEADER);
     gui_surface_draw_string(s, ox + 4, oy + 2, "PID", COL_TM_TEXT, 0, 0);

@@ -196,6 +196,11 @@ int e1000_init(void) {
 	return 0;
 }
 
+int e1000_link_up(void) {
+	if (!e1000_present || !mmio_base) return 0;
+	return (e1000_read(E1000_STATUS) & (1U << 1)) ? 1 : 0;
+}
+
 int e1000_send(const uint8_t* data, uint16_t len) {
 	if (!e1000_present || len == 0)
 		return -1;

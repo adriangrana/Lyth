@@ -174,7 +174,39 @@ static void set_paint(gui_window_t* win) {
     int_to_str(met.coalesced_moves, buf, sizeof(buf));
     gui_surface_draw_string(s, ox + 8, oy, "Coalesced:", COL_SET_LABEL, 0, 0);
     gui_surface_draw_string(s, ox + 120, oy, buf, COL_SET_DIM, 0, 0);
-    oy += row_h + 8;
+    oy += row_h;
+
+    /* drag instrumentation (only shown when dragging) */
+    if (met.drag_active) {
+        /* mouse pos */
+        int_to_str(met.drag_mouse_x, buf, sizeof(buf));
+        { int p = (int)strlen(buf); buf[p] = ','; int_to_str(met.drag_mouse_y, buf + p + 1, (int)sizeof(buf) - p - 1); }
+        gui_surface_draw_string(s, ox + 8, oy, "Mouse:", COL_SET_LABEL, 0, 0);
+        gui_surface_draw_string(s, ox + 120, oy, buf, COL_SET_TEXT, 0, 0);
+        oy += row_h;
+
+        /* window pos */
+        int_to_str(met.drag_win_x, buf, sizeof(buf));
+        { int p = (int)strlen(buf); buf[p] = ','; int_to_str(met.drag_win_y, buf + p + 1, (int)sizeof(buf) - p - 1); }
+        gui_surface_draw_string(s, ox + 8, oy, "Win pos:", COL_SET_LABEL, 0, 0);
+        gui_surface_draw_string(s, ox + 120, oy, buf, COL_SET_TEXT, 0, 0);
+        oy += row_h;
+
+        /* moves/sec */
+        int_to_str(met.drag_move_count, buf, sizeof(buf));
+        { int p = (int)strlen(buf); memcpy(buf + p, " /s", 4); }
+        gui_surface_draw_string(s, ox + 8, oy, "Moves:", COL_SET_LABEL, 0, 0);
+        gui_surface_draw_string(s, ox + 120, oy, buf, COL_SET_TEXT, 0, 0);
+        oy += row_h;
+
+        /* pending iters/sec */
+        int_to_str(met.drag_pending_count, buf, sizeof(buf));
+        { int p = (int)strlen(buf); memcpy(buf + p, " /s", 4); }
+        gui_surface_draw_string(s, ox + 8, oy, "Pending:", COL_SET_LABEL, 0, 0);
+        gui_surface_draw_string(s, ox + 120, oy, buf, COL_SET_DIM, 0, 0);
+        oy += row_h;
+    }
+    oy += 8;
 
     gui_surface_draw_string(s, ox, oy,
         "Press R to refresh metrics.", COL_SET_DIM, 0, 0);

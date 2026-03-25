@@ -114,11 +114,11 @@ static void normal_boot_step(void) {
 
         klog_write(KLOG_LEVEL_INFO, "init", "User session started");
 
-        /* Auto-configure network via DHCP */
+        /* Auto-configure network via DHCP (only if link is up) */
         {
             netif_t* iface = netif_get_default();
-            if (iface && iface->ip_addr == 0) {
-                klog_write(KLOG_LEVEL_INFO, "init", "Starting DHCP...");
+            if (iface && iface->ip_addr == 0 && e1000_link_up()) {
+                klog_write(KLOG_LEVEL_INFO, "init", "Link up, starting DHCP...");
                 dhcp_discover(iface);
                 {
                     unsigned int deadline = timer_get_uptime_ms() + 3000;
@@ -132,6 +132,8 @@ static void normal_boot_step(void) {
                     klog_write(KLOG_LEVEL_INFO, "init", "DHCP OK");
                 else
                     klog_write(KLOG_LEVEL_WARN, "init", "DHCP timeout");
+            } else if (iface && iface->ip_addr == 0) {
+                klog_write(KLOG_LEVEL_INFO, "init", "No link, skipping DHCP");
             }
         }
 

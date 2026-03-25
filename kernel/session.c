@@ -15,11 +15,7 @@ static session_t current_session;
 
 /* ---- helpers ---- */
 
-static void str_copy(char* dst, const char* src, int max) {
-    int i = 0;
-    while (src[i] && i + 1 < max) { dst[i] = src[i]; i++; }
-    dst[i] = '\0';
-}
+/* str_copy is now provided by lib/string.c */
 
 /* ---- public API ---- */
 
