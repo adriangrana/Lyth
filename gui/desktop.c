@@ -9,6 +9,7 @@
 #include "desktop.h"
 #include "compositor.h"
 #include "window.h"
+#include "theme.h"
 #include "font_psf.h"
 #include "input.h"
 #include "string.h"
@@ -34,66 +35,66 @@ void viewer_app_open(void);
 static void power_shutdown(void) { acpi_shutdown(); }
 static void power_reboot(void) { acpi_reboot(); }
 
-/* ---- colours (modern dark theme with translucent-style panels) ---- */
-#define COL_BG_TOP       0x3A7BD5   /* sky blue top */
-#define COL_BG_MID       0x5B9BD5   /* lighter sky */
-#define COL_BG_BOT       0x87CEEB   /* light blue bottom */
+/* ---- colours: all sourced from theme.h ---- */
+#define COL_BG_TOP       THEME_COL_WALL_TOP
+#define COL_BG_MID       THEME_COL_WALL_MID
+#define COL_BG_BOT       THEME_COL_WALL_BOT
 
-#define COL_TASKBAR_BG   0x1A2332   /* dark semi-transparent look */
-#define COL_TASKBAR_SEP  0x2A3A4E
-#define COL_TASKBAR_TEXT 0xE8ECF1
-#define COL_TASKBAR_DIM  0x7B8DA0
+#define COL_TASKBAR_BG   THEME_COL_TASKBAR_BG
+#define COL_TASKBAR_SEP  THEME_COL_TASKBAR_SEP
+#define COL_TASKBAR_TEXT THEME_COL_TASKBAR_TEXT
+#define COL_TASKBAR_DIM  THEME_COL_TASKBAR_DIM
 
-#define COL_DOCK_BG      0x263043   /* dock background */
-#define COL_DOCK_HOVER   0x3B5068
-#define COL_DOCK_ACTIVE  0x3B82F6   /* accent blue */
-#define COL_DOCK_DOT     0x3B82F6   /* running indicator dot */
+#define COL_DOCK_BG      THEME_COL_DOCK_BG
+#define COL_DOCK_HOVER   THEME_COL_DOCK_HOVER
+#define COL_DOCK_ACTIVE  THEME_COL_DOCK_ACTIVE
+#define COL_DOCK_DOT     THEME_COL_DOCK_DOT
 
-#define COL_TRAY_TEXT    0xE8ECF1
-#define COL_TRAY_DIM     0x7B8DA0
+#define COL_TRAY_TEXT    THEME_COL_TASKBAR_TEXT
+#define COL_TRAY_DIM     THEME_COL_TASKBAR_DIM
 
 /* Launcher (app menu) colours */
-#define COL_LAUNCH_BG    0x1A2332
-#define COL_LAUNCH_PANEL 0x1E2A3A
-#define COL_LAUNCH_SEARCH_BG 0x263043
-#define COL_LAUNCH_TEXT  0xE8ECF1
-#define COL_LAUNCH_DIM   0x7B8DA0
-#define COL_LAUNCH_HOVER 0x3B82F6
-#define COL_LAUNCH_SEP   0x2A3A4E
-#define COL_LAUNCH_ICON_BG 0x2A3A4E
-#define COL_LAUNCH_FOLDER  0x263043
+#define COL_LAUNCH_BG    THEME_COL_LAUNCHER_BG
+#define COL_LAUNCH_PANEL THEME_COL_LAUNCHER_PANEL
+#define COL_LAUNCH_SEARCH_BG THEME_COL_LAUNCHER_SEARCH
+#define COL_LAUNCH_TEXT  THEME_COL_LAUNCHER_TEXT
+#define COL_LAUNCH_DIM   THEME_COL_LAUNCHER_DIM
+#define COL_LAUNCH_HOVER THEME_COL_LAUNCHER_HOVER
+#define COL_LAUNCH_SEP   THEME_COL_LAUNCHER_SEP
+#define COL_LAUNCH_ICON_BG THEME_COL_LAUNCHER_ICON
+#define COL_LAUNCH_FOLDER  THEME_COL_DOCK_BG
 
 /* Context menu */
-#define COL_CTX_BG       0x1E2A3A
-#define COL_CTX_HOVER    0x3B82F6
-#define COL_CTX_TEXT     0xE8ECF1
-#define COL_CTX_BORDER   0x2A3A4E
+#define COL_CTX_BG       THEME_COL_POPUP_BG
+#define COL_CTX_HOVER    THEME_COL_POPUP_HOVER
+#define COL_CTX_TEXT     THEME_COL_POPUP_TEXT
+#define COL_CTX_BORDER   THEME_COL_POPUP_BORDER
 
 /* Network / control panel */
-#define COL_POPUP_BG     0x1E2A3A
-#define COL_POPUP_BORDER 0x2A3A4E
-#define COL_POPUP_TEXT   0xE8ECF1
-#define COL_POPUP_DIM    0x7B8DA0
-#define COL_POPUP_BTN    0x3B82F6
+#define COL_POPUP_BG     THEME_COL_POPUP_BG
+#define COL_POPUP_BORDER THEME_COL_POPUP_BORDER
+#define COL_POPUP_TEXT   THEME_COL_POPUP_TEXT
+#define COL_POPUP_DIM    THEME_COL_POPUP_DIM
+#define COL_POPUP_BTN    THEME_COL_FOCUS
 
-#define COL_NET_GREEN    0x40C057
-#define COL_NET_RED      0xF03E3E
+#define COL_NET_GREEN    THEME_COL_SUCCESS
+#define COL_NET_RED      THEME_COL_ERROR
 
 /* Running app label */
-#define COL_APP_LABEL_BG 0x263043
-#define COL_APP_LABEL_FG 0xE8ECF1
+#define COL_APP_LABEL_BG THEME_COL_DOCK_BG
+#define COL_APP_LABEL_FG THEME_COL_TEXT
 
 /* ---- dock icon colours (per-app) ---- */
-#define COL_ICON_FILES    0x4FC3F7
-#define COL_ICON_SETTINGS 0x78909C
-#define COL_ICON_TERMINAL 0x263238
-#define COL_ICON_CALC     0xEF5350
-#define COL_ICON_EDITOR   0xFFB74D
-#define COL_ICON_VIEWER   0xAB47BC
-#define COL_ICON_TASKMAN  0x66BB6A
-#define COL_ICON_NETCFG   0x42A5F5
-#define COL_ICON_ABOUT    0x5C6BC0
-#define COL_ICON_SYSINFO  0x26A69A
+#define COL_ICON_FILES    THEME_COL_ICON_FILES
+#define COL_ICON_SETTINGS THEME_COL_ICON_SETTINGS
+#define COL_ICON_TERMINAL THEME_COL_ICON_TERMINAL
+#define COL_ICON_CALC     THEME_COL_ICON_CALC
+#define COL_ICON_EDITOR   THEME_COL_ICON_EDITOR
+#define COL_ICON_VIEWER   THEME_COL_ICON_VIEWER
+#define COL_ICON_TASKMAN  THEME_COL_ICON_TASKMAN
+#define COL_ICON_NETCFG   THEME_COL_ICON_NETCFG
+#define COL_ICON_ABOUT    THEME_COL_ICON_ABOUT
+#define COL_ICON_SYSINFO  THEME_COL_ICON_SYSINFO
 
 /* ---- dimensions ---- */
 #define TASKBAR_H        GUI_TASKBAR_HEIGHT

@@ -12,18 +12,19 @@
 #include "font_psf.h"
 #include "string.h"
 #include "vfs.h"
+#include "theme.h"
 
-/* ---- Colours (Catppuccin Mocha) ---- */
-#define COL_DLG_BG      0x1E1E2E
-#define COL_DLG_TEXT     0xCDD6F4
-#define COL_DLG_DIM      0x6C7086
-#define COL_DLG_ACCENT   0x89B4FA
-#define COL_DLG_PANEL    0x181825
-#define COL_DLG_BORDER   0x313244
-#define COL_DLG_SELECT   0x45475A
-#define COL_DLG_DIR      0xA6E3A1
-#define COL_DLG_BTN_BG   0x313244
-#define COL_DLG_BTN_HL   0x89B4FA
+/* ---- Colours (from theme.h) ---- */
+#define COL_DLG_BG      THEME_COL_BASE
+#define COL_DLG_TEXT     THEME_COL_TEXT
+#define COL_DLG_DIM      THEME_COL_DIM
+#define COL_DLG_ACCENT   THEME_COL_ACCENT
+#define COL_DLG_PANEL    THEME_COL_MANTLE
+#define COL_DLG_BORDER   THEME_COL_BORDER
+#define COL_DLG_SELECT   THEME_COL_SURFACE1
+#define COL_DLG_DIR      THEME_COL_SUCCESS
+#define COL_DLG_BTN_BG   THEME_COL_SURFACE0
+#define COL_DLG_BTN_HL   THEME_COL_ACCENT
 
 /* ---- Layout ---- */
 #define DLG_W          440

@@ -8,18 +8,19 @@
 #include "viewer.h"
 #include "compositor.h"
 #include "window.h"
+#include "theme.h"
 #include "font_psf.h"
 #include "string.h"
 #include "vfs.h"
 #include "heap.h"
 
-/* ---- Colours (Catppuccin Mocha) ---- */
-#define COL_V_BG      0x1E1E2E
-#define COL_V_TEXT     0xCDD6F4
-#define COL_V_DIM      0x6C7086
-#define COL_V_ACCENT   0x89B4FA
-#define COL_V_PANEL    0x181825
-#define COL_V_BORDER   0x313244
+/* ---- Colours (from theme.h) ---- */
+#define COL_V_BG      THEME_COL_BASE
+#define COL_V_TEXT     THEME_COL_TEXT
+#define COL_V_DIM      THEME_COL_DIM
+#define COL_V_ACCENT   THEME_COL_ACCENT
+#define COL_V_PANEL    THEME_COL_MANTLE
+#define COL_V_BORDER   THEME_COL_BORDER
 
 /* ---- Layout ---- */
 #define VW_W           560
@@ -196,6 +197,9 @@ static void viewer_paint(gui_window_t* win) {
 
     if (!s->pixels) return;
     gui_surface_clear(s, COL_V_BG);
+
+    /* Decorations */
+    gui_window_draw_decorations(win);
 
     if (!vst.buf) {
         gui_surface_draw_string(s, cx + VW_PAD, cy + VW_PAD,

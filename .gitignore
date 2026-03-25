@@ -41,3 +41,8 @@ dist/
 .DS_Store
 Thumbs.db
 *.bak
+
+# =========================
+# Node.js (font tools)
+# =========================
+node_modules/

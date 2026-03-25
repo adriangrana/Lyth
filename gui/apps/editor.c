@@ -8,27 +8,28 @@
 #include "editor.h"
 #include "compositor.h"
 #include "window.h"
+#include "theme.h"
 #include "font_psf.h"
 #include "string.h"
 #include "vfs.h"
 #include "timer.h"
 #include "input.h"
 
-/* ---- Colours (Catppuccin Mocha) ---- */
-#define COL_ED_BG       0x1E1E2E
-#define COL_ED_TEXT      0xCDD6F4
-#define COL_ED_DIM       0x6C7086
-#define COL_ED_ACCENT    0x89B4FA
-#define COL_ED_GUTTER    0x181825
-#define COL_ED_LINENUM   0x585B70
-#define COL_ED_CURSOR    0xF5C2E7
-#define COL_ED_SELECT    0x45475A
-#define COL_ED_STATUS    0x11111B
-#define COL_ED_STATUS_FG 0xA6ADC8
-#define COL_ED_MODIFIED  0xF9E2AF
-#define COL_ED_BORDER    0x313244
-#define COL_ED_ERR       0xF38BA8
-#define COL_ED_OK        0xA6E3A1
+/* ---- Colours (from theme.h) ---- */
+#define COL_ED_BG       THEME_COL_BASE
+#define COL_ED_TEXT      THEME_COL_TEXT
+#define COL_ED_DIM       THEME_COL_DIM
+#define COL_ED_ACCENT    THEME_COL_ACCENT
+#define COL_ED_GUTTER    THEME_COL_MANTLE
+#define COL_ED_LINENUM   THEME_COL_SURFACE2
+#define COL_ED_CURSOR    THEME_COL_CURSOR
+#define COL_ED_SELECT    THEME_COL_SURFACE1
+#define COL_ED_STATUS    THEME_COL_CRUST
+#define COL_ED_STATUS_FG THEME_COL_SUBTEXT0
+#define COL_ED_MODIFIED  THEME_COL_WARNING
+#define COL_ED_BORDER    THEME_COL_BORDER
+#define COL_ED_ERR       THEME_COL_ERROR
+#define COL_ED_OK        THEME_COL_SUCCESS
 
 /* ---- Layout ---- */
 #define ED_WIN_W      560
@@ -261,40 +262,33 @@ static void ed_paint(gui_window_t* win) {
 
     gui_surface_clear(s, COL_ED_BG);
 
-    /* Title bar */
-    gui_surface_fill(s, 0, 0, w, GUI_TITLEBAR_HEIGHT, 0x181825);
-    {
-        const char* title = "Notes";
-        gui_surface_draw_string(s, 10, (GUI_TITLEBAR_HEIGHT - GUI_FONT_H) / 2,
-                                title, COL_ED_TEXT, 0, 0);
+    /* Decorations */
+    gui_window_draw_decorations(win);
+
+    /* Extra title info (modified flag + filename) after decorations */
+    if (ed_modified || ed_filepath[0]) {
+        int text_y = (GUI_TITLEBAR_HEIGHT - GUI_FONT_H) / 2;
+        int title_len = 0;
+        { const char* p = win->title; while (*p) { title_len++; p++; } }
+        int title_w = title_len * GUI_FONT_W;
+        /* center offset matching decoration title position */
+        int title_x = (w - title_w) / 2;
+        if (title_x < 76) title_x = 76;
+        int tx = title_x + title_w;
         if (ed_modified) {
-            int tx = 10 + str_length(title) * GUI_FONT_W;
-            gui_surface_draw_string(s, tx, (GUI_TITLEBAR_HEIGHT - GUI_FONT_H) / 2,
-                                    " *", COL_ED_MODIFIED, 0, 0);
+            gui_surface_draw_string(s, tx, text_y, " *", COL_ED_MODIFIED, 0, 0);
+            tx += 2 * GUI_FONT_W;
         }
-        /* Filename in title */
         if (ed_filepath[0]) {
-            /* find basename */
             const char* base = ed_filepath;
-            const char* p = ed_filepath;
-            while (*p) { if (*p == '/') base = p + 1; p++; }
+            const char* p2 = ed_filepath;
+            while (*p2) { if (*p2 == '/') base = p2 + 1; p2++; }
             if (*base) {
-                int tx = 10 + (str_length(title) + (ed_modified ? 2 : 0) + 2) * GUI_FONT_W;
-                gui_surface_draw_string(s, tx, (GUI_TITLEBAR_HEIGHT - GUI_FONT_H) / 2,
-                                        "- ", COL_ED_DIM, 0, 0);
-                gui_surface_draw_string(s, tx + 2 * GUI_FONT_W,
-                                        (GUI_TITLEBAR_HEIGHT - GUI_FONT_H) / 2,
-                                        base, COL_ED_DIM, 0, 0);
+                gui_surface_draw_string(s, tx, text_y, " - ", COL_ED_DIM, 0, 0);
+                gui_surface_draw_string(s, tx + 3 * GUI_FONT_W, text_y, base, COL_ED_DIM, 0, 0);
             }
         }
     }
-    /* Close button */
-    {
-        int bx = w - 20, by = 8;
-        gui_surface_fill(s, bx, by, 12, 12, COL_ED_ERR);
-        gui_surface_draw_char(s, bx + 2, by - 2, 'x', 0x181825, 0, 0);
-    }
-    gui_surface_hline(s, 0, GUI_TITLEBAR_HEIGHT - 1, w, COL_ED_BORDER);
 
     y = GUI_TITLEBAR_HEIGHT;
     vis = ed_visible_lines();

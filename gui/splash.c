@@ -10,13 +10,14 @@
 #include "fbconsole.h"
 #include "font_psf.h"
 #include "string.h"
+#include "theme.h"
 
-/* ---- Colours ---- */
-#define COL_BG        0x1E1E2E   /* dark background */
-#define COL_LOGO      0xCDD6F4   /* light text for logo */
-#define COL_MSG       0xA6ADC8   /* softer text for messages */
-#define COL_BAR_BG    0x313244   /* progress bar background */
-#define COL_BAR_FG    0x89B4FA   /* progress bar fill */
+/* ---- Colours (from theme.h) ---- */
+#define COL_BG        THEME_COL_BASE
+#define COL_LOGO      THEME_COL_TEXT
+#define COL_MSG       THEME_COL_SUBTEXT0
+#define COL_BAR_BG    THEME_COL_SURFACE0
+#define COL_BAR_FG    THEME_COL_ACCENT
 
 /* ---- Layout ---- */
 #define LOGO_TEXT     "Lyth OS"

@@ -5,6 +5,7 @@
 #include "sysinfo.h"
 #include "compositor.h"
 #include "window.h"
+#include "theme.h"
 #include "font_psf.h"
 #include "string.h"
 #include "timer.h"
@@ -12,11 +13,11 @@
 #include "physmem.h"
 #include "task.h"
 
-#define COL_SI_BG      0x1E1E2E
-#define COL_SI_TEXT    0xCDD6F4
-#define COL_SI_DIM     0x6C7086
-#define COL_SI_ACCENT  0x89B4FA
-#define COL_SI_LABEL   0xA6ADC8
+#define COL_SI_BG      THEME_COL_BASE
+#define COL_SI_TEXT    THEME_COL_TEXT
+#define COL_SI_DIM     THEME_COL_DIM
+#define COL_SI_ACCENT  THEME_COL_ACCENT
+#define COL_SI_LABEL   THEME_COL_SUBTEXT0
 
 static gui_window_t* si_window;
 static int si_open;
@@ -47,21 +48,8 @@ static void si_paint(gui_window_t* win) {
 
     gui_surface_clear(s, COL_SI_BG);
 
-    /* title bar */
-    gui_surface_fill(s, 0, 0, win->width, GUI_TITLEBAR_HEIGHT, 0x181825);
-    {
-        int cx = win->width - 20, cy = GUI_TITLEBAR_HEIGHT / 2, r;
-        for (r = -5; r <= 5; r++) {
-            int dx;
-            for (dx = -5; dx <= 5; dx++) {
-                if (r * r + dx * dx <= 25)
-                    gui_surface_putpixel(s, cx + dx, cy + r, 0xF38BA8);
-            }
-        }
-    }
-    gui_surface_draw_string(s, 10, (GUI_TITLEBAR_HEIGHT - FONT_PSF_HEIGHT) / 2,
-                            win->title, 0xCDD6F4, 0, 0);
-    gui_surface_hline(s, 0, GUI_TITLEBAR_HEIGHT - 1, win->width, 0x313244);
+    /* Decorations */
+    gui_window_draw_decorations(win);
 
     /* OS name */
     gui_surface_draw_string(s, ox, oy, "Lyth OS", COL_SI_ACCENT, 0, 0);

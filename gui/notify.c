@@ -11,13 +11,14 @@
 #include "font_psf.h"
 #include "string.h"
 #include "timer.h"
+#include "theme.h"
 
-/* ---- Colours ---- */
-#define COL_N_BG     0x313244
-#define COL_N_BORDER 0x45475A
-#define COL_N_TITLE  0xCDD6F4
-#define COL_N_BODY   0xA6ADC8
-#define COL_N_DIM    0x6C7086
+/* ---- Colours (from theme.h) ---- */
+#define COL_N_BG     THEME_COL_SURFACE0
+#define COL_N_BORDER THEME_COL_SURFACE1
+#define COL_N_TITLE  THEME_COL_TEXT
+#define COL_N_BODY   THEME_COL_SUBTEXT0
+#define COL_N_DIM    THEME_COL_DIM
 
 /* ---- Layout ---- */
 #define NOTIFY_W     260

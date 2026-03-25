@@ -7,6 +7,7 @@
 #include "about.h"
 #include "compositor.h"
 #include "window.h"
+#include "theme.h"
 #include "font_psf.h"
 #include "string.h"
 #include "timer.h"
@@ -19,18 +20,18 @@
 #include "video.h"
 #include "input.h"
 
-/* ---- Colours ---- */
-#define COL_AB_BG      0x1E1E2E
-#define COL_AB_PANEL   0x181825
-#define COL_AB_TEXT    0xCDD6F4
-#define COL_AB_DIM     0x6C7086
-#define COL_AB_ACCENT  0x89B4FA
-#define COL_AB_LABEL   0xA6ADC8
-#define COL_AB_VALUE   0xCDD6F4
-#define COL_AB_LOGO    0x89B4FA
-#define COL_AB_BORDER  0x313244
-#define COL_AB_GREEN   0xA6E3A1
-#define COL_AB_YELLOW  0xF9E2AF
+/* ---- Colours (from theme.h) ---- */
+#define COL_AB_BG      THEME_COL_BASE
+#define COL_AB_PANEL   THEME_COL_MANTLE
+#define COL_AB_TEXT    THEME_COL_TEXT
+#define COL_AB_DIM     THEME_COL_DIM
+#define COL_AB_ACCENT  THEME_COL_ACCENT
+#define COL_AB_LABEL   THEME_COL_SUBTEXT0
+#define COL_AB_VALUE   THEME_COL_TEXT
+#define COL_AB_LOGO    THEME_COL_ACCENT
+#define COL_AB_BORDER  THEME_COL_BORDER
+#define COL_AB_GREEN   THEME_COL_SUCCESS
+#define COL_AB_YELLOW  THEME_COL_WARNING
 
 /* ---- Layout ---- */
 #define AB_WIN_W   380
@@ -61,16 +62,8 @@ static void ab_paint(gui_window_t* win) {
 
     gui_surface_clear(s, COL_AB_BG);
 
-    /* Title bar */
-    gui_surface_fill(s, 0, 0, w, GUI_TITLEBAR_HEIGHT, COL_AB_PANEL);
-    gui_surface_draw_string(s, 10, (GUI_TITLEBAR_HEIGHT - GUI_FONT_H) / 2,
-                            "About Lyth", COL_AB_TEXT, 0, 0);
-    {
-        int bx = w - 20, by = 8;
-        gui_surface_fill(s, bx, by, 12, 12, 0xF38BA8);
-        gui_surface_draw_char(s, bx + 2, by - 2, 'x', COL_AB_PANEL, 0, 0);
-    }
-    gui_surface_hline(s, 0, GUI_TITLEBAR_HEIGHT - 1, w, COL_AB_BORDER);
+    /* Decorations */
+    gui_window_draw_decorations(win);
 
     y = GUI_TITLEBAR_HEIGHT + AB_PAD;
 

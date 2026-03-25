@@ -12,17 +12,18 @@
 #include "string.h"
 #include "session.h"
 #include "ugdb.h"
+#include "theme.h"
 
-/* ---- Colours (Catppuccin Mocha) ---- */
-#define COL_AP_BG      0x1E1E2E
-#define COL_AP_TEXT     0xCDD6F4
-#define COL_AP_DIM      0x6C7086
-#define COL_AP_ACCENT   0x89B4FA
-#define COL_AP_PANEL    0x181825
-#define COL_AP_BORDER   0x313244
-#define COL_AP_ERROR    0xF38BA8
-#define COL_AP_BTN_OK   0x89B4FA
-#define COL_AP_BTN_BG   0x313244
+/* ---- Colours (from theme.h) ---- */
+#define COL_AP_BG      THEME_COL_BASE
+#define COL_AP_TEXT     THEME_COL_TEXT
+#define COL_AP_DIM      THEME_COL_DIM
+#define COL_AP_ACCENT   THEME_COL_ACCENT
+#define COL_AP_PANEL    THEME_COL_MANTLE
+#define COL_AP_BORDER   THEME_COL_BORDER
+#define COL_AP_ERROR    THEME_COL_ERROR
+#define COL_AP_BTN_OK   THEME_COL_ACCENT
+#define COL_AP_BTN_BG   THEME_COL_SURFACE0
 
 /* ---- Layout ---- */
 #define AP_W           340

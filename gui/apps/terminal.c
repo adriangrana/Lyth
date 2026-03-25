@@ -10,6 +10,7 @@
 #include "terminal.h"
 #include "compositor.h"
 #include "window.h"
+#include "theme.h"
 #include "input.h"
 #include "font_psf.h"
 #include "string.h"
@@ -34,13 +35,13 @@
 #define TERM_MAX_CMD 128
 #define TERM_HISTORY 16
 
-#define COL_TERM_BG   0x1E1E2E
-#define COL_TERM_FG   0xCDD6F4
-#define COL_TERM_PROMPT 0x89B4FA
-#define COL_TERM_CURSOR 0xF5C2E7
-#define COL_TERM_ERR  0xF38BA8
-#define COL_TERM_DIR  0x89B4FA
-#define COL_TERM_INFO 0xA6E3A1
+#define COL_TERM_BG   THEME_COL_BASE
+#define COL_TERM_FG   THEME_COL_TEXT
+#define COL_TERM_PROMPT THEME_COL_ACCENT
+#define COL_TERM_CURSOR THEME_COL_CURSOR
+#define COL_TERM_ERR  THEME_COL_ERROR
+#define COL_TERM_DIR  THEME_COL_ACCENT
+#define COL_TERM_INFO THEME_COL_SUCCESS
 
 typedef struct {
     char cells[TERM_BUF_ROWS][TERM_COLS];
@@ -848,29 +849,8 @@ static void term_paint(gui_window_t* win) {
     /* clear window surface */
     gui_surface_clear(s, COL_TERM_BG);
 
-    /* draw title bar (if decorated) */
-    if (!(win->flags & GUI_WIN_NO_DECOR)) {
-        /* title bar bg */
-        gui_surface_fill(s, 0, 0, win->width, GUI_TITLEBAR_HEIGHT, 0x181825);
-        /* close button circle */
-        {
-            int cx = win->width - 20;
-            int cy = GUI_TITLEBAR_HEIGHT / 2;
-            int r;
-            for (r = -5; r <= 5; r++) {
-                int dx;
-                for (dx = -5; dx <= 5; dx++) {
-                    if (r * r + dx * dx <= 25)
-                        gui_surface_putpixel(s, cx + dx, cy + r, 0xF38BA8);
-                }
-            }
-        }
-        /* title text */
-        gui_surface_draw_string(s, 10, (GUI_TITLEBAR_HEIGHT - FONT_PSF_HEIGHT) / 2,
-                                win->title, 0xCDD6F4, 0, 0);
-        /* separator line */
-        gui_surface_hline(s, 0, GUI_TITLEBAR_HEIGHT - 1, win->width, 0x313244);
-    }
+    /* draw decorations (titlebar, buttons, separator) */
+    gui_window_draw_decorations(win);
 
     ox = GUI_BORDER_WIDTH + 4;
     oy = (win->flags & GUI_WIN_NO_DECOR) ? 4 : GUI_TITLEBAR_HEIGHT + 2;

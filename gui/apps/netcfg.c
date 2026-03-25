@@ -16,6 +16,7 @@
 #include "netcfg.h"
 #include "compositor.h"
 #include "window.h"
+#include "theme.h"
 #include "font_psf.h"
 #include "string.h"
 #include "netif.h"
@@ -24,22 +25,22 @@
 #include "e1000.h"
 #include "timer.h"
 
-#define COL_NET_BG       0x1E1E2E
-#define COL_NET_TEXT     0xCDD6F4
-#define COL_NET_DIM      0x6C7086
-#define COL_NET_UP       0xA6E3A1
-#define COL_NET_DOWN     0xF38BA8
-#define COL_NET_LABEL    0xA6ADC8
-#define COL_FIELD_BG     0x313244
-#define COL_FIELD_ACTIVE 0x45475A
-#define COL_FIELD_TEXT   0xCDD6F4
-#define COL_FIELD_RO     0x6C7086   /* read-only text */
-#define COL_CURSOR       0xF5C2E7
-#define COL_STATUS_OK    0xA6E3A1
-#define COL_STATUS_ERR   0xF38BA8
-#define COL_RADIO_ON     0x3B82F6
-#define COL_RADIO_OFF    0x585B70
-#define COL_RADIO_TEXT   0xCDD6F4
+#define COL_NET_BG       THEME_COL_BASE
+#define COL_NET_TEXT     THEME_COL_TEXT
+#define COL_NET_DIM      THEME_COL_DIM
+#define COL_NET_UP       THEME_COL_SUCCESS
+#define COL_NET_DOWN     THEME_COL_ERROR
+#define COL_NET_LABEL    THEME_COL_SUBTEXT0
+#define COL_FIELD_BG     THEME_COL_SURFACE0
+#define COL_FIELD_ACTIVE THEME_COL_SURFACE1
+#define COL_FIELD_TEXT   THEME_COL_TEXT
+#define COL_FIELD_RO     THEME_COL_DIM
+#define COL_CURSOR       THEME_COL_CURSOR
+#define COL_STATUS_OK    THEME_COL_SUCCESS
+#define COL_STATUS_ERR   THEME_COL_ERROR
+#define COL_RADIO_ON     THEME_COL_FOCUS
+#define COL_RADIO_OFF    THEME_COL_SURFACE2
+#define COL_RADIO_TEXT   THEME_COL_TEXT
 
 #define FIELD_MAX        16  /* "255.255.255.255" + NUL */
 #define NUM_FIELDS       4   /* IP, Mask, GW, DNS */
@@ -225,21 +226,8 @@ static void net_paint(gui_window_t* win) {
 
     gui_surface_clear(s, COL_NET_BG);
 
-    /* title bar */
-    gui_surface_fill(s, 0, 0, win->width, GUI_TITLEBAR_HEIGHT, 0x181825);
-    {
-        int cx = win->width - 20, cy = GUI_TITLEBAR_HEIGHT / 2, r;
-        for (r = -5; r <= 5; r++) {
-            int dx;
-            for (dx = -5; dx <= 5; dx++) {
-                if (r * r + dx * dx <= 25)
-                    gui_surface_putpixel(s, cx + dx, cy + r, 0xF38BA8);
-            }
-        }
-    }
-    gui_surface_draw_string(s, 10, (GUI_TITLEBAR_HEIGHT - FONT_PSF_HEIGHT) / 2,
-                            win->title, 0xCDD6F4, 0, 0);
-    gui_surface_hline(s, 0, GUI_TITLEBAR_HEIGHT - 1, win->width, 0x313244);
+    /* Decorations */
+    gui_window_draw_decorations(win);
 
     int count = netif_count();
     if (count == 0) {

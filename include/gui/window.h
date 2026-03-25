@@ -2,16 +2,17 @@
 #define GUI_WINDOW_H
 
 #include <stdint.h>
+#include "theme.h"
 
-/* ---- layout constants ---- */
-#define GUI_TITLEBAR_HEIGHT  28
-#define GUI_BORDER_WIDTH      1
+/* ---- layout constants (sourced from theme.h) ---- */
+#define GUI_TITLEBAR_HEIGHT  THEME_TITLEBAR_H
+#define GUI_BORDER_WIDTH     THEME_BORDER_W
 #define GUI_MAX_WINDOWS      32
 #define GUI_MAX_TITLE        64
 #define GUI_MAX_WIDGETS      48
-#define GUI_TASKBAR_HEIGHT   36
-#define GUI_FONT_W            8
-#define GUI_FONT_H           16
+#define GUI_TASKBAR_HEIGHT   THEME_TASKBAR_H
+#define GUI_FONT_W           THEME_FONT_W
+#define GUI_FONT_H           THEME_FONT_H
 
 /* ---- window flags ---- */
 #define GUI_WIN_VISIBLE    (1 << 0)
@@ -92,6 +93,7 @@ void gui_window_destroy(gui_window_t* win);
 void gui_window_focus(gui_window_t* win);
 void gui_window_move(gui_window_t* win, int x, int y);
 void gui_window_invalidate(gui_window_t* win);
+void gui_window_draw_decorations(gui_window_t* win);
 int  gui_window_content_x(gui_window_t* win);
 int  gui_window_content_y(gui_window_t* win);
 int  gui_window_content_w(gui_window_t* win);

@@ -8,31 +8,32 @@
 #include "filemanager.h"
 #include "compositor.h"
 #include "window.h"
+#include "theme.h"
 #include "font_psf.h"
 #include "string.h"
 #include "vfs.h"
 #include "timer.h"
 #include "input.h"
 
-/* ---- Catppuccin Mocha Colours ---- */
-#define COL_FM_BG        0x1E1E2E
-#define COL_FM_PANEL     0x181825
-#define COL_FM_TEXT       0xCDD6F4
-#define COL_FM_DIM        0x6C7086
-#define COL_FM_ACCENT     0x89B4FA
-#define COL_FM_SELECT     0x313244
-#define COL_FM_DIR        0x89B4FA
-#define COL_FM_FILE       0xCDD6F4
-#define COL_FM_SIZE       0xA6ADC8
-#define COL_FM_TOOLBAR    0x11111B
-#define COL_FM_PATHBAR    0x181825
-#define COL_FM_BTN        0x45475A
-#define COL_FM_BTN_TEXT   0xCDD6F4
-#define COL_FM_ERR        0xF38BA8
-#define COL_FM_OK         0xA6E3A1
-#define COL_FM_ICON_DIR   0xF9E2AF
-#define COL_FM_ICON_FILE  0xBAC2DE
-#define COL_FM_BORDER     0x313244
+/* ---- Colours (from theme.h) ---- */
+#define COL_FM_BG        THEME_COL_BASE
+#define COL_FM_PANEL     THEME_COL_MANTLE
+#define COL_FM_TEXT       THEME_COL_TEXT
+#define COL_FM_DIM        THEME_COL_DIM
+#define COL_FM_ACCENT     THEME_COL_ACCENT
+#define COL_FM_SELECT     THEME_COL_SURFACE0
+#define COL_FM_DIR        THEME_COL_ACCENT
+#define COL_FM_FILE       THEME_COL_TEXT
+#define COL_FM_SIZE       THEME_COL_SUBTEXT0
+#define COL_FM_TOOLBAR    THEME_COL_CRUST
+#define COL_FM_PATHBAR    THEME_COL_MANTLE
+#define COL_FM_BTN        THEME_COL_SURFACE1
+#define COL_FM_BTN_TEXT   THEME_COL_TEXT
+#define COL_FM_ERR        THEME_COL_ERROR
+#define COL_FM_OK         THEME_COL_SUCCESS
+#define COL_FM_ICON_DIR   THEME_COL_WARNING
+#define COL_FM_ICON_FILE  THEME_COL_SUBTEXT1
+#define COL_FM_BORDER     THEME_COL_BORDER
 
 /* ---- Layout ---- */
 #define FM_WIN_W      520
@@ -316,17 +317,8 @@ static void fm_paint(gui_window_t* win) {
     /* Background */
     gui_surface_clear(s, COL_FM_BG);
 
-    /* Title bar */
-    gui_surface_fill(s, 0, 0, w, GUI_TITLEBAR_HEIGHT, COL_FM_PANEL);
-    gui_surface_draw_string(s, 10, (GUI_TITLEBAR_HEIGHT - GUI_FONT_H) / 2,
-                            "Nexus", COL_FM_TEXT, 0, 0);
-    /* Close button */
-    {
-        int bx = w - 20, by = 8;
-        gui_surface_fill(s, bx, by, 12, 12, COL_FM_ERR);
-        gui_surface_draw_char(s, bx + 2, by - 2, 'x', COL_FM_PANEL, 0, 0);
-    }
-    gui_surface_hline(s, 0, GUI_TITLEBAR_HEIGHT - 1, w, COL_FM_BORDER);
+    /* Decorations */
+    gui_window_draw_decorations(win);
 
     y = GUI_TITLEBAR_HEIGHT;
 

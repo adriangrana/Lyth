@@ -3,27 +3,35 @@
 ## FASE 1 — Design System
 
 ### 1. Identidad Visual
-- [ ] Elegir identidad visual (sobrio, futurista, elegante, minimalista, técnico)
+- [x] Elegir identidad visual (sobrio, futurista, elegante, minimalista, técnico)
+      > Elegante, oscuro, minimalista, técnico. Glass/aurora aesthetic.
+      > Definido en include/gui/theme.h
 
 ### 2. Paleta de Colores
-- [ ] Fondo principal
-- [ ] Superficies elevadas
-- [ ] Color de acento
-- [ ] Color de foco
-- [ ] Color de error/alerta
-- [ ] Color de texto (principal/secundario/tenue)
+- [x] Fondo principal
+- [x] Superficies elevadas
+- [x] Color de acento
+- [x] Color de foco
+- [x] Color de error/alerta
+- [x] Color de texto (principal/secundario/tenue)
+      > Paleta centralizada en theme.h. Cyan accent (#00D4FF), aurora wallpaper,
+      > glass-ready dark bases. Integrado en TODAS las apps, desktop, login,
+      > splash, diálogos, notificaciones, auth prompt.
 
 ### 3. Escalas y Espaciado
-- [ ] Escala de radios (4px, 8px, 12px, 16px)
-- [ ] Escala de sombras (baja, media, alta, modal)
-- [ ] Sistema de spacing (4, 8, 12, 16, 24, 32)
-- [ ] Alturas estándar (barra de título, botones, inputs, panel, menú)
+- [x] Escala de radios (4px, 8px, 12px, 16px)
+- [x] Escala de sombras (baja, media, alta, modal)
+- [x] Sistema de spacing (4, 8, 12, 16, 24, 32)
+- [x] Alturas estándar (barra de título, botones, inputs, panel, menú)
 - [ ] Iconografía coherente
-- [ ] Grosor de bordes
+- [x] Grosor de bordes
 - [ ] Comportamiento hover/focus/pressed/disabled
 
 ### 4. Tipografía
-- [ ] Fuente UI principal excelente
+- [x] Fuente UI principal excelente
+      > Inter Regular 400 (OTF) rasterizado a 8x16 PSF bitmap
+      > Pipeline: tools/otf2psf.js (OTF→PSF2) + tools/psf2h.py (PSF→C header)
+      > Fuente en drivers/fonts/Inter_Font_Family/
 - [ ] Hinting/rasterizado bueno
 - [ ] Soporte de antialiasing correcto
 - [ ] Subpixel rendering
@@ -37,14 +45,20 @@
 ## FASE 2 — Shell de Escritorio
 
 ### 5. Ventanas
-- [ ] Decoraciones modernas
-- [ ] Barra de título limpia y elegante
-- [ ] Botones de ventana consistentes
-- [ ] Estados (activa, inactiva, urgent, modal)
+- [x] Decoraciones modernas
+      > gui_window_draw_decorations() centralizado en window.c
+      > Traffic-light buttons (close/minimize/maximize) estilo macOS, lado izquierdo
+- [x] Barra de título limpia y elegante
+      > Título centrado, colores temáticos activo/inactivo
+- [x] Botones de ventana consistentes
+      > Todos los 10 apps usan gui_window_draw_decorations()
+- [x] Estados (activa, inactiva, urgent, modal)
+      > GUI_WIN_FOCUSED flag + colores diferenciados activo/inactivo
 - [ ] Sombras suaves y creíbles
 - [ ] Esquinas redondeadas bien recortadas
 - [ ] Borde sutil o separación visual clara
-- [ ] Hit testing preciso
+- [x] Hit testing preciso
+      > hit_close_button() actualizado para botón izquierdo
 - [ ] Resize handles cómodos
 - [ ] Snap visual bonito
 - [ ] Maximize/minimize con animación

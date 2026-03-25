@@ -13,6 +13,7 @@
 #include "input.h"
 #include "fbconsole.h"
 #include "font_psf.h"
+#include "theme.h"
 #include "timer.h"
 #include "ugdb.h"
 #include "usb_hid.h"
@@ -21,28 +22,28 @@
 #include "string.h"
 #include "rtc.h"
 
-/* ---- Colours (matching desktop sky theme) ---- */
-#define COL_BG_TOP       0x2A6AB5   /* darker sky blue */
-#define COL_BG_MID       0x4A8AC5
-#define COL_BG_BOT       0x6AAFCF
+/* ---- Colours (from theme.h + login-specific overrides) ---- */
+#define COL_BG_TOP       THEME_COL_WALL_TOP
+#define COL_BG_MID       THEME_COL_WALL_MID
+#define COL_BG_BOT       THEME_COL_WALL_BOT
 
-#define COL_PANEL_BG     0x1A2332   /* dark translucent-style panel */
-#define COL_PANEL_BORDER 0x2A3A4E
+#define COL_PANEL_BG     THEME_COL_TASKBAR_BG
+#define COL_PANEL_BORDER THEME_COL_POPUP_BORDER
 #define COL_TEXT_WHITE   0xFFFFFF
-#define COL_TEXT_DIM     0xA0B4C8
-#define COL_INPUT_BG     0x263043
+#define COL_TEXT_DIM     THEME_COL_TASKBAR_DIM
+#define COL_INPUT_BG     THEME_COL_SURFACE0
 #define COL_INPUT_FG     0xFFFFFF
-#define COL_INPUT_BORDER 0x3A5068
-#define COL_INPUT_FOCUS  0x3B82F6
-#define COL_BTN_BG       0x3B82F6
+#define COL_INPUT_BORDER THEME_COL_BORDER_DIM
+#define COL_INPUT_FOCUS  THEME_COL_FOCUS
+#define COL_BTN_BG       THEME_COL_FOCUS
 #define COL_BTN_FG       0xFFFFFF
-#define COL_ERROR        0xF03E3E
-#define COL_CURSOR       0xF5C2E7
-#define COL_AVATAR_BG    0x3B82F6
-#define COL_AVATAR_RING  0x4A9AE6
+#define COL_ERROR        THEME_COL_ERROR
+#define COL_CURSOR       THEME_COL_CURSOR
+#define COL_AVATAR_BG    THEME_COL_FOCUS
+#define COL_AVATAR_RING  THEME_COL_ACCENT_HOVER
 #define COL_CLOCK_FG     0xFFFFFF
 #define COL_DATE_FG      0xD0E0F0
-#define COL_ICON_DIM     0x8AABC0
+#define COL_ICON_DIM     THEME_COL_TASKBAR_DIM
 
 /* ---- Layout ---- */
 #define FIELD_W     240

@@ -564,7 +564,8 @@ static int hit_close_button(gui_window_t *win, int mx, int my)
         return 0;
     if (win->flags & GUI_WIN_NO_DECOR)
         return 0;
-    cx = win->x + win->width - 20;
+    /* Close button is now on the LEFT (traffic-light style), center at X=16 */
+    cx = win->x + 16;
     cy = win->y + GUI_TITLEBAR_HEIGHT / 2;
     return (mx >= cx - 8 && mx <= cx + 8 && my >= cy - 8 && my <= cy + 8);
 }

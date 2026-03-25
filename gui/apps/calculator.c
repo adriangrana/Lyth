@@ -7,22 +7,23 @@
 #include "calculator.h"
 #include "compositor.h"
 #include "window.h"
+#include "theme.h"
 #include "font_psf.h"
 #include "string.h"
 #include "input.h"
 
-/* ---- Colours ---- */
-#define COL_CALC_BG       0x1E1E2E
-#define COL_CALC_DISPLAY  0x11111B
-#define COL_CALC_TEXT     0xCDD6F4
-#define COL_CALC_DIM      0x6C7086
-#define COL_CALC_BTN      0x313244
-#define COL_CALC_BTN_HI   0x45475A
-#define COL_CALC_OP       0x89B4FA
-#define COL_CALC_EQ       0xA6E3A1
-#define COL_CALC_CLR      0xF38BA8
-#define COL_CALC_BORDER   0x45475A
-#define COL_CALC_PANEL    0x181825
+/* ---- Colours (from theme.h) ---- */
+#define COL_CALC_BG       THEME_COL_BASE
+#define COL_CALC_DISPLAY  THEME_COL_CRUST
+#define COL_CALC_TEXT     THEME_COL_TEXT
+#define COL_CALC_DIM      THEME_COL_DIM
+#define COL_CALC_BTN      THEME_COL_SURFACE0
+#define COL_CALC_BTN_HI   THEME_COL_SURFACE1
+#define COL_CALC_OP       THEME_COL_ACCENT
+#define COL_CALC_EQ       THEME_COL_SUCCESS
+#define COL_CALC_CLR      THEME_COL_ERROR
+#define COL_CALC_BORDER   THEME_COL_SURFACE1
+#define COL_CALC_PANEL    THEME_COL_MANTLE
 
 /* ---- Layout ---- */
 #define CALC_WIN_W    240
@@ -290,16 +291,8 @@ static void calc_paint(gui_window_t* win) {
 
     gui_surface_clear(s, COL_CALC_BG);
 
-    /* Title bar */
-    gui_surface_fill(s, 0, 0, w, GUI_TITLEBAR_HEIGHT, COL_CALC_PANEL);
-    gui_surface_draw_string(s, 10, (GUI_TITLEBAR_HEIGHT - GUI_FONT_H) / 2,
-                            "Calc", COL_CALC_TEXT, 0, 0);
-    {
-        int bx = w - 20, by = 8;
-        gui_surface_fill(s, bx, by, 12, 12, COL_CALC_CLR);
-        gui_surface_draw_char(s, bx + 2, by - 2, 'x', COL_CALC_PANEL, 0, 0);
-    }
-    gui_surface_hline(s, 0, GUI_TITLEBAR_HEIGHT - 1, w, COL_CALC_BORDER);
+    /* Decorations */
+    gui_window_draw_decorations(win);
 
     /* Display */
     {

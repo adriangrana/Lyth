@@ -6,6 +6,7 @@
 #include "taskman.h"
 #include "compositor.h"
 #include "window.h"
+#include "theme.h"
 #include "input.h"
 #include "font_psf.h"
 #include "string.h"
@@ -16,18 +17,18 @@
 
 #define TM_MAX_TASKS 32
 
-#define COL_TM_BG      0x1E1E2E
-#define COL_TM_HEADER  0x313244
-#define COL_TM_TEXT    0xCDD6F4
-#define COL_TM_DIM     0x6C7086
-#define COL_TM_RUNNING 0xA6E3A1
-#define COL_TM_SLEEPING 0xF9E2AF
-#define COL_TM_BLOCKED 0xF38BA8
-#define COL_TM_READY   0x89B4FA
-#define COL_TM_ACCENT  0x3B82F6
-#define COL_TM_SELECT  0x45475A
-#define COL_TM_KILL_BG 0xF38BA8
-#define COL_TM_KILL_FG 0x1E1E2E
+#define COL_TM_BG      THEME_COL_BASE
+#define COL_TM_HEADER  THEME_COL_SURFACE0
+#define COL_TM_TEXT    THEME_COL_TEXT
+#define COL_TM_DIM     THEME_COL_DIM
+#define COL_TM_RUNNING THEME_COL_SUCCESS
+#define COL_TM_SLEEPING THEME_COL_WARNING
+#define COL_TM_BLOCKED THEME_COL_ERROR
+#define COL_TM_READY   THEME_COL_ACCENT
+#define COL_TM_ACCENT  THEME_COL_FOCUS
+#define COL_TM_SELECT  THEME_COL_SURFACE1
+#define COL_TM_KILL_BG THEME_COL_ERROR
+#define COL_TM_KILL_FG THEME_COL_BASE
 
 typedef struct {
     int is_open;
@@ -75,21 +76,8 @@ static void tm_paint(gui_window_t* win) {
 
     gui_surface_clear(s, COL_TM_BG);
 
-    /* title bar */
-    gui_surface_fill(s, 0, 0, win->width, GUI_TITLEBAR_HEIGHT, 0x181825);
-    {
-        int cx = win->width - 20, cy = GUI_TITLEBAR_HEIGHT / 2, r;
-        for (r = -5; r <= 5; r++) {
-            int dx;
-            for (dx = -5; dx <= 5; dx++) {
-                if (r * r + dx * dx <= 25)
-                    gui_surface_putpixel(s, cx + dx, cy + r, 0xF38BA8);
-            }
-        }
-    }
-    gui_surface_draw_string(s, 10, (GUI_TITLEBAR_HEIGHT - FONT_PSF_HEIGHT) / 2,
-                            win->title, 0xCDD6F4, 0, 0);
-    gui_surface_hline(s, 0, GUI_TITLEBAR_HEIGHT - 1, win->width, 0x313244);
+    /* Decorations */
+    gui_window_draw_decorations(win);
 
     /* memory bar */
     {
