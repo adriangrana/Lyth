@@ -1057,7 +1057,7 @@ void terminal_app_open(void) {
     h = TERM_ROWS * FONT_PSF_HEIGHT + GUI_TITLEBAR_HEIGHT + 12;
 
     term_window = gui_window_create("Terminal", 60, 40, w, h,
-        GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE | GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED);
+        GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE | GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED | GUI_WIN_RESIZABLE);
     if (!term_window) return;
 
     term_window->on_paint = term_paint;

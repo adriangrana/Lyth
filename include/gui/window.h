@@ -20,7 +20,17 @@
 #define GUI_WIN_CLOSEABLE  (1 << 2)
 #define GUI_WIN_DRAGGABLE  (1 << 3)
 #define GUI_WIN_MINIMIZED  (1 << 4)
+#define GUI_WIN_RESIZABLE  (1 << 5)
 #define GUI_WIN_NO_DECOR   (1 << 6)
+
+/* resize edge identifiers */
+#define GUI_RESIZE_NONE   0
+#define GUI_RESIZE_RIGHT  1
+#define GUI_RESIZE_BOTTOM 2
+#define GUI_RESIZE_BR     3  /* bottom-right corner */
+#define GUI_RESIZE_GRAB   6  /* grab zone width in pixels */
+#define GUI_RESIZE_MIN_W  120
+#define GUI_RESIZE_MIN_H  80
 
 /* ---- surface: pixel buffer ---- */
 typedef struct {
@@ -71,6 +81,10 @@ typedef struct gui_window {
     int dragging;
     int drag_off_x, drag_off_y;
 
+    int resizing;      /* non-zero = resize edge being dragged */
+    int resize_orig_w, resize_orig_h;  /* size at start of resize */
+    int resize_orig_mx, resize_orig_my; /* mouse at start of resize */
+
     gui_surface_t surface;
     int needs_redraw;
 
@@ -92,6 +106,7 @@ gui_window_t* gui_window_create(const char* title, int x, int y,
 void gui_window_destroy(gui_window_t* win);
 void gui_window_focus(gui_window_t* win);
 void gui_window_move(gui_window_t* win, int x, int y);
+void gui_window_resize(gui_window_t* win, int new_w, int new_h);
 void gui_window_invalidate(gui_window_t* win);
 void gui_window_draw_decorations(gui_window_t* win);
 int  gui_window_content_x(gui_window_t* win);

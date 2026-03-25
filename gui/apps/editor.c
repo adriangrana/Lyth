@@ -538,7 +538,7 @@ void editor_app_open_file(const char* path) {
     }
 
     ed_window = gui_window_create("Notes", 120, 50, ED_WIN_W, ED_WIN_H,
-        GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE | GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED);
+        GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE | GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED | GUI_WIN_RESIZABLE);
     if (!ed_window) return;
 
     ed_window->on_paint = ed_paint;

@@ -331,7 +331,8 @@ void viewer_app_open(void) {
 
     vst.win = gui_window_create("Viewer", 100, 60, VW_W, VW_H,
                                 GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE |
-                                GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED);
+                                GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED |
+                                GUI_WIN_RESIZABLE);
     if (!vst.win) return;
 
     vst.win->on_paint = viewer_paint;

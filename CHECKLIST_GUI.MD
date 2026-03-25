@@ -54,24 +54,47 @@
       > Todos los 10 apps usan gui_window_draw_decorations()
 - [x] Estados (activa, inactiva, urgent, modal)
       > GUI_WIN_FOCUSED flag + colores diferenciados activo/inactivo
-- [ ] Sombras suaves y creíbles
-      > Drop shadow implementado en compositor (compose_region)
-      > 3px offset, darken 25%, dibujado debajo de cada ventana
-- [ ] Esquinas redondeadas bien recortadas
+- [x] Sombras suaves y creíbles
+      > Multi-layer soft shadow: 3 anillos concéntricos (alpha 45/25/12)
+      > Capas: inner (off 2, spread 2), mid (off 4, spread 5), outer (off 6, spread 8)
+      > Skip pixels inside window, también en fast drag path
+      > Parámetros en theme.h (THEME_SHADOW_OFF/SPREAD/ALPHA)
+- [x] Esquinas redondeadas bien recortadas
+      > Radio 3px (THEME_WIN_RADIUS) en compositor + titlebar
+      > Corner mask per-row en compose_region (blit) y fast drag path
+      > Titlebar top corners redondeadas en gui_window_draw_decorations()
 - [x] Borde sutil o separación visual clara
       > Shadow + titlebar border proveen separación visual
 - [x] Hit testing preciso
       > hit_close_button() actualizado para botón izquierdo
-- [ ] Resize handles cómodos
+- [x] Resize handles cómodos
+      > GUI_WIN_RESIZABLE flag, hit_resize_edge() (right/bottom/corner, 6px grab)
+      > Live resize: gui_window_resize() realoca surface, redibuja en vivo
+      > Resize grip visual (3 puntos diagonales) en decoraciones
+      > Habilitado en: Terminal, Notes, Viewer, Nexus, Task Manager
 - [ ] Snap visual bonito
-- [ ] Maximize/minimize con animación
-- [ ] Raise-to-front instantáneo
-- [ ] Drag sin freezes
-- [ ] Resize fluido
+- [x] Maximize/minimize con animación
+      > Minimize: botón amarillo (hit_minimize_button) activa GUI_WIN_MINIMIZED
+      > Taskbar muestra ventanas minimizadas con color dim (THEME_COL_DIM)
+      > Click en taskbar restaura ventana minimizada (toggle)
+      > Alt+Tab salta ventanas minimizadas
+- [x] Raise-to-front instantáneo
+      > gui_window_focus() asigna z_order = max_z + 1 → ventana sube al frente
+- [x] Drag sin freezes
+      > Fast drag path: bg_buffer cache + VBlank-synced present, bypass compose_frame()
+      > Deferred drag state desacopla IRQ de mouse del renderizado
+- [x] Resize fluido
+      > Live resize con gui_window_resize(), dirty rects cubren vieja + nueva zona
 - [ ] Resize preview o live resize optimizado
-- [ ] Focus inmediato
-- [ ] No flicker
-- [ ] No saltos en drag
+- [x] Focus inmediato
+      > gui_window_focus() solo flag + z_order, sin dirty rects
+      > Llamado inmediatamente en click y drag start
+- [x] No flicker
+      > Double buffering: window surfaces → backbuffer → framebuffer
+      > Cursor save-under, VBlank sync, present solo dirty scanlines
+- [x] No saltos en drag
+      > Union rect cubre posición vieja + nueva + shadow extent
+      > Deferred state suaviza movimiento rápido del mouse
 
 ### 6. Desktop y Wallpaper
 - [x] Wallpaper engine

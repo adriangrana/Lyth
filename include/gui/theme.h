@@ -153,6 +153,27 @@
 #define THEME_SHADOW_MEDIUM   2   /* windows, panels */
 #define THEME_SHADOW_HIGH     3   /* modals, context menus */
 
+/* multi-layer soft shadow parameters (3 concentric rings) */
+#define THEME_SHADOW_COLOR    0x000000
+#define THEME_SHADOW_LAYERS   3
+/* layer 0 (inner):  offset 2, spread +2, alpha 45 */
+#define THEME_SHADOW_OFF0     2
+#define THEME_SHADOW_SPREAD0  2
+#define THEME_SHADOW_ALPHA0  45
+/* layer 1 (middle): offset 4, spread +5, alpha 25 */
+#define THEME_SHADOW_OFF1     4
+#define THEME_SHADOW_SPREAD1  5
+#define THEME_SHADOW_ALPHA1  25
+/* layer 2 (outer):  offset 6, spread +8, alpha 12 */
+#define THEME_SHADOW_OFF2     6
+#define THEME_SHADOW_SPREAD2  8
+#define THEME_SHADOW_ALPHA2  12
+/* total max shadow extent (for dirty rect sizing) = OFF2 + SPREAD2 */
+#define THEME_SHADOW_EXTENT  14
+
+/* window corner radius (used by compositor for corner masking) */
+#define THEME_WIN_RADIUS      3
+
 /* ==================================================================
  *  5. LAYOUT DIMENSIONS
  * ================================================================== */

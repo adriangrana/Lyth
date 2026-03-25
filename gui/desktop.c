@@ -615,17 +615,19 @@ static void rebuild_desktop(void) {
         for (i = 0; i < count; i++) {
             gui_window_t* w = gui_window_get(i);
             if (!w || !(w->flags & GUI_WIN_VISIBLE)) continue;
-            if (w->flags & GUI_WIN_MINIMIZED) continue;
+            int minimized = (w->flags & GUI_WIN_MINIMIZED) ? 1 : 0;
             int tlen = (int)strlen(w->title);
             if (tlen > 12) tlen = 12;
             int item_w = tlen * FONT_PSF_WIDTH + 16;
             if (lx + item_w > dock_start_x() - 20) break;
 
             draw_rounded_rect(&desk_surf, lx, taskbar_y + 5, item_w,
-                              TASKBAR_H - 10, 2, COL_APP_LABEL_BG);
+                              TASKBAR_H - 10, 2,
+                              minimized ? THEME_COL_SURFACE0 : COL_APP_LABEL_BG);
             gui_surface_draw_string_n(&desk_surf, lx + 8,
                 taskbar_y + (TASKBAR_H - FONT_PSF_HEIGHT) / 2,
-                w->title, tlen, COL_APP_LABEL_FG, 0, 0);
+                w->title, tlen,
+                minimized ? THEME_COL_DIM : COL_APP_LABEL_FG, 0, 0);
             lx += item_w + 6;
         }
     }
@@ -1502,7 +1504,6 @@ int desktop_handle_click(int mx, int my, int button) {
             for (i = 0; i < count; i++) {
                 gui_window_t* w = gui_window_get(i);
                 if (!w || !(w->flags & GUI_WIN_VISIBLE)) continue;
-                if (w->flags & GUI_WIN_MINIMIZED) continue;
                 int tlen = (int)strlen(w->title);
                 if (tlen > 12) tlen = 12;
                 int item_w = tlen * FONT_PSF_WIDTH + 16;
@@ -1523,10 +1524,19 @@ int desktop_handle_click(int mx, int my, int button) {
                                       CTX_MAX_ITEMS * CTX_ITEM_H + 4);
                         return 1;
                     }
-                    gui_window_focus(w);
+                    /* Toggle minimize/restore */
+                    if (w->flags & GUI_WIN_MINIMIZED) {
+                        w->flags &= ~GUI_WIN_MINIMIZED;
+                        gui_window_focus(w);
+                        w->needs_redraw = 1;
+                    } else {
+                        gui_window_focus(w);
+                    }
                     desk_valid = 0;
                     gui_dirty_add(0, taskbar_y, sw, TASKBAR_H);
-                    gui_dirty_add(w->x, w->y, w->width, w->height);
+                    gui_dirty_add(w->x, w->y,
+                                  w->width + THEME_SHADOW_EXTENT,
+                                  w->height + THEME_SHADOW_EXTENT);
                     return 1;
                 }
                 lx += item_w + 6;

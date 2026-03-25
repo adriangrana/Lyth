@@ -204,7 +204,18 @@ void gui_window_draw_decorations(gui_window_t* win)
     tb_text = focused ? THEME_COL_TITLEBAR_TEXT : THEME_COL_TITLEBAR_TEXT_DIM;
     sep_col = THEME_COL_TITLEBAR_BORDER;
 
-    gui_surface_fill(s, 0, 0, w, GUI_TITLEBAR_HEIGHT, tb_bg);
+    /* Rounded top corners for titlebar (radius 3) */
+    {
+        int r = THEME_WIN_RADIUS;
+        if (r >= 3) {
+            gui_surface_fill(s, 3, 0, w - 6, 1, tb_bg);
+            gui_surface_fill(s, 2, 1, w - 4, 1, tb_bg);
+            gui_surface_fill(s, 1, 2, w - 2, 1, tb_bg);
+            gui_surface_fill(s, 0, 3, w, GUI_TITLEBAR_HEIGHT - 3, tb_bg);
+        } else {
+            gui_surface_fill(s, 0, 0, w, GUI_TITLEBAR_HEIGHT, tb_bg);
+        }
+    }
 
     /* ---- Traffic-light buttons (left side) ---- */
     btn_y   = GUI_TITLEBAR_HEIGHT / 2;
@@ -235,6 +246,21 @@ void gui_window_draw_decorations(gui_window_t* win)
 
     /* ---- Separator line ---- */
     gui_surface_hline(s, 0, GUI_TITLEBAR_HEIGHT - 1, w, sep_col);
+
+    /* ---- Resize grip (bottom-right corner, 3 diagonal dots) ---- */
+    if (win->flags & GUI_WIN_RESIZABLE) {
+        uint32_t grip_col = focused ? THEME_COL_OVERLAY1 : THEME_COL_OVERLAY0;
+        int h = win->height;
+        /* three small diagonal lines */
+        gui_surface_putpixel(s, w - 4, h - 2, grip_col);
+
+        gui_surface_putpixel(s, w - 7, h - 2, grip_col);
+        gui_surface_putpixel(s, w - 4, h - 5, grip_col);
+
+        gui_surface_putpixel(s, w - 10, h - 2, grip_col);
+        gui_surface_putpixel(s, w - 7, h - 5, grip_col);
+        gui_surface_putpixel(s, w - 4, h - 8, grip_col);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -331,6 +357,50 @@ void gui_window_move(gui_window_t* win, int x, int y) {
     /* invalidar zona vieja y zona nueva */
     gui_dirty_add(old_x, old_y, win->width, win->height);
     gui_dirty_add(win->x, win->y, win->width, win->height);
+}
+
+void gui_window_resize(gui_window_t* win, int new_w, int new_h) {
+    int old_w, old_h;
+    uint32_t new_size, new_phys;
+
+    if (!win) return;
+    if (new_w < GUI_RESIZE_MIN_W) new_w = GUI_RESIZE_MIN_W;
+    if (new_h < GUI_RESIZE_MIN_H) new_h = GUI_RESIZE_MIN_H;
+
+    old_w = win->width;
+    old_h = win->height;
+    if (old_w == new_w && old_h == new_h) return;
+
+    /* dirty old area (including shadow) */
+    gui_dirty_add(win->x - 1, win->y - 1,
+                  old_w + THEME_SHADOW_EXTENT + 2,
+                  old_h + THEME_SHADOW_EXTENT + 2);
+
+    /* reallocate surface */
+    new_size = (uint32_t)(new_w * new_h) * 4;
+    new_phys = physmem_alloc_region(new_size, 4096);
+    if (!new_phys) return; /* keep old size on failure */
+
+    /* free old surface */
+    gui_surface_free(&win->surface);
+
+    /* set new surface */
+    win->surface.pixels = (uint32_t*)(uintptr_t)new_phys;
+    win->surface.width = new_w;
+    win->surface.height = new_h;
+    win->surface.stride = new_w;
+    win->surface.alloc_phys = new_phys;
+    win->surface.alloc_size = new_size;
+    memset(win->surface.pixels, 0, new_size);
+
+    win->width = new_w;
+    win->height = new_h;
+
+    /* redraw at new size */
+    win->needs_redraw = 1;
+    gui_dirty_add(win->x, win->y,
+                  new_w + THEME_SHADOW_EXTENT,
+                  new_h + THEME_SHADOW_EXTENT);
 }
 
 void gui_window_invalidate(gui_window_t* win) {

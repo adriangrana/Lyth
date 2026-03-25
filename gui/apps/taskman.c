@@ -279,7 +279,7 @@ void taskman_app_open(void) {
     }
 
     tm_window = gui_window_create("Task Manager", 200, 60, 420, 400,
-        GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE | GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED);
+        GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE | GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED | GUI_WIN_RESIZABLE);
     if (!tm_window) return;
 
     tm_window->on_paint = tm_paint;

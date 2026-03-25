@@ -625,7 +625,7 @@ void filemanager_app_open_at(const char* path) {
     }
 
     fm_window = gui_window_create("Nexus", 80, 40, FM_WIN_W, FM_WIN_H,
-        GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE | GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED);
+        GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE | GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED | GUI_WIN_RESIZABLE);
     if (!fm_window) return;
 
     fm_window->on_paint = fm_paint;

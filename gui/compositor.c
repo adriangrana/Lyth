@@ -18,6 +18,7 @@
 #include "window.h"
 #include "desktop.h"
 #include "cursor.h"
+#include "theme.h"
 #include "fbconsole.h"
 #include "font_psf.h"
 #include "input.h"
@@ -253,31 +254,34 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
         if (!w->surface.pixels)
             continue;
 
-        /* Draw soft drop shadow (4px offset, 6px spread) */
+        /* Draw multi-layer soft drop shadow (3 concentric rings) */
         {
-            int shx = w->x + 3, shy = w->y + 3;
-            int shw = w->width + 4, shh = w->height + 4;
-            /* Clip shadow to dirty rect */
-            int s0x = shx > dx0 ? shx : dx0;
-            int s0y = shy > dy0 ? shy : dy0;
-            int s1x = (shx + shw) < dx1 ? (shx + shw) : dx1;
-            int s1y = (shy + shh) < dy1 ? (shy + shh) : dy1;
-            if (s0x < s1x && s0y < s1y) {
-                /* Outer shadow (lighter, bigger) */
+            static const int sh_off[]    = { THEME_SHADOW_OFF0,    THEME_SHADOW_OFF1,    THEME_SHADOW_OFF2 };
+            static const int sh_spread[] = { THEME_SHADOW_SPREAD0, THEME_SHADOW_SPREAD1, THEME_SHADOW_SPREAD2 };
+            static const int sh_alpha[]  = { THEME_SHADOW_ALPHA0,  THEME_SHADOW_ALPHA1,  THEME_SHADOW_ALPHA2 };
+            int layer;
+            for (layer = THEME_SHADOW_LAYERS - 1; layer >= 0; layer--) {
+                int off = sh_off[layer], spread = sh_spread[layer], alpha = sh_alpha[layer];
+                int ia = 255 - alpha;
+                int shx = w->x + off, shy = w->y + off;
+                int shw = w->width + spread, shh = w->height + spread;
+                int s0x = shx > dx0 ? shx : dx0;
+                int s0y = shy > dy0 ? shy : dy0;
+                int s1x = (shx + shw) < dx1 ? (shx + shw) : dx1;
+                int s1y = (shy + shh) < dy1 ? (shy + shh) : dy1;
+                if (s0x >= s1x || s0y >= s1y) continue;
                 for (row = s0y; row < s1y; row++) {
                     uint32_t *p = &backbuffer[row * scr_w + s0x];
                     int cx;
                     for (cx = 0; cx < s1x - s0x; cx++) {
-                        /* Skip pixels that are inside the window itself */
                         int px = s0x + cx, py = row;
                         if (px >= w->x && px < w->x + w->width &&
                             py >= w->y && py < w->y + w->height)
                             continue;
                         uint32_t bg = p[cx];
-                        /* Darken by ~25% */
-                        uint32_t r = ((bg >> 16) & 0xFF) * 190 / 255;
-                        uint32_t g = ((bg >> 8) & 0xFF) * 190 / 255;
-                        uint32_t b = (bg & 0xFF) * 190 / 255;
+                        uint32_t r = ((bg >> 16) & 0xFF) * (uint32_t)ia / 255;
+                        uint32_t g = ((bg >> 8) & 0xFF) * (uint32_t)ia / 255;
+                        uint32_t b = (bg & 0xFF) * (uint32_t)ia / 255;
                         p[cx] = (r << 16) | (g << 8) | b;
                     }
                 }
@@ -314,18 +318,62 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
         bw = wx1 - wx0;
         bh = wy1 - wy0;
 
-        /* blit from window surface to backbuffer */
-        for (row = 0; row < bh; row++)
+        /* blit from window surface to backbuffer (with rounded corner mask) */
         {
-            int src_row = sy + row;
-            int dst_row = dsty + row;
-            if (src_row < 0 || src_row >= w->surface.height)
-                continue;
-            if (dst_row < 0 || dst_row >= scr_h)
-                continue;
-            memcpy(&backbuffer[dst_row * scr_w + dstx],
-                   &w->surface.pixels[src_row * w->surface.stride + sx],
-                   (size_t)bw * 4);
+            int cr = (w->flags & GUI_WIN_NO_DECOR) ? 0 : THEME_WIN_RADIUS;
+            for (row = 0; row < bh; row++)
+            {
+                int src_row = sy + row;
+                int dst_row = dsty + row;
+                int left_inset = 0, right_inset = 0;
+                if (src_row < 0 || src_row >= w->surface.height)
+                    continue;
+                if (dst_row < 0 || dst_row >= scr_h)
+                    continue;
+
+                /* compute per-row corner insets */
+                if (cr > 0) {
+                    /* top corners */
+                    if (src_row == 0)      { left_inset = 3; right_inset = 3; }
+                    else if (src_row == 1) { left_inset = 2; right_inset = 2; }
+                    else if (src_row == 2) { left_inset = 1; right_inset = 1; }
+                    /* bottom corners */
+                    if (src_row == w->surface.height - 1)      { left_inset = 3; right_inset = 3; }
+                    else if (src_row == w->surface.height - 2) { left_inset = 2; right_inset = 2; }
+                    else if (src_row == w->surface.height - 3) { left_inset = 1; right_inset = 1; }
+                }
+
+                if (left_inset == 0 && right_inset == 0) {
+                    memcpy(&backbuffer[dst_row * scr_w + dstx],
+                           &w->surface.pixels[src_row * w->surface.stride + sx],
+                           (size_t)bw * 4);
+                } else {
+                    /* adjust for the case the blit region doesn't start at column 0 */
+                    int row_sx = sx;          /* first source column in this blit */
+                    int row_bw = bw;
+                    int row_dstx = dstx;
+
+                    /* left inset: skip pixels at start of window row */
+                    if (row_sx < left_inset) {
+                        int skip = left_inset - row_sx;
+                        if (skip > row_bw) skip = row_bw;
+                        row_sx += skip;
+                        row_dstx += skip;
+                        row_bw -= skip;
+                    }
+                    /* right inset: skip pixels at end of window row */
+                    if (row_sx + row_bw > w->width - right_inset) {
+                        int over = (row_sx + row_bw) - (w->width - right_inset);
+                        if (over > row_bw) over = row_bw;
+                        row_bw -= over;
+                    }
+                    if (row_bw > 0) {
+                        memcpy(&backbuffer[dst_row * scr_w + row_dstx],
+                               &w->surface.pixels[src_row * w->surface.stride + row_sx],
+                               (size_t)row_bw * 4);
+                    }
+                }
+            }
         }
     }
 
@@ -617,12 +665,47 @@ static int hit_close_button(gui_window_t *win, int mx, int my)
     return (mx >= cx - 8 && mx <= cx + 8 && my >= cy - 8 && my <= cy + 8);
 }
 
+static int hit_minimize_button(gui_window_t *win, int mx, int my)
+{
+    int cx, cy;
+    if (win->flags & GUI_WIN_NO_DECOR)
+        return 0;
+    /* Minimize button center at X=36 (16 + 20) */
+    cx = win->x + 36;
+    cy = win->y + GUI_TITLEBAR_HEIGHT / 2;
+    return (mx >= cx - 8 && mx <= cx + 8 && my >= cy - 8 && my <= cy + 8);
+}
+
 static int hit_titlebar(gui_window_t *win, int mx, int my)
 {
     if (win->flags & GUI_WIN_NO_DECOR)
         return 0;
     return (mx >= win->x && mx < win->x + win->width &&
             my >= win->y && my < win->y + GUI_TITLEBAR_HEIGHT);
+}
+
+/* Returns GUI_RESIZE_NONE / RIGHT / BOTTOM / BR based on hit position */
+static int hit_resize_edge(gui_window_t *win, int mx, int my)
+{
+    int g = GUI_RESIZE_GRAB;
+    int right_zone, bottom_zone;
+    if (!(win->flags & GUI_WIN_RESIZABLE))
+        return GUI_RESIZE_NONE;
+    if (win->flags & GUI_WIN_NO_DECOR)
+        return GUI_RESIZE_NONE;
+
+    right_zone  = (mx >= win->x + win->width - g && mx < win->x + win->width &&
+                   my >= win->y + GUI_TITLEBAR_HEIGHT && my < win->y + win->height);
+    bottom_zone = (my >= win->y + win->height - g && my < win->y + win->height &&
+                   mx >= win->x && mx < win->x + win->width);
+
+    if (right_zone && bottom_zone)
+        return GUI_RESIZE_BR;
+    if (right_zone)
+        return GUI_RESIZE_RIGHT;
+    if (bottom_zone)
+        return GUI_RESIZE_BOTTOM;
+    return GUI_RESIZE_NONE;
 }
 
 static gui_widget_t *hit_widget(gui_window_t *win, int mx, int my)
@@ -723,7 +806,8 @@ static void handle_keyboard(input_event_t *ev)
     }
 }
 
-static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win)
+static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
+                         gui_window_t **resizing_win)
 {
     int old_mx = mouse_x, old_my = mouse_y;
 
@@ -784,9 +868,6 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win)
             *dragging_win = 0;
             drag_pending = 0;
             bg_valid = 0;
-            /* Backbuffer is already correct from the last composite_drag.
-             * Only dirty windows whose content changed during drag,
-             * instead of forcing an expensive full-screen recompose. */
             {
                 int _i, _count = gui_window_count();
                 for (_i = 0; _i < _count; _i++)
@@ -796,6 +877,33 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win)
                         gui_dirty_add(_w->x, _w->y, _w->width, _w->height);
                 }
             }
+        }
+        return;
+    }
+
+    /* resizing a window — apply live resize each frame */
+    if (*resizing_win)
+    {
+        if (ev->buttons & 0x01)
+        {
+            gui_window_t *rw = *resizing_win;
+            int dx = mouse_x - rw->resize_orig_mx;
+            int dy = mouse_y - rw->resize_orig_my;
+            int new_w = rw->resize_orig_w;
+            int new_h = rw->resize_orig_h;
+
+            if (rw->resizing == GUI_RESIZE_RIGHT || rw->resizing == GUI_RESIZE_BR)
+                new_w += dx;
+            if (rw->resizing == GUI_RESIZE_BOTTOM || rw->resizing == GUI_RESIZE_BR)
+                new_h += dy;
+
+            gui_window_resize(rw, new_w, new_h);
+        }
+        else
+        {
+            (*resizing_win)->resizing = GUI_RESIZE_NONE;
+            *resizing_win = 0;
+            bg_valid = 0;
         }
         return;
     }
@@ -822,7 +930,8 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win)
              * would trigger a full compose cycle before the fast drag
              * path even starts. */
             if ((w->flags & GUI_WIN_DRAGGABLE) && hit_titlebar(w, mouse_x, mouse_y)
-                && !hit_close_button(w, mouse_x, mouse_y))
+                && !hit_close_button(w, mouse_x, mouse_y)
+                && !hit_minimize_button(w, mouse_x, mouse_y))
             {
                 gui_window_focus(w); /* cheap: just z-order, no dirty rects */
 
@@ -843,6 +952,25 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win)
                 return;
             }
 
+            /* Check resize edge BEFORE normal click */
+            {
+                int edge = hit_resize_edge(w, mouse_x, mouse_y);
+                if (edge != GUI_RESIZE_NONE)
+                {
+                    gui_window_focus(w);
+                    gui_dirty_add(w->x, w->y, w->width + THEME_SHADOW_EXTENT,
+                                  w->height + THEME_SHADOW_EXTENT);
+
+                    w->resizing = edge;
+                    w->resize_orig_w = w->width;
+                    w->resize_orig_h = w->height;
+                    w->resize_orig_mx = mouse_x;
+                    w->resize_orig_my = mouse_y;
+                    *resizing_win = w;
+                    return;
+                }
+            }
+
             /* Non-drag click: normal focus + dirty */
             gui_window_focus(w);
             gui_dirty_add(w->x, w->y, w->width, w->height);
@@ -854,6 +982,16 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win)
                     w->on_close(w);
                 else
                     gui_window_destroy(w);
+                return;
+            }
+
+            if (hit_minimize_button(w, mouse_x, mouse_y))
+            {
+                w->flags |= GUI_WIN_MINIMIZED;
+                gui_dirty_add(w->x, w->y,
+                              w->width + THEME_SHADOW_EXTENT,
+                              w->height + THEME_SHADOW_EXTENT);
+                desktop_invalidate_taskbar();
                 return;
             }
 
@@ -972,6 +1110,7 @@ void gui_run(void)
 {
     input_event_t ev;
     gui_window_t *dragging_win = 0;
+    gui_window_t *resizing_win = 0;
     unsigned int last_frame_ms;
     unsigned int last_tick_sec = 0;
 
@@ -1024,12 +1163,12 @@ void gui_run(void)
             coalesced_ev.buttons = mouse_btn;
             coalesced_ev.type = 0;
             coalesced_ev.character = 0;
-            handle_mouse(&coalesced_ev, &dragging_win);
+            handle_mouse(&coalesced_ev, &dragging_win, &resizing_win);
             metrics.coalesced_moves = coalesced > 1 ? coalesced - 1 : 0;
         }
 
         /* track drag state in metrics */
-        metrics.drag_active = (dragging_win != 0) ? 1 : 0;
+        metrics.drag_active = (dragging_win != 0 || resizing_win != 0) ? 1 : 0;
         metrics.drag_mouse_x = (unsigned int)mouse_x;
         metrics.drag_mouse_y = (unsigned int)mouse_y;
         if (dragging_win)
@@ -1078,8 +1217,8 @@ void gui_run(void)
                 /* Compute union rect (old + new), clipped to screen */
                 ux = old_x < new_x ? old_x : new_x;
                 uy = old_y < new_y ? old_y : new_y;
-                uw = (old_x > new_x ? old_x : new_x) + drag_win_w + 7 - ux;
-                uh = (old_y > new_y ? old_y : new_y) + drag_win_h + 7 - uy;
+                uw = (old_x > new_x ? old_x : new_x) + drag_win_w + THEME_SHADOW_EXTENT - ux;
+                uh = (old_y > new_y ? old_y : new_y) + drag_win_h + THEME_SHADOW_EXTENT - uy;
                 if (ux < 0) { uw += ux; ux = 0; }
                 if (uy < 0) { uh += uy; uy = 0; }
                 if (ux + uw > scr_w) uw = scr_w - ux;
@@ -1091,7 +1230,42 @@ void gui_run(void)
                            &bg_buffer[row * scr_w + ux],
                            (size_t)uw * 4);
 
-                /* 2. Blit window at new position */
+                /* 2a. Draw shadow at new position */
+                {
+                    static const int sh_off[]    = { THEME_SHADOW_OFF0,    THEME_SHADOW_OFF1,    THEME_SHADOW_OFF2 };
+                    static const int sh_spread[] = { THEME_SHADOW_SPREAD0, THEME_SHADOW_SPREAD1, THEME_SHADOW_SPREAD2 };
+                    static const int sh_alpha[]  = { THEME_SHADOW_ALPHA0,  THEME_SHADOW_ALPHA1,  THEME_SHADOW_ALPHA2 };
+                    int layer;
+                    for (layer = THEME_SHADOW_LAYERS - 1; layer >= 0; layer--) {
+                        int off = sh_off[layer], spread = sh_spread[layer], alpha = sh_alpha[layer];
+                        int ia = 255 - alpha;
+                        int shx = new_x + off, shy = new_y + off;
+                        int shw = drag_win_w + spread, shh = drag_win_h + spread;
+                        int s0x = shx < 0 ? 0 : shx;
+                        int s0y = shy < 0 ? 0 : shy;
+                        int s1x = shx + shw > scr_w ? scr_w : shx + shw;
+                        int s1y = shy + shh > scr_h ? scr_h : shy + shh;
+                        int sr;
+                        if (s0x >= s1x || s0y >= s1y) continue;
+                        for (sr = s0y; sr < s1y; sr++) {
+                            uint32_t *p = &backbuffer[sr * scr_w + s0x];
+                            int cx;
+                            for (cx = 0; cx < s1x - s0x; cx++) {
+                                int px = s0x + cx, py = sr;
+                                if (px >= new_x && px < new_x + drag_win_w &&
+                                    py >= new_y && py < new_y + drag_win_h)
+                                    continue;
+                                uint32_t bg = p[cx];
+                                uint32_t rr = ((bg >> 16) & 0xFF) * (uint32_t)ia / 255;
+                                uint32_t gg = ((bg >> 8) & 0xFF) * (uint32_t)ia / 255;
+                                uint32_t bb = (bg & 0xFF) * (uint32_t)ia / 255;
+                                p[cx] = (rr << 16) | (gg << 8) | bb;
+                            }
+                        }
+                    }
+                }
+
+                /* 2b. Blit window at new position */
                 sx = new_x < 0 ? -new_x : 0;
                 sy = new_y < 0 ? -new_y : 0;
                 bw = drag_win_w - sx;
