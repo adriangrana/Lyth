@@ -124,6 +124,7 @@ APP_VIEWER_OBJ     = $(BUILD_DIR)/gui_app_viewer.o
 NOTIFY_OBJ         = $(BUILD_DIR)/gui_notify.o
 DIALOG_OBJ         = $(BUILD_DIR)/gui_dialog.o
 AUTH_PROMPT_OBJ    = $(BUILD_DIR)/gui_auth_prompt.o
+WIDGETS_OBJ        = $(BUILD_DIR)/gui_widgets.o
 
 CFLAGS = -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx -mno-sse2 \
 	-ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-frame-pointer -fno-optimize-sibling-calls \
@@ -157,12 +158,46 @@ FONT_TOOL = tools/psf2h.py
 FONT_HEADER = include/font_psf.h
 GRUB_CFG = arch/x86/boot/grub.cfg
 
+# Icon conversion (ICO -> C header)
+ICO_TOOL = tools/ico2h.py
+ICON_LYTH_H     = include/gui/icons/icon_lyth.h
+ICON_TERMINAL_H = include/gui/icons/icon_terminal.h
+ICON_NEXUS_H    = include/gui/icons/icon_nexus.h
+ICON_CALC_H     = include/gui/icons/icon_calc.h
+ICON_SETTINGS_H = include/gui/icons/icon_settings.h
+ICON_NOTES_H    = include/gui/icons/icon_notes.h
+ICON_HEADERS    = $(ICON_LYTH_H) $(ICON_TERMINAL_H) $(ICON_NEXUS_H) $(ICON_CALC_H) $(ICON_SETTINGS_H) $(ICON_NOTES_H)
+
 PNG_OBJ        = $(BUILD_DIR)/png.o
 
-OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(VIDEO_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(SESSION_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ) $(PCI_OBJ) $(E1000_OBJ) $(NETBUF_OBJ) $(NETIF_OBJ) $(ETHERNET_OBJ) $(ARP_OBJ) $(IPV4_OBJ) $(ICMP_OBJ) $(UDP_NET_OBJ) $(TCP_NET_OBJ) $(SOCKET_OBJ) $(DHCP_OBJ) $(DNS_OBJ) $(WINDOW_OBJ) $(COMPOSITOR_OBJ) $(CURSOR_OBJ) $(DESKTOP_OBJ) $(SPLASH_OBJ) $(LOGIN_OBJ) $(APP_TERMINAL_OBJ) $(APP_TASKMAN_OBJ) $(APP_SYSINFO_OBJ) $(APP_NETCFG_OBJ) $(APP_SETTINGS_OBJ) $(HPET_OBJ) $(SLAB_OBJ) $(MMAP_OBJ) $(AHCI_OBJ) $(XHCI_OBJ) $(USB_HID_OBJ) $(APP_FILEMANAGER_OBJ) $(APP_EDITOR_OBJ) $(APP_CALCULATOR_OBJ) $(APP_ABOUT_OBJ) $(APP_VIEWER_OBJ) $(NOTIFY_OBJ) $(DIALOG_OBJ) $(AUTH_PROMPT_OBJ) $(PNG_OBJ)
+OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(VIDEO_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(SESSION_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ) $(PCI_OBJ) $(E1000_OBJ) $(NETBUF_OBJ) $(NETIF_OBJ) $(ETHERNET_OBJ) $(ARP_OBJ) $(IPV4_OBJ) $(ICMP_OBJ) $(UDP_NET_OBJ) $(TCP_NET_OBJ) $(SOCKET_OBJ) $(DHCP_OBJ) $(DNS_OBJ) $(WINDOW_OBJ) $(COMPOSITOR_OBJ) $(CURSOR_OBJ) $(DESKTOP_OBJ) $(SPLASH_OBJ) $(LOGIN_OBJ) $(APP_TERMINAL_OBJ) $(APP_TASKMAN_OBJ) $(APP_SYSINFO_OBJ) $(APP_NETCFG_OBJ) $(APP_SETTINGS_OBJ) $(HPET_OBJ) $(SLAB_OBJ) $(MMAP_OBJ) $(AHCI_OBJ) $(XHCI_OBJ) $(USB_HID_OBJ) $(APP_FILEMANAGER_OBJ) $(APP_EDITOR_OBJ) $(APP_CALCULATOR_OBJ) $(APP_ABOUT_OBJ) $(APP_VIEWER_OBJ) $(NOTIFY_OBJ) $(DIALOG_OBJ) $(AUTH_PROMPT_OBJ) $(WIDGETS_OBJ) $(PNG_OBJ)
 
 $(FONT_HEADER): $(FONT_PSF) $(FONT_TOOL)
 	$(PYTHON) $(FONT_TOOL) $(FONT_PSF) $(FONT_HEADER)
+
+$(ICON_LYTH_H): gui/icons/lyth/32x32.ico $(ICO_TOOL)
+	@mkdir -p include/gui/icons
+	$(PYTHON) $(ICO_TOOL) gui/icons/lyth/32x32.ico $(ICON_LYTH_H) icon_lyth
+
+$(ICON_TERMINAL_H): gui/icons/terminal/32x32.ico $(ICO_TOOL)
+	@mkdir -p include/gui/icons
+	$(PYTHON) $(ICO_TOOL) gui/icons/terminal/32x32.ico $(ICON_TERMINAL_H) icon_terminal
+
+$(ICON_NEXUS_H): gui/icons/nexus/32x32.ico $(ICO_TOOL)
+	@mkdir -p include/gui/icons
+	$(PYTHON) $(ICO_TOOL) gui/icons/nexus/32x32.ico $(ICON_NEXUS_H) icon_nexus
+
+$(ICON_CALC_H): gui/icons/calc/32x32.ico $(ICO_TOOL)
+	@mkdir -p include/gui/icons
+	$(PYTHON) $(ICO_TOOL) gui/icons/calc/32x32.ico $(ICON_CALC_H) icon_calc
+
+$(ICON_SETTINGS_H): gui/icons/settings/32x32.ico $(ICO_TOOL)
+	@mkdir -p include/gui/icons
+	$(PYTHON) $(ICO_TOOL) gui/icons/settings/32x32.ico $(ICON_SETTINGS_H) icon_settings
+
+$(ICON_NOTES_H): gui/icons/notes/32x32.ico $(ICO_TOOL)
+	@mkdir -p include/gui/icons
+	$(PYTHON) $(ICO_TOOL) gui/icons/notes/32x32.ico $(ICON_NOTES_H) icon_notes
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -179,7 +214,7 @@ help: ## muestra los targets publicos y una descripcion breve
 	@printf "  %-20s %s\n" "QEMU_DISPLAY=..." "sobrescribe el backend/opciones de video de QEMU"
 	@printf "  %-20s %s\n" "FB_MOUSE_CURSOR=0|1" "activa o desactiva el cursor software del guest"
 
-compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kernel.bin
+compile: $(FONT_HEADER) $(ICON_HEADERS) $(BUILD_DIR) ## compila y enlaza el kernel en build/kernel.bin
 	$(CC) $(CFLAGS) -c kernel/kernel.c -o $(KERNEL_OBJ)
 	$(CC) $(CFLAGS) -c kernel/gdt.c -o $(GDT_OBJ)
 	$(CC) $(CFLAGS) -c drivers/console/terminal.c -o $(TERMINAL_OBJ)
@@ -267,6 +302,7 @@ compile: $(FONT_HEADER) $(BUILD_DIR) ## compila y enlaza el kernel en build/kern
 	$(CC) $(CFLAGS) -c gui/notify.c -o $(NOTIFY_OBJ)
 	$(CC) $(CFLAGS) -c gui/dialog.c -o $(DIALOG_OBJ)
 	$(CC) $(CFLAGS) -c gui/auth_prompt.c -o $(AUTH_PROMPT_OBJ)
+	$(CC) $(CFLAGS) -c gui/widgets.c -o $(WIDGETS_OBJ)
 	$(CC) $(CFLAGS) -c lib/png.c -o $(PNG_OBJ)
 	$(AS) --64 arch/x86/gdt64.s -o $(GDT_ASM_OBJ)
 	$(AS) --64 arch/x86/interrupts64.s -o $(INTERRUPTS_ASM_OBJ)
@@ -372,6 +408,7 @@ gdb-connect: ## imprime el comando GDB recomendado para conectarse al kernel
 clean: ## borra build/, dist/ y la cabecera generada de la fuente PSF
 	rm -rf $(BUILD_DIR) $(DIST_DIR)
 	rm -f $(FONT_HEADER)
+	rm -f $(ICON_HEADERS)
 
 test: compile create-iso ## ejecuta comprobaciones basicas de compilacion e ISO
 	$(GRUB_FILE) --is-x86-multiboot $(KERNEL_BIN)

@@ -11,6 +11,7 @@
 #include "settings.h"
 #include "compositor.h"
 #include "window.h"
+#include "widgets.h"
 #include "theme.h"
 #include "font_psf.h"
 #include "string.h"
@@ -67,6 +68,12 @@ static int fondo_blur   = 0;
 static int fondo_scale  = 0;   /* 0=Cubrir, 1=Ajustar, 2=Estirar */
 static const char* scale_labels[] = { "Cubrir", "Ajustar", "Estirar" };
 #define SCALE_COUNT 3
+
+/* Widget IDs for Fondo page */
+#define WID_SCALE_DROP   100
+#define WID_BLUR_SW      101
+#define WID_APPLY_BTN    102
+#define WID_RESET_BTN    103
 
 /* Thumbnail layout constants (content-relative coordinates) */
 #define THUMB_W     62
@@ -351,26 +358,18 @@ static void page_fondo(gui_surface_t* s, int ox, int oy, int cw, int rh) {
     }
     oy += THUMB_H + 10;
 
-    /* Scale mode */
+    /* Scale mode — label only, widget handles the dropdown */
     fondo_scale_sy = oy;
-    gui_surface_draw_string(s, ox, oy, "Ajuste de imagen:", COL_LABEL, 0, 0);
-    draw_card(s, ox + 150, oy - 2, 100, FONT_PSF_HEIGHT + 6);
-    gui_surface_draw_string(s, ox + 158, oy, scale_labels[fondo_scale], COL_TEXT, 0, 0);
+    gui_surface_draw_string(s, ox, oy + 6, "Ajuste de imagen:", COL_LABEL, 0, 0);
     oy += rh + 4;
 
-    /* Blur toggle */
+    /* Blur toggle — label only, widget handles the switch */
     fondo_toggle_sy = oy;
-    gui_surface_draw_string(s, ox, oy, "Blur del fondo:", COL_LABEL, 0, 0);
-    draw_toggle(s, ox + 150, oy - 1, fondo_blur);
-    gui_surface_draw_string(s, ox + 192, oy,
-        fondo_blur ? "Activado" : "Desactivado",
-        fondo_blur ? COL_ACCENT : COL_DIM, 0, 0);
+    gui_surface_draw_string(s, ox, oy + 1, "Blur del fondo:", COL_LABEL, 0, 0);
     oy += rh + 12;
 
-    /* Apply / Reset buttons */
+    /* Apply / Reset — widgets handle buttons */
     fondo_apply_sy = oy;
-    draw_button(s, ox, oy, 100, 28, "Aplicar", COL_BTN, 0x000000);
-    draw_button(s, ox + 112, oy, 140, 28, "Predeterminado", COL_BTN_SEC, COL_TEXT);
 }
 
 /* ---- page: Pantalla ---- */
@@ -612,6 +611,69 @@ static void page_acerca(gui_surface_t* s, int ox, int oy, int cw, int rh) {
     gui_surface_draw_string(s, ox + 100, oy, "por Adrian Torres Graña", COL_DIM, 0, 0);
 }
 
+/* ---- widget callbacks ---- */
+
+static void on_scale_change(wid_t *w, int val) {
+    fondo_scale = val;
+    if (set_window) {
+        set_window->needs_redraw = 1;
+        gui_dirty_add(set_window->x, set_window->y,
+                      set_window->width, set_window->height);
+    }
+    (void)w;
+}
+
+static void on_blur_change(wid_t *w, int val) {
+    fondo_blur = val;
+    if (set_window) {
+        set_window->needs_redraw = 1;
+        gui_dirty_add(set_window->x, set_window->y,
+                      set_window->width, set_window->height);
+    }
+    (void)w;
+}
+
+static void on_apply_click(wid_t *w) {
+    int sel = (fondo_sel < 0) ? desktop_wallpaper_selected() : fondo_sel;
+    desktop_set_wallpaper(sel);
+    fondo_sel = -1;
+    if (set_window) {
+        set_window->needs_redraw = 1;
+        gui_dirty_add(set_window->x, set_window->y,
+                      set_window->width, set_window->height);
+    }
+    (void)w;
+}
+
+static void on_reset_click(wid_t *w) {
+    desktop_set_wallpaper(0);
+    fondo_sel = -1;
+    if (set_window) {
+        set_window->needs_redraw = 1;
+        gui_dirty_add(set_window->x, set_window->y,
+                      set_window->width, set_window->height);
+    }
+    (void)w;
+}
+
+static void update_fondo_widgets(int visible) {
+    wid_t *w;
+    uint16_t mask = visible ? WID_VISIBLE : 0;
+    if (!set_window) return;
+
+    w = wid_find(set_window, WID_SCALE_DROP);
+    if (w) { w->state = (w->state & (uint16_t)~WID_VISIBLE) | mask; }
+
+    w = wid_find(set_window, WID_BLUR_SW);
+    if (w) { w->state = (w->state & (uint16_t)~WID_VISIBLE) | mask; }
+
+    w = wid_find(set_window, WID_APPLY_BTN);
+    if (w) { w->state = (w->state & (uint16_t)~WID_VISIBLE) | mask; }
+
+    w = wid_find(set_window, WID_RESET_BTN);
+    if (w) { w->state = (w->state & (uint16_t)~WID_VISIBLE) | mask; }
+}
+
 /* ---- paint ---- */
 static void set_paint(gui_window_t* win) {
     gui_surface_t* s = &win->surface;
@@ -647,6 +709,7 @@ static void set_on_key(gui_window_t* win, int event_type, char key) {
     }
     if (key >= '1' && key <= '0' + SEC_COUNT) {
         set_section = key - '1';
+        update_fondo_widgets(set_section == SEC_FONDO);
         win->needs_redraw = 1;
         gui_dirty_add(win->x, win->y, win->width, win->height);
     }
@@ -657,7 +720,7 @@ static void fondo_handle_click(gui_window_t* win, int sx, int sy) {
     int wcount = desktop_wallpaper_count();
     int i, tx;
 
-    /* Thumbnail click */
+    /* Thumbnail click (widgets handle scale/blur/buttons) */
     if (sy >= fondo_thumb_sy && sy < fondo_thumb_sy + THUMB_H) {
         for (i = 0; i < wcount && i < 8; i++) {
             tx = content_ox + i * (THUMB_W + THUMB_GAP);
@@ -667,46 +730,6 @@ static void fondo_handle_click(gui_window_t* win, int sx, int sy) {
                 gui_dirty_add(win->x, win->y, win->width, win->height);
                 return;
             }
-        }
-    }
-
-    /* Scale mode click */
-    if (sy >= fondo_scale_sy - 2 && sy < fondo_scale_sy + FONT_PSF_HEIGHT + 6) {
-        if (sx >= content_ox + 150 && sx < content_ox + 250) {
-            fondo_scale = (fondo_scale + 1) % SCALE_COUNT;
-            win->needs_redraw = 1;
-            gui_dirty_add(win->x, win->y, win->width, win->height);
-            return;
-        }
-    }
-
-    /* Blur toggle click */
-    if (sy >= fondo_toggle_sy - 2 && sy < fondo_toggle_sy + FONT_PSF_HEIGHT + 4) {
-        if (sx >= content_ox + 150 && sx < content_ox + 192) {
-            fondo_blur = !fondo_blur;
-            win->needs_redraw = 1;
-            gui_dirty_add(win->x, win->y, win->width, win->height);
-            return;
-        }
-    }
-
-    /* Apply button */
-    if (sy >= fondo_apply_sy && sy < fondo_apply_sy + 28) {
-        if (sx >= content_ox && sx < content_ox + 100) {
-            int sel = (fondo_sel < 0) ? desktop_wallpaper_selected() : fondo_sel;
-            desktop_set_wallpaper(sel);
-            fondo_sel = -1;
-            win->needs_redraw = 1;
-            gui_dirty_add(win->x, win->y, win->width, win->height);
-            return;
-        }
-        /* Predeterminado button */
-        if (sx >= content_ox + 112 && sx < content_ox + 252) {
-            desktop_set_wallpaper(0);
-            fondo_sel = -1;
-            win->needs_redraw = 1;
-            gui_dirty_add(win->x, win->y, win->width, win->height);
-            return;
         }
     }
 }
@@ -729,6 +752,7 @@ static void set_on_click(gui_window_t* win, int lx, int ly, int button) {
         int idx = (ly - items_start) / item_h;
         if (idx >= 0 && idx < SEC_COUNT) {
             set_section = idx;
+            update_fondo_widgets(set_section == SEC_FONDO);
             win->needs_redraw = 1;
             gui_dirty_add(win->x, win->y, win->width, win->height);
             return;
@@ -767,6 +791,30 @@ void settings_app_open(void) {
     set_window->on_key = set_on_key;
     set_window->on_click = set_on_click;
     set_window->on_close = set_on_close;
+
+    /* ---- Create Fondo page widgets (content-relative coords) ---- */
+    {
+        wid_t *w;
+        /* Scale dropdown at content (309, 373) */
+        w = wid_dropdown(set_window, 309, 373, 120,
+                         "Cubrir|Ajustar|Estirar", fondo_scale,
+                         on_scale_change);
+        if (w) w->id = WID_SCALE_DROP;
+
+        /* Blur switch at content (309, 400) */
+        w = wid_switch(set_window, 309, 400, 0, fondo_blur, on_blur_change);
+        if (w) w->id = WID_BLUR_SW;
+
+        /* Apply button at content (159, 435) */
+        w = wid_button(set_window, 159, 435, 100, 28, "Aplicar",
+                       on_apply_click);
+        if (w) { w->id = WID_APPLY_BTN; w->bg = COL_BTN; w->fg = 0x000000; }
+
+        /* Predeterminado button at content (271, 435) */
+        w = wid_button(set_window, 271, 435, 140, 28, "Predeterminado",
+                       on_reset_click);
+        if (w) { w->id = WID_RESET_BTN; w->bg = COL_BTN_SEC; }
+    }
 
     set_open = 1;
     gui_window_focus(set_window);

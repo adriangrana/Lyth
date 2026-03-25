@@ -185,7 +185,8 @@
 
 #define THEME_TITLEBAR_H     28   /* window titlebar height */
 #define THEME_BORDER_W        1   /* window border width */
-#define THEME_TASKBAR_H      36   /* bottom taskbar height */
+#define THEME_TASKBAR_H      36   /* top taskbar height */
+#define THEME_DOCK_H         52   /* bottom dock bar height */
 
 #define THEME_FONT_W          8   /* current font glyph width */
 #define THEME_FONT_H         16   /* current font glyph height */

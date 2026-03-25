@@ -23,6 +23,13 @@
 #include "lib/png.h"
 #include "wallpaper_png.h"
 #include "wallpaper_sky_png.h"
+#include "wallpaper_default_png.h"
+#include "icons/icon_lyth.h"
+#include "icons/icon_terminal.h"
+#include "icons/icon_nexus.h"
+#include "icons/icon_calc.h"
+#include "icons/icon_settings.h"
+#include "icons/icon_notes.h"
 
 /* forward declarations for app launchers */
 void terminal_app_open(void);
@@ -102,10 +109,11 @@ static void power_reboot(void) { acpi_reboot(); }
 
 /* ---- dimensions ---- */
 #define TASKBAR_H        GUI_TASKBAR_HEIGHT
-#define DOCK_ICON_SIZE   28
-#define DOCK_ICON_PAD    8
+#define DOCK_H           GUI_DOCK_HEIGHT
+#define DOCK_ICON_SIZE   32
+#define DOCK_ICON_PAD    10
 #define DOCK_MAX_ITEMS   12
-#define DOCK_Y_PAD       4
+#define DOCK_Y_PAD       10
 
 /* ---- system tray dimensions ---- */
 #define TRAY_ICON_W      22
@@ -117,7 +125,8 @@ typedef struct {
     const char* label;
     void (*action)(void);
     uint32_t icon_color;
-    char shortcut;  /* first letter for icon */
+    char shortcut;           /* first letter for icon (fallback) */
+    const uint32_t *icon_pixels;  /* pre-decoded 32x32 ARGB (NULL=use fallback) */
 } dock_item_t;
 
 /* ---- start menu / app launcher ---- */
@@ -135,6 +144,7 @@ typedef struct {
     void (*action)(void);
     uint32_t icon_color;
     char icon_letter;
+    const uint32_t *icon_pixels;
 } launcher_item_t;
 
 /* ---- context menu (window right-click) ---- */
@@ -204,6 +214,10 @@ static int dock_hover_idx = -1;  /* -1 = none */
 static int launcher_anim = 0;   /* 0=idle, >0=opening, <0=closing */
 static int launcher_anim_step = 0;
 
+/* ---- launcher cache surface (avoids full alpha-blend on every frame) ---- */
+static gui_surface_t launcher_cache;
+static int launcher_cache_valid;
+
 /* ---- wallpaper catalogue ---- */
 #define WP_TYPE_IMAGE   0
 #define WP_TYPE_SOLID   1
@@ -231,6 +245,13 @@ static void wallpaper_catalogue_init(void) {
     int i;
     if (wp_count > 0) return;
     /* Image wallpapers from defaults_wallpapers/ */
+
+    wp_catalogue[wp_count].name = "Default";
+    wp_catalogue[wp_count].type = WP_TYPE_IMAGE;
+    wp_catalogue[wp_count].png_data = wallpaper_default_png_data;
+    wp_catalogue[wp_count].png_size = (unsigned int)wallpaper_default_png_size;
+    wp_count++;
+
     wp_catalogue[wp_count].name = "Lyth";
     wp_catalogue[wp_count].type = WP_TYPE_IMAGE;
     wp_catalogue[wp_count].png_data = wallpaper_png_data;
@@ -419,6 +440,37 @@ static void draw_volume_icon(gui_surface_t* dst, int ox, int oy, uint32_t col) {
     gui_surface_putpixel(dst, ox + 6, oy + 4, col);
 }
 
+/* Blit a pre-decoded ARGB icon onto a surface with alpha blending */
+static void blit_icon(gui_surface_t *dst, int dx, int dy,
+                      const uint32_t *pixels, int iw, int ih) {
+    int row_i, col_i;
+    for (row_i = 0; row_i < ih; row_i++) {
+        int py = dy + row_i;
+        if (py < 0 || py >= dst->height) continue;
+        for (col_i = 0; col_i < iw; col_i++) {
+            int px = dx + col_i;
+            if (px < 0 || px >= dst->width) continue;
+            uint32_t p = pixels[row_i * iw + col_i];
+            int alpha = (int)((p >> 24) & 0xFF);
+            if (alpha == 0) continue;
+            if (alpha == 255) {
+                dst->pixels[py * dst->stride + px] = p & 0x00FFFFFF;
+            } else {
+                uint32_t bg = dst->pixels[py * dst->stride + px];
+                int ia = 255 - alpha;
+                int r = ((int)((p >> 16) & 0xFF) * alpha +
+                         (int)((bg >> 16) & 0xFF) * ia) / 255;
+                int g = ((int)((p >> 8) & 0xFF) * alpha +
+                         (int)((bg >> 8) & 0xFF) * ia) / 255;
+                int b = ((int)(p & 0xFF) * alpha +
+                         (int)(bg & 0xFF) * ia) / 255;
+                dst->pixels[py * dst->stride + px] =
+                    ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+            }
+        }
+    }
+}
+
 static uint32_t mix_rgb(uint32_t a, uint32_t b, int t, int max) {
     if (max <= 0) max = 1;
     uint32_t ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
@@ -572,6 +624,9 @@ static void update_clock(void) {
     }
 }
 
+/* forward declaration */
+static void toggle_start_menu(void);
+
 /* ---- Get dock metrics ---- */
 static int dock_total_w(void) {
     return dock_item_count * (DOCK_ICON_SIZE + DOCK_ICON_PAD) + DOCK_ICON_PAD;
@@ -581,7 +636,7 @@ static int dock_start_x(void) {
 }
 
 static void rebuild_desktop(void) {
-    int y, taskbar_y;
+    int y, taskbar_y, dock_y;
     int half = sh / 2;
     try_load_wallpaper();
     if (wallpaper_img.pixels && wallpaper_img.width > 0 && wallpaper_img.height > 0) {
@@ -642,16 +697,16 @@ static void rebuild_desktop(void) {
                 uint32_t c = mix_rgb(COL_BG_TOP, COL_BG_MID, y, half > 1 ? half - 1 : 1);
                 memset32(&desk_surf.pixels[y * sw], c, (size_t)sw);
             }
-            for (y = half; y < sh - TASKBAR_H; y++) {
+            for (y = half; y < sh; y++) {
                 uint32_t c = mix_rgb(COL_BG_MID, COL_BG_BOT, y - half,
-                                     (sh - TASKBAR_H - half) > 1 ? (sh - TASKBAR_H - half - 1) : 1);
+                                     (sh - half) > 1 ? (sh - half - 1) : 1);
                 memset32(&desk_surf.pixels[y * sw], c, (size_t)sw);
             }
         }
     }
 
     /* Subtle dark scrim for text legibility over bright wallpapers */
-    alpha_blend_fill(&desk_surf, 0, 0, sw, sh - TASKBAR_H, 0x000000, 18);
+    alpha_blend_fill(&desk_surf, 0, TASKBAR_H, sw, sh - TASKBAR_H - DOCK_H, 0x000000, 18);
 
     /* Subtle centered watermark (visible on empty desktop) */
     {
@@ -659,84 +714,109 @@ static void rebuild_desktop(void) {
         int wm_len = 7;
         int wm_w = wm_len * FONT_PSF_WIDTH;
         int wm_x = (sw - wm_w) / 2;
-        int wm_y = (sh - TASKBAR_H) * 2 / 5;
+        int wm_y = TASKBAR_H + (sh - TASKBAR_H - DOCK_H) * 2 / 5;
         draw_string_alpha(&desk_surf, wm_x, wm_y, wm, THEME_COL_TEXT, 25);
     }
 
-    /* ---- Taskbar ---- */
-    taskbar_y = sh - TASKBAR_H;
+    /* ---- Top Taskbar (running apps + tray) ---- */
+    taskbar_y = 0;
 
     /* Taskbar background — translucent glass over wallpaper */
     alpha_blend_fill(&desk_surf, 0, taskbar_y, sw, TASKBAR_H, 0x0D1117, 190);
-    /* Subtle accent line at top edge */
-    alpha_blend_fill(&desk_surf, 0, taskbar_y, sw, 1, THEME_COL_ACCENT, 30);
+    /* Subtle accent line at bottom edge */
+    alpha_blend_fill(&desk_surf, 0, taskbar_y + TASKBAR_H - 1, sw, 1, THEME_COL_ACCENT, 30);
 
-    /* == Left section: running app labels == */
+    /* == Left section: running app icons (non-pinned apps only) == */
+    #define TB_ICON_SZ 24
+    #define TB_ICON_PAD 6
     {
         int lx = 8;
         int i, count = gui_window_count();
         for (i = 0; i < count; i++) {
             gui_window_t* w = gui_window_get(i);
             if (!w || !(w->flags & GUI_WIN_VISIBLE)) continue;
-            int minimized = (w->flags & GUI_WIN_MINIMIZED) ? 1 : 0;
-            int tlen = (int)strlen(w->title);
-            if (tlen > 12) tlen = 12;
-            int item_w = tlen * FONT_PSF_WIDTH + 16;
-            if (lx + item_w > dock_start_x() - 20) break;
-
-            draw_rounded_rect(&desk_surf, lx, taskbar_y + 5, item_w,
-                              TASKBAR_H - 10, 2,
-                              minimized ? THEME_COL_SURFACE0 : COL_APP_LABEL_BG);
-            gui_surface_draw_string_n(&desk_surf, lx + 8,
-                taskbar_y + (TASKBAR_H - FONT_PSF_HEIGHT) / 2,
-                w->title, tlen,
-                minimized ? THEME_COL_DIM : COL_APP_LABEL_FG, 0, 0);
-            lx += item_w + 6;
-        }
-    }
-
-    /* == Center: dock icons == */
-    {
-        int dx = dock_start_x();
-        int dy = taskbar_y + DOCK_Y_PAD;
-        int icon_h = TASKBAR_H - DOCK_Y_PAD * 2;
-        int i;
-
-        /* Dock background pill — translucent */
-        draw_rounded_rect_alpha(&desk_surf, dx - 6, taskbar_y + 2,
-                                dock_total_w() + 12, TASKBAR_H - 4, 3, COL_DOCK_BG, 160);
-
-        for (i = 0; i < dock_item_count; i++) {
-            int ix = dx + DOCK_ICON_PAD + i * (DOCK_ICON_SIZE + DOCK_ICON_PAD);
-            int iy = dy + (icon_h - DOCK_ICON_SIZE) / 2;
-
-            /* Icon: colored rounded square with letter */
-            draw_rounded_rect(&desk_surf, ix, iy, DOCK_ICON_SIZE,
-                              DOCK_ICON_SIZE, 3, dock_items[i].icon_color);
-
-            /* Draw shortcut letter in center */
-            gui_surface_draw_char(&desk_surf,
-                ix + (DOCK_ICON_SIZE - FONT_PSF_WIDTH) / 2,
-                iy + (DOCK_ICON_SIZE - FONT_PSF_HEIGHT) / 2,
-                (unsigned char)dock_items[i].shortcut,
-                0xFFFFFF, 0, 0);
-
-            /* Running indicator dot: check if any window title starts with dock label */
+            /* Skip apps that are pinned in the dock */
             {
-                int j, wcount = gui_window_count();
-                for (j = 0; j < wcount; j++) {
-                    gui_window_t* w = gui_window_get(j);
-                    if (w && (w->flags & GUI_WIN_VISIBLE) &&
-                        str_starts_with(w->title, dock_items[i].label)) {
-                        /* running indicator bar below icon */
-                        gui_surface_fill(&desk_surf,
-                            ix + DOCK_ICON_SIZE / 2 - 3,
-                            taskbar_y + TASKBAR_H - 4,
-                            6, 2, COL_DOCK_DOT);
+                int pinned = 0, d;
+                for (d = 0; d < dock_item_count; d++) {
+                    if (dock_items[d].label &&
+                        str_starts_with(w->title, dock_items[d].label)) {
+                        pinned = 1; break;
+                    }
+                }
+                if (pinned) continue;
+            }
+            int minimized = (w->flags & GUI_WIN_MINIMIZED) ? 1 : 0;
+
+            /* Find icon for this window */
+            const uint32_t *win_icon = 0;
+            uint32_t win_icon_col = COL_APP_LABEL_BG;
+            char win_icon_letter = '?';
+            {
+                int li;
+                for (li = 0; li < launcher_item_count; li++) {
+                    if (str_starts_with(w->title, launcher_items[li].label)) {
+                        win_icon = launcher_items[li].icon_pixels;
+                        win_icon_col = launcher_items[li].icon_color;
+                        win_icon_letter = launcher_items[li].icon_letter;
                         break;
                     }
                 }
             }
+
+            int item_w = TB_ICON_SZ + TB_ICON_PAD * 2;
+            if (lx + item_w > sw / 2) break;
+
+            int iy = taskbar_y + (TASKBAR_H - TB_ICON_SZ) / 2;
+            /* Background pill */
+            draw_rounded_rect(&desk_surf, lx, taskbar_y + 4, item_w,
+                              TASKBAR_H - 8, 4,
+                              minimized ? THEME_COL_SURFACE0 : COL_APP_LABEL_BG);
+            /* Icon or fallback letter */
+            if (win_icon) {
+                /* Scale 32x32 icon to TB_ICON_SZ with nearest-neighbor */
+                int r, c;
+                for (r = 0; r < TB_ICON_SZ; r++) {
+                    int py = iy + r;
+                    if (py < 0 || py >= desk_surf.height) continue;
+                    int sr = r * 32 / TB_ICON_SZ;
+                    for (c = 0; c < TB_ICON_SZ; c++) {
+                        int px = lx + TB_ICON_PAD + c;
+                        if (px < 0 || px >= desk_surf.width) continue;
+                        int sc = c * 32 / TB_ICON_SZ;
+                        uint32_t p = win_icon[sr * 32 + sc];
+                        int a = (int)((p >> 24) & 0xFF);
+                        if (a == 0) continue;
+                        if (a == 255) {
+                            desk_surf.pixels[py * desk_surf.stride + px] = p & 0x00FFFFFF;
+                        } else {
+                            uint32_t bg = desk_surf.pixels[py * desk_surf.stride + px];
+                            int ia = 255 - a;
+                            int rv = ((int)((p>>16)&0xFF)*a + (int)((bg>>16)&0xFF)*ia)/255;
+                            int gv = ((int)((p>>8)&0xFF)*a  + (int)((bg>>8)&0xFF)*ia)/255;
+                            int bv = ((int)(p&0xFF)*a       + (int)(bg&0xFF)*ia)/255;
+                            desk_surf.pixels[py * desk_surf.stride + px] =
+                                ((uint32_t)rv<<16)|((uint32_t)gv<<8)|(uint32_t)bv;
+                        }
+                    }
+                }
+            } else {
+                /* Fallback: colored square with letter */
+                int sq = TB_ICON_SZ - 4;
+                int sqx = lx + TB_ICON_PAD + 2;
+                int sqy = iy + 2;
+                draw_rounded_rect(&desk_surf, sqx, sqy, sq, sq, 3, win_icon_col);
+                gui_surface_draw_char(&desk_surf,
+                    sqx + (sq - FONT_PSF_WIDTH) / 2,
+                    sqy + (sq - FONT_PSF_HEIGHT) / 2,
+                    win_icon_letter, 0xFFFFFF, 0, 0);
+            }
+            /* Underline indicator for active (non-minimized) */
+            if (!minimized) {
+                alpha_blend_fill(&desk_surf, lx + 4, taskbar_y + TASKBAR_H - 3,
+                                 item_w - 8, 2, THEME_COL_ACCENT, 180);
+            }
+            lx += item_w + 4;
         }
     }
 
@@ -814,13 +894,115 @@ static void rebuild_desktop(void) {
                        COL_TRAY_TEXT);
     }
 
+    /* ---- Bottom Dock (Lyth icon + pinned app icons) ---- */
+    dock_y = sh - DOCK_H;
+
+    /* == Center: dock icons == */
+    {
+        int dx = dock_start_x();
+        int dy = dock_y + DOCK_Y_PAD;
+        int pill_x = dx - 8;
+        int pill_w = dock_total_w() + 16;
+        int i;
+
+        /* Dock background pill — translucent */
+        draw_rounded_rect_alpha(&desk_surf, pill_x, dock_y + 2,
+                                pill_w, DOCK_H - 4, 12, 0x0D1117, 200);
+        /* Subtle accent border at top of pill */
+        alpha_blend_fill(&desk_surf, pill_x, dock_y + 2, pill_w, 1, THEME_COL_ACCENT, 30);
+
+        for (i = 0; i < dock_item_count; i++) {
+            int ix = dx + DOCK_ICON_PAD + i * (DOCK_ICON_SIZE + DOCK_ICON_PAD);
+            int iy = dy;
+
+            if (dock_items[i].icon_pixels) {
+                /* Blit pre-decoded ARGB icon */
+                blit_icon(&desk_surf, ix, iy, dock_items[i].icon_pixels, 32, 32);
+            } else {
+                /* Fallback: colored rounded square with letter */
+                draw_rounded_rect(&desk_surf, ix, iy, DOCK_ICON_SIZE,
+                                  DOCK_ICON_SIZE, 3, dock_items[i].icon_color);
+                gui_surface_draw_char(&desk_surf,
+                    ix + (DOCK_ICON_SIZE - FONT_PSF_WIDTH) / 2,
+                    iy + (DOCK_ICON_SIZE - FONT_PSF_HEIGHT) / 2,
+                    (unsigned char)dock_items[i].shortcut,
+                    0xFFFFFF, 0, 0);
+            }
+
+            /* Running indicator dot below icon (skip Lyth/menu item) */
+            if (dock_items[i].label && dock_items[i].action != toggle_start_menu) {
+                int j, wcount = gui_window_count();
+                for (j = 0; j < wcount; j++) {
+                    gui_window_t* w = gui_window_get(j);
+                    if (w && (w->flags & GUI_WIN_VISIBLE) &&
+                        str_starts_with(w->title, dock_items[i].label)) {
+                        gui_surface_fill(&desk_surf,
+                            ix + DOCK_ICON_SIZE / 2 - 3,
+                            dock_y + DOCK_H - 5,
+                            6, 2, COL_DOCK_DOT);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     desk_valid = 1;
 }
 
-static void draw_start_menu(gui_surface_t* dst) {
-    /* Modern app launcher overlay centred above taskbar */
+/* ---- Launcher cache management ---- */
+
+static void launcher_cache_rebuild(void) {
     int lx = (sw - LAUNCHER_W) / 2;
-    int ly = sh - TASKBAR_H - LAUNCHER_H - 8;
+    int ly = sh - DOCK_H - LAUNCHER_H - 8;
+    int ar;
+
+    /* Allocate on first use */
+    if (!launcher_cache.pixels) {
+        gui_surface_alloc(&launcher_cache, LAUNCHER_W, LAUNCHER_H);
+        if (!launcher_cache.pixels) return;
+    }
+
+    /* Copy wallpaper region as base */
+    if (desk_surf.pixels) {
+        for (ar = 0; ar < LAUNCHER_H; ar++) {
+            int sy = ly + ar;
+            if (sy >= 0 && sy < sh) {
+                int sx0 = lx < 0 ? 0 : lx;
+                int sx1 = lx + LAUNCHER_W > sw ? sw : lx + LAUNCHER_W;
+                int dx = sx0 - lx;
+                if (sx1 > sx0)
+                    memcpy(&launcher_cache.pixels[ar * LAUNCHER_W + dx],
+                           &desk_surf.pixels[sy * sw + sx0],
+                           (size_t)(sx1 - sx0) * 4);
+            }
+        }
+    }
+
+    launcher_cache_valid = 1;
+}
+
+static void draw_start_menu(void);
+
+static void launcher_cache_invalidate(void) {
+    launcher_cache_valid = 0;
+}
+
+/* Fully rebuild the launcher cache: wallpaper base + launcher drawn on top */
+static void launcher_cache_render(void) {
+    launcher_cache_rebuild();
+    if (!launcher_cache.pixels) return;
+    draw_start_menu();
+    /* launcher_cache_valid already set by rebuild; keep it */
+}
+
+/* draw_start_menu: renders launcher content into the cache surface
+ * (LAUNCHER_W × LAUNCHER_H, origin at 0,0).  Call launcher_cache_rebuild()
+ * first to seed the wallpaper background. */
+static void draw_start_menu(void) {
+    gui_surface_t *dst = &launcher_cache;
+    /* local offsets (0-based) */
+    int lx = 0, ly = 0;
     int i, row, col;
     int grid_x = lx + 20;
     int grid_y = ly + 60;
@@ -956,7 +1138,7 @@ static void draw_context_menu(gui_surface_t* dst) {
 static void close_start_menu(void) {
     if (!start_menu_open) return;
     int lx = (sw - LAUNCHER_W) / 2;
-    int ly = sh - TASKBAR_H - LAUNCHER_H - 8;
+    int ly = sh - DOCK_H - LAUNCHER_H - 8;
     /* Start close animation — don't clear start_menu_open until anim done */
     launcher_anim = -1; /* closing */
     menu_selected = -1;
@@ -976,7 +1158,7 @@ static void close_context_menu(void) {
 static void close_net_popup(void) {
     if (!net_popup_open) return;
     int px = sw - NET_POPUP_W - 8;
-    int py = sh - TASKBAR_H - NET_POPUP_H - 8;
+    int py = sh - DOCK_H - NET_POPUP_H - 8;
     gui_dirty_add(px, py, NET_POPUP_W, NET_POPUP_H);
     net_popup_open = 0;
 }
@@ -1024,7 +1206,7 @@ static void draw_desktop_ctx(gui_surface_t* dst) {
 
 static void draw_net_popup(gui_surface_t* dst) {
     int px = sw - NET_POPUP_W - 8;
-    int py = sh - TASKBAR_H - NET_POPUP_H - 8;
+    int py = sh - DOCK_H - NET_POPUP_H - 8;
     int ly;
     netif_t* iface = netif_get(0);
 
@@ -1089,12 +1271,13 @@ static void open_start_menu(void) {
     menu_selected = 0;
     launcher_anim = 1; /* opening */
     launcher_anim_step = 0;
+    launcher_cache_invalidate();
     close_context_menu();
     close_net_popup();
     {
         int lx = (sw - LAUNCHER_W) / 2;
-        int ly = sh - TASKBAR_H - LAUNCHER_H - 8;
-        gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H + TASKBAR_H + 8);
+        int ly = sh - DOCK_H - LAUNCHER_H - 8;
+        gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H + DOCK_H + 8);
     }
 }
 
@@ -1143,84 +1326,73 @@ void desktop_init(int screen_w, int screen_h) {
     dctx_items[dctx_item_count].action = about_app_open;
     dctx_item_count++;
 
-    /* ---- Populate dock (pinned icons in centre of taskbar) ---- */
+    /* ---- Populate dock (pinned icons at bottom of screen) ---- */
     dock_item_count = 0;
 
-    dock_items[dock_item_count].label = "Files";
-    dock_items[dock_item_count].action = filemanager_app_open;
-    dock_items[dock_item_count].icon_color = COL_ICON_FILES;
-    dock_items[dock_item_count].shortcut = 'F';
-    dock_item_count++;
-
-    dock_items[dock_item_count].label = "Settings";
-    dock_items[dock_item_count].action = settings_app_open;
-    dock_items[dock_item_count].icon_color = COL_ICON_SETTINGS;
-    dock_items[dock_item_count].shortcut = 'S';
+    dock_items[dock_item_count].label = "Lyth OS";
+    dock_items[dock_item_count].action = toggle_start_menu;
+    dock_items[dock_item_count].icon_color = THEME_COL_ACCENT;
+    dock_items[dock_item_count].shortcut = 'L';
+    dock_items[dock_item_count].icon_pixels = icon_lyth_pixels;
     dock_item_count++;
 
     dock_items[dock_item_count].label = "Terminal";
     dock_items[dock_item_count].action = terminal_app_open;
     dock_items[dock_item_count].icon_color = COL_ICON_TERMINAL;
     dock_items[dock_item_count].shortcut = '>';
-    dock_item_count++;
-
-    dock_items[dock_item_count].label = "Notes";
-    dock_items[dock_item_count].action = editor_app_open;
-    dock_items[dock_item_count].icon_color = COL_ICON_EDITOR;
-    dock_items[dock_item_count].shortcut = 'N';
+    dock_items[dock_item_count].icon_pixels = icon_terminal_pixels;
     dock_item_count++;
 
     dock_items[dock_item_count].label = "Calculator";
     dock_items[dock_item_count].action = calculator_app_open;
     dock_items[dock_item_count].icon_color = COL_ICON_CALC;
     dock_items[dock_item_count].shortcut = 'C';
+    dock_items[dock_item_count].icon_pixels = icon_calc_pixels;
     dock_item_count++;
 
-    dock_items[dock_item_count].label = "Network";
-    dock_items[dock_item_count].action = netcfg_app_open;
-    dock_items[dock_item_count].icon_color = COL_ICON_NETCFG;
-    dock_items[dock_item_count].shortcut = 'W';
+    dock_items[dock_item_count].label = "Files";
+    dock_items[dock_item_count].action = filemanager_app_open;
+    dock_items[dock_item_count].icon_color = COL_ICON_FILES;
+    dock_items[dock_item_count].shortcut = 'F';
+    dock_items[dock_item_count].icon_pixels = icon_nexus_pixels;
     dock_item_count++;
 
-    dock_items[dock_item_count].label = "Viewer";
-    dock_items[dock_item_count].action = viewer_app_open;
-    dock_items[dock_item_count].icon_color = COL_ICON_VIEWER;
-    dock_items[dock_item_count].shortcut = 'V';
+    dock_items[dock_item_count].label = "Settings";
+    dock_items[dock_item_count].action = settings_app_open;
+    dock_items[dock_item_count].icon_color = COL_ICON_SETTINGS;
+    dock_items[dock_item_count].shortcut = 'S';
+    dock_items[dock_item_count].icon_pixels = icon_settings_pixels;
     dock_item_count++;
 
-    dock_items[dock_item_count].label = "Task Manager";
-    dock_items[dock_item_count].action = taskman_app_open;
-    dock_items[dock_item_count].icon_color = COL_ICON_TASKMAN;
-    dock_items[dock_item_count].shortcut = 'T';
-    dock_item_count++;
-
-    dock_items[dock_item_count].label = "About";
-    dock_items[dock_item_count].action = about_app_open;
-    dock_items[dock_item_count].icon_color = COL_ICON_ABOUT;
-    dock_items[dock_item_count].shortcut = 'A';
+    dock_items[dock_item_count].label = "Notes";
+    dock_items[dock_item_count].action = editor_app_open;
+    dock_items[dock_item_count].icon_color = COL_ICON_EDITOR;
+    dock_items[dock_item_count].shortcut = 'N';
+    dock_items[dock_item_count].icon_pixels = icon_notes_pixels;
     dock_item_count++;
 
     /* ---- Populate launcher (full app list shown in grid) ---- */
     launcher_item_count = 0;
 
-#define ADD_LAUNCHER(lbl, fn, col, ch) do { \
+#define ADD_LAUNCHER(lbl, fn, col, ch, ico) do { \
     str_copy(launcher_items[launcher_item_count].label, (lbl), 24); \
     launcher_items[launcher_item_count].action = (fn); \
     launcher_items[launcher_item_count].icon_color = (col); \
     launcher_items[launcher_item_count].icon_letter = (ch); \
+    launcher_items[launcher_item_count].icon_pixels = (ico); \
     launcher_item_count++; \
 } while(0)
 
-    ADD_LAUNCHER("Files",       filemanager_app_open, COL_ICON_FILES,    'F');
-    ADD_LAUNCHER("Terminal",    terminal_app_open,    COL_ICON_TERMINAL, '>');
-    ADD_LAUNCHER("Notes",       editor_app_open,      COL_ICON_EDITOR,   'N');
-    ADD_LAUNCHER("Calculator",  calculator_app_open,  COL_ICON_CALC,     'C');
-    ADD_LAUNCHER("Settings",    settings_app_open,    COL_ICON_SETTINGS, 'S');
-    ADD_LAUNCHER("Viewer",      viewer_app_open,      COL_ICON_VIEWER,   'V');
-    ADD_LAUNCHER("Task Mgr",    taskman_app_open,     COL_ICON_TASKMAN,  'T');
-    ADD_LAUNCHER("Network",     netcfg_app_open,      COL_ICON_NETCFG,   'W');
-    ADD_LAUNCHER("Sys Info",    sysinfo_app_open,     COL_ICON_SYSINFO,  'I');
-    ADD_LAUNCHER("About",       about_app_open,       COL_ICON_ABOUT,    'A');
+    ADD_LAUNCHER("Files",       filemanager_app_open, COL_ICON_FILES,    'F', icon_nexus_pixels);
+    ADD_LAUNCHER("Terminal",    terminal_app_open,    COL_ICON_TERMINAL, '>', icon_terminal_pixels);
+    ADD_LAUNCHER("Notes",       editor_app_open,      COL_ICON_EDITOR,   'N', icon_notes_pixels);
+    ADD_LAUNCHER("Calculator",  calculator_app_open,  COL_ICON_CALC,     'C', icon_calc_pixels);
+    ADD_LAUNCHER("Settings",    settings_app_open,    COL_ICON_SETTINGS, 'S', icon_settings_pixels);
+    ADD_LAUNCHER("Viewer",      viewer_app_open,      COL_ICON_VIEWER,   'V', 0);
+    ADD_LAUNCHER("Task Mgr",    taskman_app_open,     COL_ICON_TASKMAN,  'T', 0);
+    ADD_LAUNCHER("Network",     netcfg_app_open,      COL_ICON_NETCFG,   'W', 0);
+    ADD_LAUNCHER("Sys Info",    sysinfo_app_open,     COL_ICON_SYSINFO,  'I', 0);
+    ADD_LAUNCHER("About",       about_app_open,       COL_ICON_ABOUT,    'A', icon_lyth_pixels);
 
 #undef ADD_LAUNCHER
 
@@ -1275,7 +1447,7 @@ void desktop_paint_region(gui_surface_t* dst, int x0, int y0, int x1, int y1) {
     /* overlay network popup if open and intersects dirty region */
     if (net_popup_open) {
         int npx = sw - NET_POPUP_W - 8;
-        int npy = sh - TASKBAR_H - NET_POPUP_H - 8;
+        int npy = sh - DOCK_H - NET_POPUP_H - 8;
         if (!(npx + NET_POPUP_W <= x0 || x1 <= npx ||
               npy + NET_POPUP_H <= y0 || y1 <= npy)) {
             {
@@ -1316,14 +1488,13 @@ void desktop_paint_region(gui_surface_t* dst, int x0, int y0, int x1, int y1) {
 
 /* Paint overlays that must appear on top of all windows (launcher). */
 void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) {
-    /* ---- Dock hover highlight (painted over baked taskbar) ---- */
+    /* ---- Dock hover highlight (painted over baked dock) ---- */
     if (dock_hover_idx >= 0) {
-        int taskbar_y = sh - TASKBAR_H;
+        int dock_y = sh - DOCK_H;
         int dx = dock_start_x();
-        int dy = taskbar_y + DOCK_Y_PAD;
-        int icon_h = TASKBAR_H - DOCK_Y_PAD * 2;
+        int dy = dock_y + DOCK_Y_PAD;
         int ix = dx + DOCK_ICON_PAD + dock_hover_idx * (DOCK_ICON_SIZE + DOCK_ICON_PAD);
-        int iy = dy + (icon_h - DOCK_ICON_SIZE) / 2;
+        int iy = dy;
         /* Only draw if intersects dirty region */
         if (!(ix + DOCK_ICON_SIZE + 4 <= x0 || x1 <= ix - 2 ||
               iy + DOCK_ICON_SIZE + 4 <= y0 || y1 <= iy - 2)) {
@@ -1349,7 +1520,7 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
     /* ---- Launcher (with slide animation) ---- */
     if (start_menu_open || launcher_anim != 0) {
         int lx = (sw - LAUNCHER_W) / 2;
-        int ly = sh - TASKBAR_H - LAUNCHER_H - 8;
+        int ly = sh - DOCK_H - LAUNCHER_H - 8;
         /* Slide offset: 0 = fully visible, LAUNCHER_H = fully hidden below */
         int anim_frac = launcher_anim_step;
         if (anim_frac > LAUNCHER_ANIM_STEPS) anim_frac = LAUNCHER_ANIM_STEPS;
@@ -1360,28 +1531,27 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
 
         if (!(lx + LAUNCHER_W <= x0 || x1 <= lx ||
               ly + slide_off + visible_h <= y0 || y1 <= ly + slide_off)) {
-            /* Refresh wallpaper under the full launcher area before
-             * alpha-blending. Prevents accumulation artifacts. */
-            {
-                int ax0 = lx, ay0 = ly + slide_off;
-                int ax1 = lx + LAUNCHER_W, ay1 = ly + slide_off + visible_h;
-                int ar;
-                if (ax0 < 0) ax0 = 0; if (ay0 < 0) ay0 = 0;
-                if (ax1 > sw) ax1 = sw; if (ay1 > sh) ay1 = sh;
-                if (desk_surf.pixels) {
-                    for (ar = ay0; ar < ay1; ar++)
-                        memcpy(&dst->pixels[ar * dst->stride + ax0],
-                               &desk_surf.pixels[ar * sw + ax0],
-                               (size_t)(ax1 - ax0) * 4);
+
+            /* Ensure cache is populated */
+            if (!launcher_cache_valid || !launcher_cache.pixels)
+                launcher_cache_render();
+
+            if (launcher_cache.pixels) {
+                /* Blit only the dirty-rect intersection from cache */
+                int bx0 = x0 > lx ? x0 : lx;
+                int by0 = y0 > (ly + slide_off) ? y0 : (ly + slide_off);
+                int bx1 = x1 < (lx + LAUNCHER_W) ? x1 : (lx + LAUNCHER_W);
+                int by1 = y1 < (ly + slide_off + visible_h) ? y1 : (ly + slide_off + visible_h);
+                if (bx0 < bx1 && by0 < by1) {
+                    int br;
+                    for (br = by0; br < by1; br++) {
+                        int cache_y = br - ly;
+                        int cache_x = bx0 - lx;
+                        memcpy(&dst->pixels[br * dst->stride + bx0],
+                               &launcher_cache.pixels[cache_y * LAUNCHER_W + cache_x],
+                               (size_t)(bx1 - bx0) * 4);
+                    }
                 }
-            }
-            if (slide_off == 0) {
-                draw_start_menu(dst);
-            } else {
-                /* During animation, clip the launcher drawing */
-                /* Draw normally, the slide_off clips visually since
-                 * we only restored the visible portion */
-                draw_start_menu(dst);
             }
         }
     }
@@ -1452,86 +1622,109 @@ void desktop_on_tick(void) {
     update_clock();
     if (clock_str[4] != (char)old_sec || net_now != net_last_up) {
         desk_valid = 0;
+        launcher_cache_invalidate();
         rebuild_desktop();
-        /* dirty entire taskbar since dock can show running dots */
-        gui_dirty_add(0, sh - TASKBAR_H, sw, TASKBAR_H);
+        /* dirty top taskbar and bottom dock */
+        gui_dirty_add(0, 0, sw, TASKBAR_H);
+        gui_dirty_add(0, sh - DOCK_H, sw, DOCK_H);
     }
 
-    /* Launcher slide animation tick */
-    if (launcher_anim != 0) {
-        int lx = (sw - LAUNCHER_W) / 2;
-        int ly = sh - TASKBAR_H - LAUNCHER_H - 8;
-        if (launcher_anim > 0) {
-            /* opening */
-            launcher_anim_step++;
-            if (launcher_anim_step >= LAUNCHER_ANIM_STEPS) {
-                launcher_anim = 0;
-                launcher_anim_step = LAUNCHER_ANIM_STEPS;
-            }
-        } else {
-            /* closing */
-            launcher_anim_step--;
-            if (launcher_anim_step <= 0) {
-                launcher_anim = 0;
-                launcher_anim_step = 0;
-                start_menu_open = 0;
-            }
+}
+
+void desktop_anim_tick(void) {
+    static unsigned int last_anim_ms = 0;
+    unsigned int now;
+    if (launcher_anim == 0) return;
+    now = timer_get_uptime_ms();
+    if (now - last_anim_ms < 16) return; /* ~60fps */
+    last_anim_ms = now;
+    {
+    int lx = (sw - LAUNCHER_W) / 2;
+    int ly = sh - DOCK_H - LAUNCHER_H - 8;
+    int old_step = launcher_anim_step;
+    if (launcher_anim > 0) {
+        launcher_anim_step++;
+        if (launcher_anim_step >= LAUNCHER_ANIM_STEPS) {
+            launcher_anim = 0;
+            launcher_anim_step = LAUNCHER_ANIM_STEPS;
         }
-        gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H + TASKBAR_H + 8);
+    } else {
+        launcher_anim_step--;
+        if (launcher_anim_step <= 0) {
+            launcher_anim = 0;
+            launcher_anim_step = 0;
+            start_menu_open = 0;
+        }
+    }
+    /* Only dirty the incremental strip that changed */
+    {
+        int old_off = LAUNCHER_H * (LAUNCHER_ANIM_STEPS - old_step) / LAUNCHER_ANIM_STEPS;
+        int new_off = LAUNCHER_H * (LAUNCHER_ANIM_STEPS - launcher_anim_step) / LAUNCHER_ANIM_STEPS;
+        int strip_y, strip_h;
+        if (new_off < old_off) {
+            strip_y = ly + new_off;
+            strip_h = old_off - new_off;
+        } else {
+            strip_y = ly + old_off;
+            strip_h = new_off - old_off;
+        }
+        if (strip_h > 0)
+            gui_dirty_add(lx, strip_y, LAUNCHER_W, strip_h);
+    }
     }
 }
 
 void desktop_update_hover(int mx, int my) {
-    int taskbar_y = sh - TASKBAR_H;
+    int dock_y = sh - DOCK_H;
     int old_hover = dock_hover_idx;
     dock_hover_idx = -1;
 
-    if (my >= taskbar_y) {
-        /* Check dock icons */
+    /* Check dock icons at bottom */
+    if (my >= dock_y) {
         int dx = dock_start_x();
-        int dy = taskbar_y + DOCK_Y_PAD;
-        int icon_h = TASKBAR_H - DOCK_Y_PAD * 2;
+        int dy = dock_y + DOCK_Y_PAD;
         int i;
         for (i = 0; i < dock_item_count; i++) {
             int ix = dx + DOCK_ICON_PAD + i * (DOCK_ICON_SIZE + DOCK_ICON_PAD);
-            int iy = dy + (icon_h - DOCK_ICON_SIZE) / 2;
+            int iy = dy;
             if (mx >= ix && mx < ix + DOCK_ICON_SIZE &&
                 my >= iy && my < iy + DOCK_ICON_SIZE) {
                 dock_hover_idx = i;
                 break;
             }
         }
+    }
 
-        /* Also update desktop context menu hover */
-        if (dctx_menu_open) {
-            int old_dh = dctx_hover;
-            int dth = dctx_item_count * DCTX_ITEM_H + 8;
-            if (mx >= dctx_menu_x && mx < dctx_menu_x + DCTX_W &&
-                my >= dctx_menu_y && my < dctx_menu_y + dth) {
-                dctx_hover = (my - dctx_menu_y - 4) / DCTX_ITEM_H;
-                if (dctx_hover >= dctx_item_count) dctx_hover = -1;
-            } else {
-                dctx_hover = -1;
-            }
-            if (dctx_hover != old_dh)
-                gui_dirty_add(dctx_menu_x, dctx_menu_y, DCTX_W, dth);
+    /* Also update desktop context menu hover */
+    if (dctx_menu_open) {
+        int old_dh = dctx_hover;
+        int dth = dctx_item_count * DCTX_ITEM_H + 8;
+        if (mx >= dctx_menu_x && mx < dctx_menu_x + DCTX_W &&
+            my >= dctx_menu_y && my < dctx_menu_y + dth) {
+            dctx_hover = (my - dctx_menu_y - 4) / DCTX_ITEM_H;
+            if (dctx_hover >= dctx_item_count) dctx_hover = -1;
+        } else {
+            dctx_hover = -1;
         }
+        if (dctx_hover != old_dh)
+            gui_dirty_add(dctx_menu_x, dctx_menu_y, DCTX_W, dth);
     }
 
     if (dock_hover_idx != old_hover) {
         /* Dirty the dock area for hover redraw */
         int dx = dock_start_x();
-        gui_dirty_add(dx - 6, taskbar_y, dock_total_w() + 12, TASKBAR_H);
+        gui_dirty_add(dx - 6, dock_y, dock_total_w() + 12, DOCK_H);
     }
 }
 
 int desktop_handle_click(int mx, int my, int button) {
-    int taskbar_y = sh - TASKBAR_H;
+    int taskbar_y = 0;       /* top taskbar */
+    int dock_y = sh - DOCK_H; /* bottom dock */
 
     /* handle net popup clicks */
     if (net_popup_open) {
         int px = sw - NET_POPUP_W - 8;
-        int py = sh - TASKBAR_H - NET_POPUP_H - 8;
+        int py = sh - DOCK_H - NET_POPUP_H - 8;
         if (mx >= px && mx < px + NET_POPUP_W &&
             my >= py && my < py + NET_POPUP_H) {
             netif_t* iface = netif_get(0);
@@ -1591,13 +1784,14 @@ int desktop_handle_click(int mx, int my, int button) {
                         gui_dirty_add(target->x, target->y,
                                       target->width, target->height);
                         desk_valid = 0;
-                        gui_dirty_add(0, taskbar_y, sw, TASKBAR_H);
+                        gui_dirty_add(0, 0, sw, TASKBAR_H);
+                        gui_dirty_add(0, sh - DOCK_H, sw, DOCK_H);
                     } else if (idx == 2) {
                         gui_dirty_add(target->x, target->y,
                                       target->width, target->height);
-                        gui_window_move(target, 0, 0);
+                        gui_window_move(target, 0, TASKBAR_H);
                         target->width = sw;
-                        target->height = sh - TASKBAR_H;
+                        target->height = sh - TASKBAR_H - DOCK_H;
                         gui_surface_free(&target->surface);
                         gui_surface_alloc(&target->surface, target->width, target->height);
                         target->needs_redraw = 1;
@@ -1613,7 +1807,7 @@ int desktop_handle_click(int mx, int my, int button) {
     /* ---- Launcher (app menu) click handling ---- */
     if (start_menu_open) {
         int lx = (sw - LAUNCHER_W) / 2;
-        int ly = sh - TASKBAR_H - LAUNCHER_H - 8;
+        int ly = sh - DOCK_H - LAUNCHER_H - 8;
 
         if (mx >= lx && mx < lx + LAUNCHER_W &&
             my >= ly && my < ly + LAUNCHER_H) {
@@ -1673,19 +1867,28 @@ int desktop_handle_click(int mx, int my, int button) {
         close_start_menu();
     }
 
-    /* ---- Taskbar clicks ---- */
-    if (my >= taskbar_y) {
-        /* Left section: running app labels */
+    /* ---- Top Taskbar clicks (running apps + tray) ---- */
+    if (my >= taskbar_y && my < taskbar_y + TASKBAR_H) {
+        /* Left section: running app icons (non-pinned only) */
         {
             int lx = 8;
+            int item_w = TB_ICON_SZ + TB_ICON_PAD * 2;
             int i, count = gui_window_count();
             for (i = 0; i < count; i++) {
                 gui_window_t* w = gui_window_get(i);
                 if (!w || !(w->flags & GUI_WIN_VISIBLE)) continue;
-                int tlen = (int)strlen(w->title);
-                if (tlen > 12) tlen = 12;
-                int item_w = tlen * FONT_PSF_WIDTH + 16;
-                if (lx + item_w > dock_start_x() - 20) break;
+                /* Skip pinned apps */
+                {
+                    int pinned = 0, d;
+                    for (d = 0; d < dock_item_count; d++) {
+                        if (dock_items[d].label &&
+                            str_starts_with(w->title, dock_items[d].label)) {
+                            pinned = 1; break;
+                        }
+                    }
+                    if (pinned) continue;
+                }
+                if (lx + item_w > sw / 2) break;
 
                 if (mx >= lx && mx < lx + item_w) {
                     if (button == 2) {
@@ -1693,10 +1896,7 @@ int desktop_handle_click(int mx, int my, int button) {
                         ctx_menu_open = 1;
                         ctx_target_win = w;
                         ctx_menu_x = mx;
-                        {
-                            int total_h = CTX_MAX_ITEMS * CTX_ITEM_H + 4;
-                            ctx_menu_y = taskbar_y - total_h;
-                        }
+                        ctx_menu_y = TASKBAR_H;
                         if (ctx_menu_x + CTX_W > sw) ctx_menu_x = sw - CTX_W;
                         gui_dirty_add(ctx_menu_x, ctx_menu_y, CTX_W,
                                       CTX_MAX_ITEMS * CTX_ITEM_H + 4);
@@ -1711,31 +1911,13 @@ int desktop_handle_click(int mx, int my, int button) {
                         gui_window_focus(w);
                     }
                     desk_valid = 0;
-                    gui_dirty_add(0, taskbar_y, sw, TASKBAR_H);
+                    gui_dirty_add(0, 0, sw, TASKBAR_H);
                     gui_dirty_add(w->x, w->y,
                                   w->width + THEME_SHADOW_EXTENT,
                                   w->height + THEME_SHADOW_EXTENT);
                     return 1;
                 }
-                lx += item_w + 6;
-            }
-        }
-
-        /* Center: dock icon clicks */
-        {
-            int dx = dock_start_x();
-            int dy = taskbar_y + DOCK_Y_PAD;
-            int icon_h = TASKBAR_H - DOCK_Y_PAD * 2;
-            int i;
-            for (i = 0; i < dock_item_count; i++) {
-                int ix = dx + DOCK_ICON_PAD + i * (DOCK_ICON_SIZE + DOCK_ICON_PAD);
-                int iy = dy + (icon_h - DOCK_ICON_SIZE) / 2;
-                if (mx >= ix && mx < ix + DOCK_ICON_SIZE &&
-                    my >= iy && my < iy + DOCK_ICON_SIZE && button == 1) {
-                    if (dock_items[i].action)
-                        dock_items[i].action();
-                    return 1;
-                }
+                lx += item_w + 4;
             }
         }
 
@@ -1749,7 +1931,7 @@ int desktop_handle_click(int mx, int my, int button) {
                 } else {
                     net_popup_open = 1;
                     int px = sw - NET_POPUP_W - 8;
-                    int py = sh - TASKBAR_H - NET_POPUP_H - 8;
+                    int py = sh - DOCK_H - NET_POPUP_H - 8;
                     gui_dirty_add(px, py, NET_POPUP_W, NET_POPUP_H);
                 }
                 return 1;
@@ -1764,11 +1946,29 @@ int desktop_handle_click(int mx, int my, int button) {
             }
         }
 
-        return 1; /* consumed: click was on taskbar */
+        return 1; /* consumed: click was on top taskbar */
+    }
+
+    /* ---- Bottom Dock clicks (Lyth icon + pinned apps) ---- */
+    if (my >= dock_y) {
+        int dx = dock_start_x();
+        int dy = dock_y + DOCK_Y_PAD;
+        int i;
+        for (i = 0; i < dock_item_count; i++) {
+            int ix = dx + DOCK_ICON_PAD + i * (DOCK_ICON_SIZE + DOCK_ICON_PAD);
+            int iy = dy;
+            if (mx >= ix && mx < ix + DOCK_ICON_SIZE &&
+                my >= iy && my < iy + DOCK_ICON_SIZE && button == 1) {
+                if (dock_items[i].action)
+                    dock_items[i].action();
+                return 1;
+            }
+        }
+        return 1; /* consumed: click was on dock */
     }
 
     /* ---- Desktop background: right-click opens desktop context menu ---- */
-    if (button == 2 && my < taskbar_y) {
+    if (button == 2 && my > TASKBAR_H && my < dock_y) {
         close_start_menu();
         close_context_menu();
         close_net_popup();
@@ -1780,7 +1980,7 @@ int desktop_handle_click(int mx, int my, int button) {
         {
             int dth = dctx_item_count * DCTX_ITEM_H + 8;
             if (dctx_menu_x + DCTX_W > sw) dctx_menu_x = sw - DCTX_W;
-            if (dctx_menu_y + dth > sh - TASKBAR_H) dctx_menu_y = sh - TASKBAR_H - dth;
+            if (dctx_menu_y + dth > sh - DOCK_H) dctx_menu_y = sh - DOCK_H - dth;
             if (dctx_menu_x < 0) dctx_menu_x = 0;
             if (dctx_menu_y < 0) dctx_menu_y = 0;
         }
@@ -1809,7 +2009,7 @@ int desktop_handle_key(int event_type, char key) {
     /* Launcher keyboard navigation (grid-based) */
     if (start_menu_open) {
         int lx = (sw - LAUNCHER_W) / 2;
-        int ly = sh - TASKBAR_H - LAUNCHER_H - 8;
+        int ly = sh - DOCK_H - LAUNCHER_H - 8;
 
         /* Compute filtered count for navigation bounds */
         int fcount = 0;
@@ -1825,22 +2025,26 @@ int desktop_handle_key(int event_type, char key) {
 
         if (event_type == INPUT_EVENT_UP) {
             if (menu_selected >= LAUNCHER_COLS) menu_selected -= LAUNCHER_COLS;
+            launcher_cache_invalidate();
             gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H);
             return 1;
         }
         if (event_type == INPUT_EVENT_DOWN) {
             if (menu_selected + LAUNCHER_COLS < fcount)
                 menu_selected += LAUNCHER_COLS;
+            launcher_cache_invalidate();
             gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H);
             return 1;
         }
         if (event_type == INPUT_EVENT_LEFT) {
             if (menu_selected > 0) menu_selected--;
+            launcher_cache_invalidate();
             gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H);
             return 1;
         }
         if (event_type == INPUT_EVENT_RIGHT) {
             if (menu_selected < fcount - 1) menu_selected++;
+            launcher_cache_invalidate();
             gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H);
             return 1;
         }
@@ -1859,7 +2063,7 @@ int desktop_handle_key(int event_type, char key) {
                 if (actual >= 0) {
                     void (*action)(void) = launcher_items[actual].action;
                     close_start_menu();
-                    gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H + TASKBAR_H + 8);
+                    gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H + DOCK_H + 8);
                     if (action) action();
                 }
             }
@@ -1876,6 +2080,7 @@ int desktop_handle_key(int event_type, char key) {
                 launcher_search[launcher_search_len++] = key;
                 launcher_search[launcher_search_len] = '\0';
                 menu_selected = 0;
+                launcher_cache_invalidate();
                 gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H);
             }
             return 1;
@@ -1884,6 +2089,7 @@ int desktop_handle_key(int event_type, char key) {
             if (launcher_search_len > 0) {
                 launcher_search[--launcher_search_len] = '\0';
                 menu_selected = 0;
+                launcher_cache_invalidate();
                 gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H);
             }
             return 1;
@@ -1900,7 +2106,7 @@ int desktop_handle_key(int event_type, char key) {
 }
 
 int desktop_get_menubar_height(void) {
-    return 0;
+    return TASKBAR_H;
 }
 
 gui_surface_t* desktop_get_surface(void) {
@@ -1909,5 +2115,6 @@ gui_surface_t* desktop_get_surface(void) {
 
 void desktop_invalidate_taskbar(void) {
     desk_valid = 0;
-    gui_dirty_add(0, sh - TASKBAR_H, sw, TASKBAR_H);
+    gui_dirty_add(0, 0, sw, TASKBAR_H);
+    gui_dirty_add(0, sh - DOCK_H, sw, DOCK_H);
 }

@@ -14,6 +14,9 @@ void desktop_paint_region(gui_surface_t* dst, int x0, int y0, int x1, int y1);
 /* Called once per second to update clock display */
 void desktop_on_tick(void);
 
+/* Called every frame to advance launcher animation */
+void desktop_anim_tick(void);
+
 /* Update hover state for dock/taskbar (called on mouse move) */
 void desktop_update_hover(int mx, int my);
 

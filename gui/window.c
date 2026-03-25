@@ -430,59 +430,6 @@ int gui_window_content_h(gui_window_t* win) {
     return win->height - GUI_TITLEBAR_HEIGHT - GUI_BORDER_WIDTH * 2;
 }
 
-gui_widget_t* gui_add_label(gui_window_t* win, int x, int y,
-                            const char* text, uint32_t fg) {
-    gui_widget_t* w;
-    int len;
-    if (!win || win->widget_count >= GUI_MAX_WIDGETS) return 0;
-    w = &win->widgets[win->widget_count++];
-    memset(w, 0, sizeof(*w));
-    w->type = GUI_WIDGET_LABEL;
-    w->x = x; w->y = y;
-    w->fg_color = fg;
-    len = strlen(text);
-    if (len >= 127) len = 127;
-    memcpy(w->text, text, len);
-    w->text[len] = '\0';
-    w->width = len * GUI_FONT_W;
-    w->height = GUI_FONT_H;
-    return w;
-}
-
-gui_widget_t* gui_add_button(gui_window_t* win, int x, int y,
-                             int w, int h, const char* text,
-                             void (*on_click)(gui_widget_t*)) {
-    gui_widget_t* wi;
-    int len;
-    if (!win || win->widget_count >= GUI_MAX_WIDGETS) return 0;
-    wi = &win->widgets[win->widget_count++];
-    memset(wi, 0, sizeof(*wi));
-    wi->type = GUI_WIDGET_BUTTON;
-    wi->x = x; wi->y = y;
-    wi->width = w; wi->height = h;
-    wi->fg_color = 0xFFFFFF;
-    wi->bg_color = 0x3B82F6;
-    wi->on_click = on_click;
-    len = strlen(text);
-    if (len >= 127) len = 127;
-    memcpy(wi->text, text, len);
-    wi->text[len] = '\0';
-    return wi;
-}
-
-gui_widget_t* gui_add_panel(gui_window_t* win, int x, int y,
-                            int w, int h, uint32_t bg) {
-    gui_widget_t* wi;
-    if (!win || win->widget_count >= GUI_MAX_WIDGETS) return 0;
-    wi = &win->widgets[win->widget_count++];
-    memset(wi, 0, sizeof(*wi));
-    wi->type = GUI_WIDGET_PANEL;
-    wi->x = x; wi->y = y;
-    wi->width = w; wi->height = h;
-    wi->bg_color = bg;
-    return wi;
-}
-
 int gui_window_count(void) {
     int i, c = 0;
     for (i = 0; i < GUI_MAX_WINDOWS; i++) {

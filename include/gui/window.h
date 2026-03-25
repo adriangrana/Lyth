@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "theme.h"
+#include "widgets.h"
 
 /* ---- layout constants (sourced from theme.h) ---- */
 #define GUI_TITLEBAR_HEIGHT  THEME_TITLEBAR_H
@@ -11,6 +12,7 @@
 #define GUI_MAX_TITLE        64
 #define GUI_MAX_WIDGETS      48
 #define GUI_TASKBAR_HEIGHT   THEME_TASKBAR_H
+#define GUI_DOCK_HEIGHT      THEME_DOCK_H
 #define GUI_FONT_W           THEME_FONT_W
 #define GUI_FONT_H           THEME_FONT_H
 
@@ -47,24 +49,6 @@ typedef struct {
     int x, y, w, h;
 } gui_rect_t;
 
-/* ---- widget types ---- */
-typedef enum {
-    GUI_WIDGET_LABEL,
-    GUI_WIDGET_BUTTON,
-    GUI_WIDGET_PANEL
-} gui_widget_type_t;
-
-typedef struct gui_widget {
-    gui_widget_type_t type;
-    int x, y;
-    int width, height;
-    char text[128];
-    uint32_t fg_color;
-    uint32_t bg_color;
-    void (*on_click)(struct gui_widget* w);
-    int id;
-} gui_widget_t;
-
 struct gui_window;
 typedef void (*gui_paint_fn)(struct gui_window*);
 typedef void (*gui_close_fn)(struct gui_window*);
@@ -93,7 +77,7 @@ typedef struct gui_window {
     gui_surface_t surface;
     int needs_redraw;
 
-    gui_widget_t widgets[GUI_MAX_WIDGETS];
+    wid_t widgets[GUI_MAX_WIDGETS];
     int widget_count;
 
     gui_paint_fn on_paint;
@@ -118,14 +102,6 @@ int  gui_window_content_x(gui_window_t* win);
 int  gui_window_content_y(gui_window_t* win);
 int  gui_window_content_w(gui_window_t* win);
 int  gui_window_content_h(gui_window_t* win);
-
-gui_widget_t* gui_add_label(gui_window_t* win, int x, int y,
-                            const char* text, uint32_t fg);
-gui_widget_t* gui_add_button(gui_window_t* win, int x, int y,
-                             int w, int h, const char* text,
-                             void (*on_click)(gui_widget_t*));
-gui_widget_t* gui_add_panel(gui_window_t* win, int x, int y,
-                            int w, int h, uint32_t bg);
 
 int  gui_window_count(void);
 gui_window_t* gui_window_get(int index);

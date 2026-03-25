@@ -2,11 +2,13 @@
  *  calculator.c  —  Lyth Calc
  *
  *  Basic 4-function calculator with keyboard and mouse input.
+ *  Uses the Widget Kit for buttons.
  * ============================================================ */
 
 #include "calculator.h"
 #include "compositor.h"
 #include "window.h"
+#include "widgets.h"
 #include "theme.h"
 #include "font_psf.h"
 #include "string.h"
@@ -32,24 +34,17 @@
 #define CALC_BTN_W    50
 #define CALC_BTN_H    40
 #define CALC_BTN_PAD  6
-#define CALC_GRID_X   10
-#define CALC_GRID_Y   (GUI_TITLEBAR_HEIGHT + CALC_DISP_H + 8)
+#define CALC_GRID_X   9   /* content-relative */
+#define CALC_GRID_Y   (CALC_DISP_H + 7)  /* content-relative */
 #define CALC_MAX_DIG  15
 
-/* ---- Button definitions ---- */
-typedef struct {
-    const char* label;
-    char  key;        /* keyboard shortcut */
-    uint32_t color;
-} calc_btn_t;
-
-/* 5 rows x 4 cols layout */
-static const calc_btn_t calc_buttons[5][4] = {
-    { {"C", 'C', COL_CALC_CLR}, {"(", '(', COL_CALC_DIM}, {")", ')', COL_CALC_DIM}, {"/", '/', COL_CALC_OP} },
-    { {"7", '7', COL_CALC_BTN}, {"8", '8', COL_CALC_BTN}, {"9", '9', COL_CALC_BTN}, {"*", '*', COL_CALC_OP} },
-    { {"4", '4', COL_CALC_BTN}, {"5", '5', COL_CALC_BTN}, {"6", '6', COL_CALC_BTN}, {"-", '-', COL_CALC_OP} },
-    { {"1", '1', COL_CALC_BTN}, {"2", '2', COL_CALC_BTN}, {"3", '3', COL_CALC_BTN}, {"+", '+', COL_CALC_OP} },
-    { {"0", '0', COL_CALC_BTN}, {".", '.', COL_CALC_BTN}, {"+/-", 'N', COL_CALC_BTN}, {"=", '=', COL_CALC_EQ} },
+/* ---- Button grid (label, key-for-calc_press) ---- */
+static const struct { const char *label; char key; uint32_t bg; } btn_defs[5][4] = {
+    { {"C",'C',COL_CALC_CLR}, {"(",'(',COL_CALC_DIM}, {")",')',COL_CALC_DIM}, {"/",'/',COL_CALC_OP} },
+    { {"7",'7',COL_CALC_BTN}, {"8",'8',COL_CALC_BTN}, {"9",'9',COL_CALC_BTN}, {"*",'*',COL_CALC_OP} },
+    { {"4",'4',COL_CALC_BTN}, {"5",'5',COL_CALC_BTN}, {"6",'6',COL_CALC_BTN}, {"-",'-',COL_CALC_OP} },
+    { {"1",'1',COL_CALC_BTN}, {"2",'2',COL_CALC_BTN}, {"3",'3',COL_CALC_BTN}, {"+",'+',COL_CALC_OP} },
+    { {"0",'0',COL_CALC_BTN}, {".",'.',COL_CALC_BTN}, {"+/-",'N',COL_CALC_BTN}, {"=",'=',COL_CALC_EQ} },
 };
 
 /* ---- State ---- */
@@ -280,57 +275,39 @@ static void calc_press(char key) {
     }
 }
 
-/* ---- Drawing ---- */
+/* ---- Drawing (display only — buttons are widgets) ---- */
 
 static void calc_paint(gui_window_t* win) {
     gui_surface_t* s = &win->surface;
-    int w = win->width;
-    int r, c;
+    int cw = gui_window_content_w(win);
+    int ox = GUI_BORDER_WIDTH;
+    int oy = GUI_TITLEBAR_HEIGHT + GUI_BORDER_WIDTH;
 
     if (!s->pixels) return;
 
     gui_surface_clear(s, COL_CALC_BG);
-
-    /* Decorations */
     gui_window_draw_decorations(win);
 
-    /* Display */
+    /* Display panel */
     {
-        int dx = 10, dy = GUI_TITLEBAR_HEIGHT + 4;
-        gui_surface_fill(s, dx, dy, w - 20, CALC_DISP_H, COL_CALC_DISPLAY);
+        int dx = ox + 9, dy = oy + 3;
+        int dw = cw - 18;
+        gui_surface_fill(s, dx, dy, dw, CALC_DISP_H, COL_CALC_DISPLAY);
 
         /* Expression (small, top) */
         if (calc_expr[0]) {
             gui_surface_draw_string(s, dx + 8, dy + 4, calc_expr, COL_CALC_DIM, 0, 0);
         }
 
-        /* Current number (right-aligned, larger) */
+        /* Current number (right-aligned) */
         {
             int tw = calc_display_len * GUI_FONT_W;
-            gui_surface_draw_string(s, dx + (w - 20) - tw - 8,
+            gui_surface_draw_string(s, dx + dw - tw - 8,
                                     dy + CALC_DISP_H - GUI_FONT_H - 8,
                                     calc_display, COL_CALC_TEXT, 0, 0);
         }
     }
-
-    /* Buttons */
-    for (r = 0; r < 5; r++) {
-        for (c = 0; c < 4; c++) {
-            const calc_btn_t* btn = &calc_buttons[r][c];
-            int bx = CALC_GRID_X + c * (CALC_BTN_W + CALC_BTN_PAD);
-            int by = CALC_GRID_Y + r * (CALC_BTN_H + CALC_BTN_PAD);
-
-            gui_surface_fill(s, bx, by, CALC_BTN_W, CALC_BTN_H, btn->color);
-
-            /* Centre label */
-            {
-                int lw = str_length(btn->label) * GUI_FONT_W;
-                gui_surface_draw_string(s, bx + (CALC_BTN_W - lw) / 2,
-                                        by + (CALC_BTN_H - GUI_FONT_H) / 2,
-                                        btn->label, COL_CALC_TEXT, 0, 0);
-            }
-        }
-    }
+    /* Buttons drawn automatically by wid_draw_all */
 }
 
 /* ---- Key handling ---- */
@@ -359,29 +336,17 @@ static void calc_on_key(gui_window_t* win, int event_type, char key) {
     gui_window_invalidate(calc_window);
 }
 
-/* ---- Mouse click ---- */
+/* ---- Widget button callback ---- */
+
+static void calc_btn_click(wid_t *w) {
+    calc_press((char)w->id);
+    gui_window_invalidate(calc_window);
+}
+
+/* ---- Mouse click (display area only — buttons handled by widgets) ---- */
 
 static void calc_on_click(gui_window_t* win, int mx, int my, int button) {
-    (void)win; (void)button;
-    int r, c;
-
-    /* mx/my are content-relative (title bar already subtracted by compositor),
-       but button positions are in window-surface coordinates. Adjust. */
-    mx += GUI_BORDER_WIDTH;
-    my += GUI_TITLEBAR_HEIGHT + GUI_BORDER_WIDTH;
-
-    for (r = 0; r < 5; r++) {
-        for (c = 0; c < 4; c++) {
-            int bx = CALC_GRID_X + c * (CALC_BTN_W + CALC_BTN_PAD);
-            int by = CALC_GRID_Y + r * (CALC_BTN_H + CALC_BTN_PAD);
-            if (mx >= bx && mx < bx + CALC_BTN_W &&
-                my >= by && my < by + CALC_BTN_H) {
-                calc_press(calc_buttons[r][c].key);
-                gui_window_invalidate(calc_window);
-                return;
-            }
-        }
-    }
+    (void)win; (void)mx; (void)my; (void)button;
 }
 
 /* ---- Close ---- */
@@ -411,6 +376,24 @@ void calculator_app_open(void) {
     calc_window->on_key = calc_on_key;
     calc_window->on_click = calc_on_click;
     calc_window->on_close = calc_on_close;
+
+    /* Create button widgets (5 rows × 4 cols) */
+    {
+        int r, c;
+        for (r = 0; r < 5; r++) {
+            for (c = 0; c < 4; c++) {
+                int bx = CALC_GRID_X + c * (CALC_BTN_W + CALC_BTN_PAD);
+                int by = CALC_GRID_Y + r * (CALC_BTN_H + CALC_BTN_PAD);
+                wid_t *b = wid_button(calc_window, bx, by,
+                                      CALC_BTN_W, CALC_BTN_H,
+                                      btn_defs[r][c].label, calc_btn_click);
+                if (b) {
+                    b->id = (int16_t)btn_defs[r][c].key;
+                    b->bg = btn_defs[r][c].bg;
+                }
+            }
+        }
+    }
 
     calc_is_open = 1;
     calc_reset();

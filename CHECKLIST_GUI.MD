@@ -192,7 +192,9 @@
 - [x] Animación de apertura/cierre
       > Launcher slide-up en 6 frames durante open
       > Slide-down en 6 frames durante close
-      > Animación tick en desktop_on_tick, dirty rect por frame
+      > desktop_anim_tick() separado de clock tick, rate-limited a ~60fps
+      > Dirty rects incrementales: solo la franja que cambia cada frame
+      > Launcher cache pre-renderizado evita alpha-blend costoso por frame
 - [x] Tipografía perfecta
       > Título "Lyth OS" en color accent, labels centrados bajo iconos
 - [x] Iconos de calidad
@@ -275,11 +277,40 @@
 ## FASE 5 — Componentes UI
 
 ### 16. Kit de Widgets Oficial
-- [ ] Botones, inputs, checkbox, radio, switch, slider
+- [x] Botones, inputs, checkbox, radio, slider, label, panel, separator, progress
+      > 9 tipos base en gui/widgets.c + include/gui/widgets.h
+      > wid_t struct con type, state flags, callbacks, theme colors
+      > API: wid_draw_all, wid_handle_click, wid_handle_key, wid_update_hover
+      > Integrado en compositor (draw after on_paint, click/key dispatch)
+      > Calculator migrado a wid_button (20 botones)
+- [x] Switch/toggle
+      > wid_switch(): pill shape + sliding dot, accent fill cuando ON
+      > Toggle via click, fires on_change callback
+- [x] Tabs
+      > wid_tabs(): horizontal tab bar con "|"-separated labels
+      > Active tab: accent underline, base bg. Inactive: muted text
+      > Click selects tab, fires on_change(w, tab_index)
+- [x] Dropdown/combobox
+      > wid_dropdown(): button + popup list, "|"-separated items
+      > Click toggles open/close, auto-resizes height for popup
+      > Closes when clicking outside, fires on_change on selection
+- [x] ListView/tabla
+      > wid_listview(): scrollable list with selection highlight
+      > Scrollbar track + thumb when items > vis_rows
+      > Click selects item, fires on_change(w, index)
+      > wid_add_item()/wid_clear_items() dynamic API
+- [ ] Scrollbar (standalone)
 - [ ] Listas, tablas, tabs, sidebars
 - [ ] Modales, toasts, menús contextuales, dropdowns
 - [ ] File picker, color picker, date picker
-- [ ] Cada componente: normal, hover, focus, active, disabled, error, keyboard nav, accesibilidad
+- [x] Estados: normal, hover, focus, active, disabled
+      > 6 state flags (WID_ENABLED, WID_VISIBLE, WID_FOCUSED, WID_HOVERED, WID_PRESSED, WID_CHECKED)
+      > Visual feedback en draw: hover highlight, pressed darken, disabled dim
+- [ ] Cada componente: error state, keyboard nav completa, accesibilidad
+- [x] Migración real a widget kit
+      > Settings Fondo page: wid_dropdown (scale mode), wid_switch (blur),
+      > wid_button (Apply/Predeterminado) — 4 widgets, visibility toggle
+      > Calculator: 20 wid_button widgets
 
 ### 17. Icon System
 - [ ] Grid base

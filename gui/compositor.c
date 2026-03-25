@@ -30,6 +30,7 @@
 #include "task.h"
 #include "e1000.h"
 #include "notify.h"
+#include "widgets.h"
 
 /* ---- VGA port I/O for VBlank detection ---- */
 static inline uint8_t compositor_inb(uint16_t port)
@@ -446,6 +447,9 @@ static void compose_frame(void)
                     {
                         w->on_paint(w);
                     }
+                    /* draw widget-kit widgets on top of app content */
+                    if (w->widget_count > 0)
+                        wid_draw_all(w);
                     w->needs_redraw = 0;
                     /* queue full window rect for dirty merge */
                     if (repaint_count < GUI_MAX_WINDOWS)
@@ -726,14 +730,16 @@ static int hit_resize_edge(gui_window_t *win, int mx, int my)
     return GUI_RESIZE_NONE;
 }
 
-static gui_widget_t *hit_widget(gui_window_t *win, int mx, int my)
+static wid_t *hit_widget(gui_window_t *win, int mx, int my)
 {
     int cx = gui_window_content_x(win);
     int cy = gui_window_content_y(win);
     int i;
     for (i = 0; i < win->widget_count; i++)
     {
-        gui_widget_t *w = &win->widgets[i];
+        wid_t *w = &win->widgets[i];
+        if (!(w->state & WID_VISIBLE) || !(w->state & WID_ENABLED))
+            continue;
         int wx = cx + w->x;
         int wy = cy + w->y;
         if (mx >= wx && mx < wx + w->width &&
@@ -817,9 +823,16 @@ static void handle_keyboard(input_event_t *ev)
     for (i = 0; i < count; i++)
     {
         gui_window_t *w = gui_window_get(i);
-        if (w && (w->flags & GUI_WIN_FOCUSED) && w->on_key)
+        if (w && (w->flags & GUI_WIN_FOCUSED))
         {
-            w->on_key(w, ev->type, ev->character);
+            /* Widget kit gets first crack at keyboard input */
+            if (wid_handle_key(w, ev->type, ev->character))
+            {
+                gui_dirty_add(w->x, w->y, w->width, w->height);
+                return;
+            }
+            if (w->on_key)
+                w->on_key(w, ev->type, ev->character);
         }
     }
 }
@@ -849,7 +862,25 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
 
         /* Update dock/taskbar hover state (skip during drag) */
         if (!*dragging_win && !*resizing_win)
+        {
             desktop_update_hover(mouse_x, mouse_y);
+            /* Update widget hover for focused window (skip when overlay open) */
+            if (!desktop_is_overlay_open())
+            {
+                int wc = gui_window_count();
+                int wi;
+                for (wi = 0; wi < wc; wi++) {
+                    gui_window_t *fw = gui_window_get(wi);
+                    if (fw && (fw->flags & GUI_WIN_FOCUSED) &&
+                        !(fw->flags & GUI_WIN_MINIMIZED)) {
+                        int cx = gui_window_content_x(fw);
+                        int cy = gui_window_content_y(fw);
+                        wid_update_hover(fw, mouse_x - cx, mouse_y - cy);
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     /* dragging a window — defer actual move to frame time */
@@ -860,7 +891,7 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
             int ow = (*dragging_win)->width, oh = (*dragging_win)->height;
             int nx = mouse_x - (*dragging_win)->drag_off_x;
             int ny = mouse_y - (*dragging_win)->drag_off_y;
-            int desktop_h = scr_h - GUI_TASKBAR_HEIGHT;
+            int desktop_h = scr_h - GUI_DOCK_HEIGHT;
             int menu_h = desktop_get_menubar_height();
 
             if (nx < -(ow - 40))
@@ -897,27 +928,29 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
 
             /* If snap zone changed, dirty the preview area */
             if (snap_zone != snap_prev_zone) {
-                int desktop_h = scr_h - GUI_TASKBAR_HEIGHT;
+                int desktop_h = scr_h - GUI_DOCK_HEIGHT;
                 /* dirty old preview */
                 if (snap_prev_zone == SNAP_LEFT)
-                    gui_dirty_add(0, 0, scr_w / 2, desktop_h);
+                    gui_dirty_add(0, menu_h, scr_w / 2, desktop_h - menu_h);
                 else if (snap_prev_zone == SNAP_RIGHT)
-                    gui_dirty_add(scr_w / 2, 0, scr_w / 2, desktop_h);
+                    gui_dirty_add(scr_w / 2, menu_h, scr_w / 2, desktop_h - menu_h);
                 else if (snap_prev_zone == SNAP_FULL)
-                    gui_dirty_add(0, 0, scr_w, desktop_h);
+                    gui_dirty_add(0, menu_h, scr_w, desktop_h - menu_h);
                 /* dirty new preview */
                 if (snap_zone == SNAP_LEFT)
-                    gui_dirty_add(0, 0, scr_w / 2, desktop_h);
+                    gui_dirty_add(0, menu_h, scr_w / 2, desktop_h - menu_h);
                 else if (snap_zone == SNAP_RIGHT)
-                    gui_dirty_add(scr_w / 2, 0, scr_w / 2, desktop_h);
+                    gui_dirty_add(scr_w / 2, menu_h, scr_w / 2, desktop_h - menu_h);
                 else if (snap_zone == SNAP_FULL)
-                    gui_dirty_add(0, 0, scr_w, desktop_h);
+                    gui_dirty_add(0, menu_h, scr_w, desktop_h - menu_h);
             }
         }
         else
         {
             gui_window_t *dw = *dragging_win;
-            int desktop_h = scr_h - GUI_TASKBAR_HEIGHT;
+            int desktop_h = scr_h - GUI_DOCK_HEIGHT;
+            int menu_h2 = desktop_get_menubar_height();
+            int snap_h = desktop_h - menu_h2;
 
             /* Apply snap if active */
             if (snap_zone != SNAP_NONE && (dw->flags & GUI_WIN_RESIZABLE))
@@ -931,19 +964,19 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
                 }
 
                 if (snap_zone == SNAP_LEFT) {
-                    gui_window_resize(dw, scr_w / 2, desktop_h);
+                    gui_window_resize(dw, scr_w / 2, snap_h);
                     dw->x = 0;
-                    dw->y = 0;
+                    dw->y = menu_h2;
                     dw->snapped = SNAP_LEFT;
                 } else if (snap_zone == SNAP_RIGHT) {
-                    gui_window_resize(dw, scr_w / 2, desktop_h);
+                    gui_window_resize(dw, scr_w / 2, snap_h);
                     dw->x = scr_w / 2;
-                    dw->y = 0;
+                    dw->y = menu_h2;
                     dw->snapped = SNAP_RIGHT;
                 } else if (snap_zone == SNAP_FULL) {
-                    gui_window_resize(dw, scr_w, desktop_h);
+                    gui_window_resize(dw, scr_w, snap_h);
                     dw->x = 0;
-                    dw->y = 0;
+                    dw->y = menu_h2;
                     dw->snapped = SNAP_FULL;
                 }
                 gui_dirty_screen();
@@ -1092,10 +1125,11 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
                 return;
             }
 
-            gui_widget_t *wi = hit_widget(w, mouse_x, mouse_y);
-            if (wi && wi->on_click)
+            /* new widget system handles clicks on widgets */
             {
-                wi->on_click(wi);
+                int rx = mouse_x - gui_window_content_x(w);
+                int ry = mouse_y - gui_window_content_y(w);
+                wid_handle_click(w, rx, ry, 1);
             }
             if (w->on_click)
             {
@@ -1284,6 +1318,8 @@ void gui_run(void)
                 desktop_on_tick();
                 notify_tick();
             }
+            /* Animation ticks run every frame, not just once/sec */
+            desktop_anim_tick();
         }
 
         /* ====================== FAST DRAG PATH (VBlank-synced) ====================== */
@@ -1379,7 +1415,9 @@ void gui_run(void)
                 /* 2c. Draw snap preview overlay if active */
                 if (snap_zone != SNAP_NONE) {
                     int sx0, sy0, sw0, sh0;
-                    int desktop_h = scr_h - GUI_TASKBAR_HEIGHT;
+                    int desktop_h = scr_h - GUI_DOCK_HEIGHT;
+                    int snap_top = desktop_get_menubar_height();
+                    int snap_area_h = desktop_h - snap_top;
                     uint32_t scol = THEME_SNAP_PREVIEW_COL;
                     int salpha = THEME_SNAP_PREVIEW_ALPHA;
                     int sia = 255 - salpha;
@@ -1387,9 +1425,9 @@ void gui_run(void)
                     uint32_t sfg = (scol >> 8) & 0xFF;
                     uint32_t sfb = scol & 0xFF;
 
-                    if (snap_zone == SNAP_LEFT)       { sx0 = 4; sy0 = 4; sw0 = scr_w/2 - 8;  sh0 = desktop_h - 8; }
-                    else if (snap_zone == SNAP_RIGHT)  { sx0 = scr_w/2 + 4; sy0 = 4; sw0 = scr_w/2 - 8;  sh0 = desktop_h - 8; }
-                    else /* SNAP_FULL */               { sx0 = 4; sy0 = 4; sw0 = scr_w - 8; sh0 = desktop_h - 8; }
+                    if (snap_zone == SNAP_LEFT)       { sx0 = 4; sy0 = snap_top + 4; sw0 = scr_w/2 - 8;  sh0 = snap_area_h - 8; }
+                    else if (snap_zone == SNAP_RIGHT)  { sx0 = scr_w/2 + 4; sy0 = snap_top + 4; sw0 = scr_w/2 - 8;  sh0 = snap_area_h - 8; }
+                    else /* SNAP_FULL */               { sx0 = 4; sy0 = snap_top + 4; sw0 = scr_w - 8; sh0 = snap_area_h - 8; }
 
                     /* clip to screen */
                     if (sx0 < 0) { sw0 += sx0; sx0 = 0; }
