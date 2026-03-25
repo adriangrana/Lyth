@@ -91,6 +91,14 @@ static int drag_old_x, drag_old_y; /* position before this frame's drag */
 static int drag_new_x, drag_new_y; /* desired position for this frame */
 static int drag_win_w, drag_win_h;
 
+/* ---- snap preview state ---- */
+#define SNAP_NONE  0
+#define SNAP_LEFT  1
+#define SNAP_RIGHT 2
+#define SNAP_FULL  3
+static int snap_zone;              /* current snap zone during drag */
+static int snap_prev_zone;         /* previous frame's snap zone (for dirty) */
+
 /* ---- metrics ---- */
 static gui_metrics_t metrics;
 static unsigned int present_count;
@@ -861,10 +869,75 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
             drag_win_w = ow;
             drag_win_h = oh;
             drag_pending = 1;
+
+            /* Detect snap zone based on mouse position */
+            snap_prev_zone = snap_zone;
+            if (mouse_x <= THEME_SNAP_EDGE)
+                snap_zone = SNAP_LEFT;
+            else if (mouse_x >= scr_w - THEME_SNAP_EDGE - 1)
+                snap_zone = SNAP_RIGHT;
+            else if (mouse_y <= THEME_SNAP_EDGE)
+                snap_zone = SNAP_FULL;
+            else
+                snap_zone = SNAP_NONE;
+
+            /* If snap zone changed, dirty the preview area */
+            if (snap_zone != snap_prev_zone) {
+                int desktop_h = scr_h - GUI_TASKBAR_HEIGHT;
+                /* dirty old preview */
+                if (snap_prev_zone == SNAP_LEFT)
+                    gui_dirty_add(0, 0, scr_w / 2, desktop_h);
+                else if (snap_prev_zone == SNAP_RIGHT)
+                    gui_dirty_add(scr_w / 2, 0, scr_w / 2, desktop_h);
+                else if (snap_prev_zone == SNAP_FULL)
+                    gui_dirty_add(0, 0, scr_w, desktop_h);
+                /* dirty new preview */
+                if (snap_zone == SNAP_LEFT)
+                    gui_dirty_add(0, 0, scr_w / 2, desktop_h);
+                else if (snap_zone == SNAP_RIGHT)
+                    gui_dirty_add(scr_w / 2, 0, scr_w / 2, desktop_h);
+                else if (snap_zone == SNAP_FULL)
+                    gui_dirty_add(0, 0, scr_w, desktop_h);
+            }
         }
         else
         {
-            (*dragging_win)->dragging = 0;
+            gui_window_t *dw = *dragging_win;
+            int desktop_h = scr_h - GUI_TASKBAR_HEIGHT;
+
+            /* Apply snap if active */
+            if (snap_zone != SNAP_NONE && (dw->flags & GUI_WIN_RESIZABLE))
+            {
+                /* Save pre-snap geometry for restore */
+                if (!dw->snapped) {
+                    dw->snap_restore_x = dw->x;
+                    dw->snap_restore_y = dw->y;
+                    dw->snap_restore_w = dw->width;
+                    dw->snap_restore_h = dw->height;
+                }
+
+                if (snap_zone == SNAP_LEFT) {
+                    gui_window_resize(dw, scr_w / 2, desktop_h);
+                    dw->x = 0;
+                    dw->y = 0;
+                    dw->snapped = SNAP_LEFT;
+                } else if (snap_zone == SNAP_RIGHT) {
+                    gui_window_resize(dw, scr_w / 2, desktop_h);
+                    dw->x = scr_w / 2;
+                    dw->y = 0;
+                    dw->snapped = SNAP_RIGHT;
+                } else if (snap_zone == SNAP_FULL) {
+                    gui_window_resize(dw, scr_w, desktop_h);
+                    dw->x = 0;
+                    dw->y = 0;
+                    dw->snapped = SNAP_FULL;
+                }
+                gui_dirty_screen();
+            }
+
+            snap_zone = SNAP_NONE;
+            snap_prev_zone = SNAP_NONE;
+            dw->dragging = 0;
             *dragging_win = 0;
             drag_pending = 0;
             bg_valid = 0;
@@ -935,6 +1008,21 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
             {
                 gui_window_focus(w); /* cheap: just z-order, no dirty rects */
 
+                /* If snapped, restore original size on drag start */
+                if (w->snapped) {
+                    int old_w = w->width, old_h = w->height;
+                    gui_dirty_add(w->x, w->y,
+                                  old_w + THEME_SHADOW_EXTENT,
+                                  old_h + THEME_SHADOW_EXTENT);
+                    gui_window_resize(w, w->snap_restore_w, w->snap_restore_h);
+                    /* reposition so cursor stays proportional on titlebar */
+                    w->x = mouse_x - w->snap_restore_w / 2;
+                    w->y = mouse_y - GUI_TITLEBAR_HEIGHT / 2;
+                    if (w->x < 0) w->x = 0;
+                    if (w->y < 0) w->y = 0;
+                    w->snapped = 0;
+                }
+
                 w->dragging = 1;
                 w->drag_off_x = mouse_x - w->x;
                 w->drag_off_y = mouse_y - w->y;
@@ -946,6 +1034,8 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
                 drag_win_w = w->width;
                 drag_win_h = w->height;
                 drag_pending = 0;
+                snap_zone = SNAP_NONE;
+                snap_prev_zone = SNAP_NONE;
 
                 bg_valid = 0; /* snapshot will be built on first drag frame */
                 *dragging_win = w;
@@ -1277,6 +1367,62 @@ void gui_run(void)
                         memcpy(&backbuffer[(new_y + sy + row) * scr_w + (new_x + sx)],
                                &dragging_win->surface.pixels[(sy + row) * dragging_win->surface.stride + sx],
                                (size_t)bw * 4);
+                }
+
+                /* 2c. Draw snap preview overlay if active */
+                if (snap_zone != SNAP_NONE) {
+                    int sx0, sy0, sw0, sh0;
+                    int desktop_h = scr_h - GUI_TASKBAR_HEIGHT;
+                    uint32_t scol = THEME_SNAP_PREVIEW_COL;
+                    int salpha = THEME_SNAP_PREVIEW_ALPHA;
+                    int sia = 255 - salpha;
+                    uint32_t sfr = (scol >> 16) & 0xFF;
+                    uint32_t sfg = (scol >> 8) & 0xFF;
+                    uint32_t sfb = scol & 0xFF;
+
+                    if (snap_zone == SNAP_LEFT)       { sx0 = 4; sy0 = 4; sw0 = scr_w/2 - 8;  sh0 = desktop_h - 8; }
+                    else if (snap_zone == SNAP_RIGHT)  { sx0 = scr_w/2 + 4; sy0 = 4; sw0 = scr_w/2 - 8;  sh0 = desktop_h - 8; }
+                    else /* SNAP_FULL */               { sx0 = 4; sy0 = 4; sw0 = scr_w - 8; sh0 = desktop_h - 8; }
+
+                    /* clip to screen */
+                    if (sx0 < 0) { sw0 += sx0; sx0 = 0; }
+                    if (sy0 < 0) { sh0 += sy0; sy0 = 0; }
+                    if (sx0 + sw0 > scr_w) sw0 = scr_w - sx0;
+                    if (sy0 + sh0 > scr_h) sh0 = scr_h - sy0;
+                    if (sw0 > 0 && sh0 > 0) {
+                        int sr;
+                        for (sr = sy0; sr < sy0 + sh0; sr++) {
+                            uint32_t *p = &backbuffer[sr * scr_w + sx0];
+                            int sc;
+                            /* only draw border (4px edges) for subtle preview */
+                            if (sr < sy0 + 3 || sr >= sy0 + sh0 - 3) {
+                                for (sc = 0; sc < sw0; sc++) {
+                                    uint32_t bg = p[sc];
+                                    uint32_t rr = (sfr * (uint32_t)salpha + ((bg >> 16) & 0xFF) * (uint32_t)sia) / 255;
+                                    uint32_t gg = (sfg * (uint32_t)salpha + ((bg >> 8) & 0xFF) * (uint32_t)sia) / 255;
+                                    uint32_t bb = (sfb * (uint32_t)salpha + (bg & 0xFF) * (uint32_t)sia) / 255;
+                                    p[sc] = (rr << 16) | (gg << 8) | bb;
+                                }
+                            } else {
+                                /* left and right edges only */
+                                for (sc = 0; sc < 3 && sc < sw0; sc++) {
+                                    uint32_t bg = p[sc];
+                                    uint32_t rr = (sfr * (uint32_t)salpha + ((bg >> 16) & 0xFF) * (uint32_t)sia) / 255;
+                                    uint32_t gg = (sfg * (uint32_t)salpha + ((bg >> 8) & 0xFF) * (uint32_t)sia) / 255;
+                                    uint32_t bb = (sfb * (uint32_t)salpha + (bg & 0xFF) * (uint32_t)sia) / 255;
+                                    p[sc] = (rr << 16) | (gg << 8) | bb;
+                                }
+                                for (sc = sw0 - 3; sc < sw0; sc++) {
+                                    if (sc < 0) continue;
+                                    uint32_t bg = p[sc];
+                                    uint32_t rr = (sfr * (uint32_t)salpha + ((bg >> 16) & 0xFF) * (uint32_t)sia) / 255;
+                                    uint32_t gg = (sfg * (uint32_t)salpha + ((bg >> 8) & 0xFF) * (uint32_t)sia) / 255;
+                                    uint32_t bb = (sfb * (uint32_t)salpha + (bg & 0xFF) * (uint32_t)sia) / 255;
+                                    p[sc] = (rr << 16) | (gg << 8) | bb;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 /* 3. Draw cursor on top */

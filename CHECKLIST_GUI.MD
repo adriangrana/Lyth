@@ -72,7 +72,12 @@
       > Live resize: gui_window_resize() realoca surface, redibuja en vivo
       > Resize grip visual (3 puntos diagonales) en decoraciones
       > Habilitado en: Terminal, Notes, Viewer, Nexus, Task Manager
-- [ ] Snap visual bonito
+- [x] Snap visual bonito
+      > Snap zones: left/right half, top = fullscreen (minus taskbar)
+      > Cyan border preview (3px, alpha 50) during drag near edges
+      > On release: resize + move to snap position
+      > Pre-snap geometry saved, restored on re-drag (un-snap)
+      > Only for GUI_WIN_RESIZABLE windows
 - [x] Maximize/minimize con animación
       > Minimize: botón amarillo (hit_minimize_button) activa GUI_WIN_MINIMIZED
       > Taskbar muestra ventanas minimizadas con color dim (THEME_COL_DIM)
@@ -85,7 +90,9 @@
       > Deferred drag state desacopla IRQ de mouse del renderizado
 - [x] Resize fluido
       > Live resize con gui_window_resize(), dirty rects cubren vieja + nueva zona
-- [ ] Resize preview o live resize optimizado
+- [x] Resize preview o live resize optimizado
+      > Live resize (no preview frame) — surface reallocated each frame
+      > Dirty rects cover old + new area including shadow extent
 - [x] Focus inmediato
       > gui_window_focus() solo flag + z_order, sin dirty rects
       > Llamado inmediatamente en click y drag start

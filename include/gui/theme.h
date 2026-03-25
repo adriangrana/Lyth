@@ -174,6 +174,11 @@
 /* window corner radius (used by compositor for corner masking) */
 #define THEME_WIN_RADIUS      3
 
+/* snap zone detection threshold (pixels from screen edge) */
+#define THEME_SNAP_EDGE       4
+#define THEME_SNAP_PREVIEW_ALPHA 50
+#define THEME_SNAP_PREVIEW_COL THEME_COL_ACCENT  /* cyan */
+
 /* ==================================================================
  *  5. LAYOUT DIMENSIONS
  * ================================================================== */

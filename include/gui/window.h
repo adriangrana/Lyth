@@ -85,6 +85,11 @@ typedef struct gui_window {
     int resize_orig_w, resize_orig_h;  /* size at start of resize */
     int resize_orig_mx, resize_orig_my; /* mouse at start of resize */
 
+    /* pre-snap geometry (restored on un-snap) */
+    int snap_restore_x, snap_restore_y;
+    int snap_restore_w, snap_restore_h;
+    int snapped;  /* 0=none, 1=left, 2=right, 3=full */
+
     gui_surface_t surface;
     int needs_redraw;
 
