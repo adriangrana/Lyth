@@ -55,8 +55,11 @@
 - [x] Estados (activa, inactiva, urgent, modal)
       > GUI_WIN_FOCUSED flag + colores diferenciados activo/inactivo
 - [ ] Sombras suaves y creíbles
+      > Drop shadow implementado en compositor (compose_region)
+      > 3px offset, darken 25%, dibujado debajo de cada ventana
 - [ ] Esquinas redondeadas bien recortadas
-- [ ] Borde sutil o separación visual clara
+- [x] Borde sutil o separación visual clara
+      > Shadow + titlebar border proveen separación visual
 - [x] Hit testing preciso
       > hit_close_button() actualizado para botón izquierdo
 - [ ] Resize handles cómodos
@@ -84,19 +87,30 @@
 - [ ] Gestión de iconos
 
 #### 6.1. Interacción del escritorio
-- [ ] detectar click derecho sobre escritorio
-- [ ] distinguir escritorio vs ventana vs panel
-- [ ] menú contextual del escritorio
-- [ ] acciones del menú
-- [ ] cierre del menú al clicar fuera
-- [ ] hover/selección por ratón
-- [ ] navegación por teclado más adelante
+- [x] detectar click derecho sobre escritorio
+      > button==2 en desktop_handle_click cuando my < taskbar_y
+- [x] distinguir escritorio vs ventana vs panel
+      > Compositor pasa clicks a windows primero, desktop recibe lo que sobra
+- [x] menú contextual del escritorio
+      > dctx_items[]: Terminal, Files, Settings, About Lyth
+      > draw_desktop_ctx() con fondo translúcido y accent border
+- [x] acciones del menú
+      > Cada item ejecuta su action() callback al hacer click
+- [x] cierre del menú al clicar fuera
+      > Left-click fuera cierra via close_desktop_ctx()
+- [x] hover/selección por ratón
+      > dctx_hover highlight translúcido (alpha 60)
+- [ ] navegación por teclado
 
 #### 6.2. Configuración del sistema
-- [ ] ventana/app de Configuración
-- [ ] sección “Pantalla”
-- [ ] sección “Fondo de pantalla”
-- [ ] sección “Apariencia”
+- [x] ventana/app de Configuración
+      > Sidebar con 4 secciones, click o teclas 1-4 para navegar, username en sidebar
+- [x] sección "Pantalla"
+      > Resolución, color depth, backend, pitch
+- [x] sección "Fondo de pantalla"
+      > Wallpaper actual, scale mode, formato, instrucciones de cambio
+- [x] sección "Apariencia"
+      > Theme, accent, font, titlebar style, dock style, palette swatches
 - [ ] persistencia en archivo de configuración
 - [ ] aplicar cambios en caliente
 

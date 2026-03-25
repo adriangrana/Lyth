@@ -24,6 +24,24 @@ int desktop_get_menubar_height(void);
 /* Access to the pre-rendered desktop surface (gradient + taskbar) */
 gui_surface_t* desktop_get_surface(void);
 
+/* Paint overlays that must appear on top of all windows (launcher) */
+void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1);
+
+/* Returns 1 if the start menu or other top-level overlay is open */
+int desktop_is_overlay_open(void);
+
+/* Close all top-level overlays (start menu) */
+void desktop_close_overlays(void);
+
+/* Wallpaper catalogue API — used by settings app */
+int         desktop_wallpaper_count(void);
+int         desktop_wallpaper_selected(void);
+const char* desktop_wallpaper_name(int idx);
+int         desktop_wallpaper_is_image(int idx);   /* 1 = PNG, 0 = solid */
+uint32_t    desktop_wallpaper_solid_col(int idx);
+const uint32_t* desktop_wallpaper_pixels(int idx, int *out_w, int *out_h);
+void        desktop_set_wallpaper(int idx);
+
 /* Invalidate the desktop cache so the taskbar window list gets redrawn */
 void desktop_invalidate_taskbar(void);
 

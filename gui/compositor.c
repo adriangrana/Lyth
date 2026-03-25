@@ -241,7 +241,51 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
     /* 1. Paint desktop background into this region of backbuffer */
     desktop_paint_region(&bb_surf, dx0, dy0, dx1, dy1);
 
-    /* 2. Blit each window that overlaps this dirty rect */
+    /* 2. Draw window shadows, then blit windows on top */
+    for (i = 0; i < wcount; i++)
+    {
+        gui_window_t *w = sorted[i];
+        int wx0, wy0, wx1, wy1;
+        int sx, sy, dstx, dsty, bw, bh;
+
+        if (!(w->flags & GUI_WIN_VISIBLE) || (w->flags & GUI_WIN_MINIMIZED))
+            continue;
+        if (!w->surface.pixels)
+            continue;
+
+        /* Draw soft drop shadow (4px offset, 6px spread) */
+        {
+            int shx = w->x + 3, shy = w->y + 3;
+            int shw = w->width + 4, shh = w->height + 4;
+            /* Clip shadow to dirty rect */
+            int s0x = shx > dx0 ? shx : dx0;
+            int s0y = shy > dy0 ? shy : dy0;
+            int s1x = (shx + shw) < dx1 ? (shx + shw) : dx1;
+            int s1y = (shy + shh) < dy1 ? (shy + shh) : dy1;
+            if (s0x < s1x && s0y < s1y) {
+                /* Outer shadow (lighter, bigger) */
+                for (row = s0y; row < s1y; row++) {
+                    uint32_t *p = &backbuffer[row * scr_w + s0x];
+                    int cx;
+                    for (cx = 0; cx < s1x - s0x; cx++) {
+                        /* Skip pixels that are inside the window itself */
+                        int px = s0x + cx, py = row;
+                        if (px >= w->x && px < w->x + w->width &&
+                            py >= w->y && py < w->y + w->height)
+                            continue;
+                        uint32_t bg = p[cx];
+                        /* Darken by ~25% */
+                        uint32_t r = ((bg >> 16) & 0xFF) * 190 / 255;
+                        uint32_t g = ((bg >> 8) & 0xFF) * 190 / 255;
+                        uint32_t b = (bg & 0xFF) * 190 / 255;
+                        p[cx] = (r << 16) | (g << 8) | b;
+                    }
+                }
+            }
+        }
+    }
+
+    /* 3. Blit each window that overlaps this dirty rect */
     for (i = 0; i < wcount; i++)
     {
         gui_window_t *w = sorted[i];
@@ -284,6 +328,9 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
                    (size_t)bw * 4);
         }
     }
+
+    /* 4. Paint overlays on top of everything (launcher / start menu) */
+    desktop_paint_overlays(&bb_surf, dx0, dy0, dx1, dy1);
 
     /* track pixels copied */
     metrics.pixels_copied += (unsigned int)(dr->w * dr->h);
@@ -761,6 +808,13 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win)
             return;
         }
 
+        /* If a top-level overlay (start menu) is still open after
+         * desktop_handle_click, close it — the click fell on a window. */
+        if (desktop_is_overlay_open()) {
+            desktop_close_overlays();
+            return;
+        }
+
         gui_window_t *w = hit_test_window(mouse_x, mouse_y);
         if (w)
         {
@@ -1024,8 +1078,8 @@ void gui_run(void)
                 /* Compute union rect (old + new), clipped to screen */
                 ux = old_x < new_x ? old_x : new_x;
                 uy = old_y < new_y ? old_y : new_y;
-                uw = (old_x > new_x ? old_x : new_x) + drag_win_w - ux;
-                uh = (old_y > new_y ? old_y : new_y) + drag_win_h - uy;
+                uw = (old_x > new_x ? old_x : new_x) + drag_win_w + 7 - ux;
+                uh = (old_y > new_y ? old_y : new_y) + drag_win_h + 7 - uy;
                 if (ux < 0) { uw += ux; ux = 0; }
                 if (uy < 0) { uh += uy; uy = 0; }
                 if (ux + uw > scr_w) uw = scr_w - ux;

@@ -22,6 +22,7 @@
 #include "session.h"
 #include "lib/png.h"
 #include "wallpaper_png.h"
+#include "wallpaper_sky_png.h"
 
 /* forward declarations for app launchers */
 void terminal_app_open(void);
@@ -136,7 +137,7 @@ typedef struct {
     char icon_letter;
 } launcher_item_t;
 
-/* ---- context menu ---- */
+/* ---- context menu (window right-click) ---- */
 #define CTX_W           140
 #define CTX_ITEM_H      24
 #define CTX_MAX_ITEMS   3
@@ -144,6 +145,22 @@ typedef struct {
 static int ctx_menu_open;
 static int ctx_menu_x, ctx_menu_y;
 static gui_window_t* ctx_target_win;
+
+/* ---- desktop context menu (right-click on desktop background) ---- */
+#define DCTX_W          180
+#define DCTX_ITEM_H     28
+#define DCTX_MAX_ITEMS  5
+
+typedef struct {
+    const char* label;
+    void (*action)(void);
+} dctx_item_t;
+
+static int dctx_menu_open;
+static int dctx_menu_x, dctx_menu_y;
+static int dctx_hover;
+static dctx_item_t dctx_items[DCTX_MAX_ITEMS];
+static int dctx_item_count;
 
 /* ---- network / control popup ---- */
 #define NET_POPUP_W  240
@@ -179,15 +196,90 @@ static int launcher_search_len;
 /* ---- tray click regions (set during render) ---- */
 static int tray_net_x, tray_menu_x;
 
-/* ---- wallpaper ---- */
+/* ---- wallpaper catalogue ---- */
+#define WP_TYPE_IMAGE   0
+#define WP_TYPE_SOLID   1
+#define WP_MAX          8
+
+typedef struct {
+    const char *name;
+    int         type;          /* WP_TYPE_IMAGE or WP_TYPE_SOLID */
+    const uint8_t *png_data;   /* for image wallpapers */
+    unsigned int   png_size;
+    uint32_t    solid_col;     /* for solid colour wallpapers */
+    png_image_t  decoded;      /* cached decoded image (pre-decoded at init) */
+    int          decoded_ok;   /* 1 = decoded successfully */
+} wp_entry_t;
+
+static wp_entry_t wp_catalogue[WP_MAX];
+static int wp_count = 0;
+static int wp_selected = 0;   /* index into catalogue */
+
 static png_image_t wallpaper_img;
 static int wallpaper_loaded = 0;
+static int wallpaper_current = -1;  /* which catalogue entry is loaded */
+
+static void wallpaper_catalogue_init(void) {
+    int i;
+    if (wp_count > 0) return;
+    /* Image wallpapers from defaults_wallpapers/ */
+    wp_catalogue[wp_count].name = "Lyth";
+    wp_catalogue[wp_count].type = WP_TYPE_IMAGE;
+    wp_catalogue[wp_count].png_data = wallpaper_png_data;
+    wp_catalogue[wp_count].png_size = (unsigned int)wallpaper_png_size;
+    wp_count++;
+
+    wp_catalogue[wp_count].name = "Sky";
+    wp_catalogue[wp_count].type = WP_TYPE_IMAGE;
+    wp_catalogue[wp_count].png_data = wallpaper_sky_png_data;
+    wp_catalogue[wp_count].png_size = (unsigned int)wallpaper_sky_png_size;
+    wp_count++;
+
+    /* Solid colour wallpapers */
+    wp_catalogue[wp_count].name = "Midnight";
+    wp_catalogue[wp_count].type = WP_TYPE_SOLID;
+    wp_catalogue[wp_count].solid_col = 0x0D1117;
+    wp_count++;
+
+    wp_catalogue[wp_count].name = "Ocean";
+    wp_catalogue[wp_count].type = WP_TYPE_SOLID;
+    wp_catalogue[wp_count].solid_col = 0x1E3A5F;
+    wp_count++;
+
+    wp_catalogue[wp_count].name = "Forest";
+    wp_catalogue[wp_count].type = WP_TYPE_SOLID;
+    wp_catalogue[wp_count].solid_col = 0x1A3A2A;
+    wp_count++;
+
+    wp_catalogue[wp_count].name = "Sunset";
+    wp_catalogue[wp_count].type = WP_TYPE_SOLID;
+    wp_catalogue[wp_count].solid_col = 0x5A2D2D;
+    wp_count++;
+
+    /* Pre-decode all image wallpapers so thumbnails and apply are instant */
+    for (i = 0; i < wp_count; i++) {
+        if (wp_catalogue[i].type == WP_TYPE_IMAGE && wp_catalogue[i].png_data) {
+            if (png_load(wp_catalogue[i].png_data, wp_catalogue[i].png_size,
+                         &wp_catalogue[i].decoded) == 0)
+                wp_catalogue[i].decoded_ok = 1;
+        }
+    }
+}
 
 static void try_load_wallpaper(void) {
-    if (wallpaper_loaded) return;
+    wp_entry_t *e;
+    wallpaper_catalogue_init();
+    if (wp_selected == wallpaper_current && wallpaper_loaded) return;
     wallpaper_loaded = 1;
-    if (png_load(wallpaper_png_data, wallpaper_png_size, &wallpaper_img) != 0)
+    wallpaper_current = wp_selected;
+    e = &wp_catalogue[wp_selected];
+    if (e->type == WP_TYPE_IMAGE && e->decoded_ok) {
+        /* Use pre-decoded cache — instant, no PNG decode needed */
+        wallpaper_img = e->decoded;
+    } else {
+        /* Solid or failed decode: no image pixels */
         wallpaper_img.pixels = 0;
+    }
 }
 
 /* Bilinear interpolation for smooth wallpaper scaling (16.16 fixed-point) */
@@ -468,23 +560,43 @@ static void rebuild_desktop(void) {
         }
 
         for (y = 0; y < dh; y++) {
-            int fy16 = (int)((long)(y + sy_off) * scale_den * 65536 / scale_num);
-            uint32_t *dst_row = &desk_surf.pixels[y * sw];
+            int sy = (int)((long)(y + sy_off) * scale_den / scale_num);
+            const uint32_t *src_row;
+            uint32_t *dst_row;
+            if (sy < 0) sy = 0;
+            if (sy >= ih) sy = ih - 1;
+            src_row = &wallpaper_img.pixels[sy * iw];
+            dst_row = &desk_surf.pixels[y * sw];
             for (int x = 0; x < sw; x++) {
-                int fx16 = (int)((long)(x + sx_off) * scale_den * 65536 / scale_num);
-                dst_row[x] = bilinear_sample_wp(wallpaper_img.pixels, iw, ih, fx16, fy16);
+                int sxi = (int)((long)(x + sx_off) * scale_den / scale_num);
+                if (sxi < 0) sxi = 0;
+                if (sxi >= iw) sxi = iw - 1;
+                dst_row[x] = src_row[sxi];
             }
         }
     } else {
-        /* fallback: gradient */
-        for (y = 0; y < half; y++) {
-            uint32_t c = mix_rgb(COL_BG_TOP, COL_BG_MID, y, half > 1 ? half - 1 : 1);
-            memset32(&desk_surf.pixels[y * sw], c, (size_t)sw);
+        /* Solid colour or gradient fallback */
+        uint32_t solid = 0;
+        int use_solid = 0;
+        wallpaper_catalogue_init();
+        if (wp_selected < wp_count && wp_catalogue[wp_selected].type == WP_TYPE_SOLID) {
+            solid = wp_catalogue[wp_selected].solid_col;
+            use_solid = 1;
         }
-        for (y = half; y < sh - TASKBAR_H; y++) {
-            uint32_t c = mix_rgb(COL_BG_MID, COL_BG_BOT, y - half,
-                                 (sh - TASKBAR_H - half) > 1 ? (sh - TASKBAR_H - half - 1) : 1);
-            memset32(&desk_surf.pixels[y * sw], c, (size_t)sw);
+        if (use_solid) {
+            for (y = 0; y < sh; y++)
+                memset32(&desk_surf.pixels[y * sw], solid, (size_t)sw);
+        } else {
+            /* gradient fallback */
+            for (y = 0; y < half; y++) {
+                uint32_t c = mix_rgb(COL_BG_TOP, COL_BG_MID, y, half > 1 ? half - 1 : 1);
+                memset32(&desk_surf.pixels[y * sw], c, (size_t)sw);
+            }
+            for (y = half; y < sh - TASKBAR_H; y++) {
+                uint32_t c = mix_rgb(COL_BG_MID, COL_BG_BOT, y - half,
+                                     (sh - TASKBAR_H - half) > 1 ? (sh - TASKBAR_H - half - 1) : 1);
+                memset32(&desk_surf.pixels[y * sw], c, (size_t)sw);
+            }
         }
     }
 
@@ -803,6 +915,47 @@ static void close_net_popup(void) {
     net_popup_open = 0;
 }
 
+static void close_desktop_ctx(void) {
+    if (!dctx_menu_open) return;
+    int total_h = dctx_item_count * DCTX_ITEM_H + 8;
+    gui_dirty_add(dctx_menu_x, dctx_menu_y, DCTX_W, total_h);
+    dctx_menu_open = 0;
+    dctx_hover = -1;
+}
+
+static void draw_desktop_ctx(gui_surface_t* dst) {
+    int i;
+    int total_h = dctx_item_count * DCTX_ITEM_H + 8;
+
+    /* Translucent background */
+    draw_rounded_rect_alpha(dst, dctx_menu_x, dctx_menu_y, DCTX_W, total_h,
+                            3, COL_CTX_BG, 220);
+    /* Top border accent */
+    alpha_blend_fill(dst, dctx_menu_x + 3, dctx_menu_y, DCTX_W - 6, 1,
+                     THEME_COL_ACCENT, 35);
+
+    for (i = 0; i < dctx_item_count; i++) {
+        int iy = dctx_menu_y + 4 + i * DCTX_ITEM_H;
+
+        /* Hover highlight */
+        if (i == dctx_hover)
+            draw_rounded_rect_alpha(dst, dctx_menu_x + 4, iy,
+                                    DCTX_W - 8, DCTX_ITEM_H - 2, 2,
+                                    COL_CTX_HOVER, 60);
+
+        gui_surface_draw_string(dst, dctx_menu_x + 14,
+            iy + (DCTX_ITEM_H - FONT_PSF_HEIGHT) / 2,
+            dctx_items[i].label,
+            (i == dctx_hover) ? 0xFFFFFF : COL_CTX_TEXT, 0, 0);
+
+        /* Separator after each item except last */
+        if (i < dctx_item_count - 1)
+            alpha_blend_fill(dst, dctx_menu_x + 8,
+                iy + DCTX_ITEM_H - 2, DCTX_W - 16, 1,
+                COL_CTX_BORDER, 80);
+    }
+}
+
 static void draw_net_popup(gui_surface_t* dst) {
     int px = sw - NET_POPUP_W - 8;
     int py = sh - TASKBAR_H - NET_POPUP_H - 8;
@@ -900,10 +1053,27 @@ void desktop_init(int screen_w, int screen_h) {
     launcher_search[0] = '\0';
     tray_net_x = sw - 100;
     tray_menu_x = sw - 140;
+    dctx_menu_open = 0;
+    dctx_hover = -1;
     desk_valid = 0;
 
     gui_surface_alloc(&desk_surf, sw, sh);
     update_clock();
+
+    /* ---- Populate desktop context menu ---- */
+    dctx_item_count = 0;
+    dctx_items[dctx_item_count].label = "Terminal";
+    dctx_items[dctx_item_count].action = terminal_app_open;
+    dctx_item_count++;
+    dctx_items[dctx_item_count].label = "Files";
+    dctx_items[dctx_item_count].action = filemanager_app_open;
+    dctx_item_count++;
+    dctx_items[dctx_item_count].label = "Settings";
+    dctx_items[dctx_item_count].action = settings_app_open;
+    dctx_item_count++;
+    dctx_items[dctx_item_count].label = "About Lyth";
+    dctx_items[dctx_item_count].action = about_app_open;
+    dctx_item_count++;
 
     /* ---- Populate dock (pinned icons in centre of taskbar) ---- */
     dock_item_count = 0;
@@ -1013,21 +1183,25 @@ void desktop_paint_region(gui_surface_t* dst, int x0, int y0, int x1, int y1) {
                (size_t)w * 4);
     }
 
-    /* overlay start menu (launcher) if open and intersects dirty region */
-    if (start_menu_open) {
-        int lx = (sw - LAUNCHER_W) / 2;
-        int ly = sh - TASKBAR_H - LAUNCHER_H - 8;
-        if (!(lx + LAUNCHER_W <= x0 || x1 <= lx ||
-              ly + LAUNCHER_H <= y0 || y1 <= ly))
-            draw_start_menu(dst);
-    }
-
     /* overlay context menu if open and intersects dirty region */
     if (ctx_menu_open) {
         int total_h = CTX_MAX_ITEMS * CTX_ITEM_H + 4;
         if (!(ctx_menu_x + CTX_W <= x0 || x1 <= ctx_menu_x ||
-              ctx_menu_y + total_h <= y0 || y1 <= ctx_menu_y))
+              ctx_menu_y + total_h <= y0 || y1 <= ctx_menu_y)) {
+            /* Refresh wallpaper under full overlay to prevent alpha accumulation */
+            {
+                int ax0 = ctx_menu_x, ay0 = ctx_menu_y;
+                int ax1 = ctx_menu_x + CTX_W, ay1 = ctx_menu_y + total_h;
+                int ar;
+                if (ax0 < 0) ax0 = 0; if (ay0 < 0) ay0 = 0;
+                if (ax1 > sw) ax1 = sw; if (ay1 > sh) ay1 = sh;
+                for (ar = ay0; ar < ay1; ar++)
+                    memcpy(&dst->pixels[ar * dst->stride + ax0],
+                           &desk_surf.pixels[ar * sw + ax0],
+                           (size_t)(ax1 - ax0) * 4);
+            }
             draw_context_menu(dst);
+        }
     }
 
     /* overlay network popup if open and intersects dirty region */
@@ -1035,9 +1209,128 @@ void desktop_paint_region(gui_surface_t* dst, int x0, int y0, int x1, int y1) {
         int npx = sw - NET_POPUP_W - 8;
         int npy = sh - TASKBAR_H - NET_POPUP_H - 8;
         if (!(npx + NET_POPUP_W <= x0 || x1 <= npx ||
-              npy + NET_POPUP_H <= y0 || y1 <= npy))
+              npy + NET_POPUP_H <= y0 || y1 <= npy)) {
+            {
+                int ax0 = npx, ay0 = npy;
+                int ax1 = npx + NET_POPUP_W, ay1 = npy + NET_POPUP_H;
+                int ar;
+                if (ax0 < 0) ax0 = 0; if (ay0 < 0) ay0 = 0;
+                if (ax1 > sw) ax1 = sw; if (ay1 > sh) ay1 = sh;
+                for (ar = ay0; ar < ay1; ar++)
+                    memcpy(&dst->pixels[ar * dst->stride + ax0],
+                           &desk_surf.pixels[ar * sw + ax0],
+                           (size_t)(ax1 - ax0) * 4);
+            }
             draw_net_popup(dst);
+        }
     }
+
+    /* overlay desktop context menu if open and intersects dirty region */
+    if (dctx_menu_open) {
+        int dth = dctx_item_count * DCTX_ITEM_H + 8;
+        if (!(dctx_menu_x + DCTX_W <= x0 || x1 <= dctx_menu_x ||
+              dctx_menu_y + dth <= y0 || y1 <= dctx_menu_y)) {
+            {
+                int ax0 = dctx_menu_x, ay0 = dctx_menu_y;
+                int ax1 = dctx_menu_x + DCTX_W, ay1 = dctx_menu_y + dth;
+                int ar;
+                if (ax0 < 0) ax0 = 0; if (ay0 < 0) ay0 = 0;
+                if (ax1 > sw) ax1 = sw; if (ay1 > sh) ay1 = sh;
+                for (ar = ay0; ar < ay1; ar++)
+                    memcpy(&dst->pixels[ar * dst->stride + ax0],
+                           &desk_surf.pixels[ar * sw + ax0],
+                           (size_t)(ax1 - ax0) * 4);
+            }
+            draw_desktop_ctx(dst);
+        }
+    }
+}
+
+/* Paint overlays that must appear on top of all windows (launcher). */
+void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) {
+    if (!start_menu_open) return;
+    {
+        int lx = (sw - LAUNCHER_W) / 2;
+        int ly = sh - TASKBAR_H - LAUNCHER_H - 8;
+        if (!(lx + LAUNCHER_W <= x0 || x1 <= lx ||
+              ly + LAUNCHER_H <= y0 || y1 <= ly)) {
+            /* Refresh wallpaper under the full launcher area before
+             * alpha-blending. Prevents accumulation artifacts when
+             * multiple dirty rects per frame each trigger a full
+             * launcher redraw (the alpha blend only reads a clean base). */
+            {
+                int ax0 = lx, ay0 = ly;
+                int ax1 = lx + LAUNCHER_W, ay1 = ly + LAUNCHER_H;
+                int ar;
+                if (ax0 < 0) ax0 = 0; if (ay0 < 0) ay0 = 0;
+                if (ax1 > sw) ax1 = sw; if (ay1 > sh) ay1 = sh;
+                if (desk_surf.pixels) {
+                    for (ar = ay0; ar < ay1; ar++)
+                        memcpy(&dst->pixels[ar * dst->stride + ax0],
+                               &desk_surf.pixels[ar * sw + ax0],
+                               (size_t)(ax1 - ax0) * 4);
+                }
+            }
+            draw_start_menu(dst);
+        }
+    }
+}
+
+int desktop_is_overlay_open(void) {
+    return start_menu_open;
+}
+
+void desktop_close_overlays(void) {
+    if (start_menu_open)
+        close_start_menu();
+}
+
+/* ---- wallpaper API for settings app ---- */
+int desktop_wallpaper_count(void) {
+    wallpaper_catalogue_init();
+    return wp_count;
+}
+
+int desktop_wallpaper_selected(void) {
+    return wp_selected;
+}
+
+const char* desktop_wallpaper_name(int idx) {
+    wallpaper_catalogue_init();
+    if (idx < 0 || idx >= wp_count) return "";
+    return wp_catalogue[idx].name;
+}
+
+int desktop_wallpaper_is_image(int idx) {
+    wallpaper_catalogue_init();
+    if (idx < 0 || idx >= wp_count) return 0;
+    return wp_catalogue[idx].type == WP_TYPE_IMAGE;
+}
+
+uint32_t desktop_wallpaper_solid_col(int idx) {
+    wallpaper_catalogue_init();
+    if (idx < 0 || idx >= wp_count) return 0;
+    return wp_catalogue[idx].solid_col;
+}
+
+const uint32_t* desktop_wallpaper_pixels(int idx, int *out_w, int *out_h) {
+    wallpaper_catalogue_init();
+    if (idx < 0 || idx >= wp_count) return 0;
+    if (wp_catalogue[idx].type == WP_TYPE_IMAGE && wp_catalogue[idx].decoded_ok) {
+        if (out_w) *out_w = wp_catalogue[idx].decoded.width;
+        if (out_h) *out_h = wp_catalogue[idx].decoded.height;
+        return wp_catalogue[idx].decoded.pixels;
+    }
+    return 0;
+}
+
+void desktop_set_wallpaper(int idx) {
+    wallpaper_catalogue_init();
+    if (idx < 0 || idx >= wp_count) return;
+    wp_selected = idx;
+    desk_valid = 0;
+    /* Full screen dirty to repaint */
+    gui_dirty_add(0, 0, sw, sh);
 }
 
 void desktop_on_tick(void) {
@@ -1078,6 +1371,24 @@ int desktop_handle_click(int mx, int my, int button) {
             return 1;
         }
         close_net_popup();
+    }
+
+    /* handle desktop context menu clicks */
+    if (dctx_menu_open) {
+        int dth = dctx_item_count * DCTX_ITEM_H + 8;
+        if (mx >= dctx_menu_x && mx < dctx_menu_x + DCTX_W &&
+            my >= dctx_menu_y && my < dctx_menu_y + dth) {
+            if (button == 1) {
+                int idx = (my - dctx_menu_y - 4) / DCTX_ITEM_H;
+                if (idx >= 0 && idx < dctx_item_count) {
+                    void (*act)(void) = dctx_items[idx].action;
+                    close_desktop_ctx();
+                    if (act) act();
+                }
+            }
+            return 1;
+        }
+        close_desktop_ctx();
     }
 
     /* close context menu if clicking outside it */
@@ -1266,6 +1577,35 @@ int desktop_handle_click(int mx, int my, int button) {
         }
 
         return 1; /* consumed: click was on taskbar */
+    }
+
+    /* ---- Desktop background: right-click opens desktop context menu ---- */
+    if (button == 2 && my < taskbar_y) {
+        close_start_menu();
+        close_context_menu();
+        close_net_popup();
+        close_desktop_ctx();
+
+        dctx_menu_x = mx;
+        dctx_menu_y = my;
+        /* Keep menu on-screen */
+        {
+            int dth = dctx_item_count * DCTX_ITEM_H + 8;
+            if (dctx_menu_x + DCTX_W > sw) dctx_menu_x = sw - DCTX_W;
+            if (dctx_menu_y + dth > sh - TASKBAR_H) dctx_menu_y = sh - TASKBAR_H - dth;
+            if (dctx_menu_x < 0) dctx_menu_x = 0;
+            if (dctx_menu_y < 0) dctx_menu_y = 0;
+        }
+        dctx_hover = -1;
+        dctx_menu_open = 1;
+        gui_dirty_add(dctx_menu_x, dctx_menu_y, DCTX_W,
+                      dctx_item_count * DCTX_ITEM_H + 8);
+        return 1;
+    }
+
+    /* Left-click on desktop: close any open menus */
+    if (button == 1) {
+        close_desktop_ctx();
     }
 
     return 0;
