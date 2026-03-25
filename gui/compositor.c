@@ -619,6 +619,45 @@ static void handle_keyboard(input_event_t *ev)
         return;
     }
 
+    /* Alt+Tab: cycle focus to next visible window */
+    if (ev->type == INPUT_EVENT_TAB && (ev->modifiers & KEY_MOD_ALT))
+    {
+        count = gui_window_count();
+        if (count < 2) return;
+        int focused_idx = -1;
+        for (i = 0; i < count; i++)
+        {
+            gui_window_t *w = gui_window_get(i);
+            if (w && (w->flags & GUI_WIN_FOCUSED))
+            {
+                focused_idx = i;
+                break;
+            }
+        }
+        /* Find next visible window after the focused one */
+        for (i = 1; i < count; i++)
+        {
+            int idx = (focused_idx + i) % count;
+            gui_window_t *w = gui_window_get(idx);
+            if (w && (w->flags & GUI_WIN_VISIBLE) &&
+                !(w->flags & GUI_WIN_MINIMIZED))
+            {
+                gui_window_focus(w);
+                gui_dirty_add(w->x, w->y, w->width, w->height);
+                /* Also dirty the previously focused window */
+                if (focused_idx >= 0)
+                {
+                    gui_window_t *prev = gui_window_get(focused_idx);
+                    if (prev)
+                        gui_dirty_add(prev->x, prev->y, prev->width, prev->height);
+                }
+                desktop_invalidate_taskbar();
+                return;
+            }
+        }
+        return;
+    }
+
     /* Check if desktop wants this key (start menu etc) */
     if (desktop_handle_key(ev->type, ev->character))
     {

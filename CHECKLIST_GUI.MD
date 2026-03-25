@@ -83,36 +83,72 @@
 - [ ] Desktop vacío elegante
 - [ ] Gestión de iconos
 
+#### 6.1. Interacción del escritorio
+- [ ] detectar click derecho sobre escritorio
+- [ ] distinguir escritorio vs ventana vs panel
+- [ ] menú contextual del escritorio
+- [ ] acciones del menú
+- [ ] cierre del menú al clicar fuera
+- [ ] hover/selección por ratón
+- [ ] navegación por teclado más adelante
+
+#### 6.2. Configuración del sistema
+- [ ] ventana/app de Configuración
+- [ ] sección “Pantalla”
+- [ ] sección “Fondo de pantalla”
+- [ ] sección “Apariencia”
+- [ ] persistencia en archivo de configuración
+- [ ] aplicar cambios en caliente
+
 ### 7. Panel/Barra Superior
-- [ ] Layout definido
-- [ ] Área de apps
-- [ ] Reloj/fecha
-- [ ] Estado del sistema (red, audio, batería)
-- [ ] Usuario/sesión
+- [x] Layout definido
+      > Taskbar translúcido (alpha_blend_fill 190/255) sobre wallpaper
+      > Secciones: left=app labels, center=dock, right=tray con separadores verticales
+- [x] Área de apps
+      > Running app labels con rounded rect en sección izquierda del taskbar
+- [x] Reloj/fecha
+      > HH:MM + full date (DayName, Month Day) en zona derecha del tray
+- [x] Estado del sistema (red, audio, batería)
+      > Network icon (verde/rojo según conexión) + Volume icon en tray
+- [x] Usuario/sesión
+      > Username obtenido de session_get_current() mostrado en tray
 - [ ] Notificaciones
-- [ ] Menú del sistema
-- [ ] Blur/transparencia opcional
+- [x] Menú del sistema
+      > Hamburger icon abre launcher; network icon abre popup red
+- [x] Blur/transparencia opcional
+      > Taskbar glass: alpha_blend_fill + accent line sutil (alpha 30)
+      > Separadores verticales semitransparentes entre secciones
 - [ ] Auto-hide opcional
 - [ ] Animaciones de hover
 
 ### 8. Launcher/Menú de Aplicaciones
-- [ ] Búsqueda instantánea
-- [ ] Grid o lista impecable
-- [ ] Navegación por teclado
+- [x] Búsqueda instantánea
+      > Filtrado en tiempo real con str_starts_with_ignore_case
+      > Cursor texto visible, "No results" cuando no hay coincidencias
+- [x] Grid o lista impecable
+      > Grid 5 columnas filtrado dinámicamente, hover translúcido (alpha 60)
+- [x] Navegación por teclado
+      > Arrows + Enter + Escape + Backspace, todo respeta filtro de búsqueda
 - [ ] Categorías
 - [ ] Recientes
 - [ ] Apps fijadas
 - [ ] Animación de apertura/cierre
-- [ ] Tipografía perfecta
-- [ ] Iconos de calidad
+- [x] Tipografía perfecta
+      > Título "Lyth OS" en color accent, labels centrados bajo iconos
+- [x] Iconos de calidad
+      > Rounded rect coloreados con letra centrada, coherentes con dock
 
 ### 9. Dock o Task Switcher
 - [ ] Previews de ventanas
-- [ ] Indicadores de app abierta
+- [x] Indicadores de app abierta
+      > Barra horizontal 6x2px debajo del icono (reemplaza dot 3x3)
+      > Dock pill translúcido (alpha 160) sobre wallpaper
 - [ ] Drag-reorder
 - [ ] Pinned apps
 - [ ] Animaciones cuidadas
-- [ ] Alt-tab elegante y rápido
+- [x] Alt-tab elegante y rápido
+      > Alt+Tab cicla focus entre ventanas visibles en compositor.c
+      > Dirty rects para ventana anterior y siguiente
 - [ ] Exposé/overview (futura)
 
 ## FASE 3 — Compositor GPU

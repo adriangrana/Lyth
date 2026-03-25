@@ -19,6 +19,7 @@
 #include "netif.h"
 #include "login.h"
 #include "acpi.h"
+#include "session.h"
 #include "lib/png.h"
 #include "wallpaper_png.h"
 
@@ -171,6 +172,13 @@ static char date_str[32]  = "";
 static int net_popup_open;
 static int net_last_up;
 
+/* ---- launcher search ---- */
+static char launcher_search[32];
+static int launcher_search_len;
+
+/* ---- tray click regions (set during render) ---- */
+static int tray_net_x, tray_menu_x;
+
 /* ---- wallpaper ---- */
 static png_image_t wallpaper_img;
 static int wallpaper_loaded = 0;
@@ -321,6 +329,62 @@ static uint32_t mix_rgb(uint32_t a, uint32_t b, int t, int max) {
     return (rr << 16) | (rg << 8) | rb;
 }
 
+/* Alpha-blend a solid color onto existing pixels (0=transparent, 255=opaque) */
+static void alpha_blend_fill(gui_surface_t* dst, int x0, int y0, int w, int h,
+                              uint32_t col, int alpha) {
+    int row, cx;
+    uint32_t fr = (col >> 16) & 0xFF;
+    uint32_t fg = (col >> 8) & 0xFF;
+    uint32_t fb = col & 0xFF;
+    int ia = 255 - alpha;
+    if (x0 < 0) { w += x0; x0 = 0; }
+    if (y0 < 0) { h += y0; y0 = 0; }
+    if (x0 + w > dst->width) w = dst->width - x0;
+    if (y0 + h > dst->height) h = dst->height - y0;
+    if (w <= 0 || h <= 0) return;
+    for (row = y0; row < y0 + h; row++) {
+        uint32_t *p = &dst->pixels[row * dst->stride + x0];
+        for (cx = 0; cx < w; cx++) {
+            uint32_t bg = p[cx];
+            uint32_t r = (fr * (uint32_t)alpha + ((bg >> 16) & 0xFF) * (uint32_t)ia) / 255;
+            uint32_t g = (fg * (uint32_t)alpha + ((bg >> 8) & 0xFF) * (uint32_t)ia) / 255;
+            uint32_t b = (fb * (uint32_t)alpha + (bg & 0xFF) * (uint32_t)ia) / 255;
+            p[cx] = (r << 16) | (g << 8) | b;
+        }
+    }
+}
+
+/* Rounded rect with alpha blending */
+static void draw_rounded_rect_alpha(gui_surface_t* dst, int x, int y, int w,
+                                     int h, int r, uint32_t col, int alpha) {
+    if (alpha >= 255) { draw_rounded_rect(dst, x, y, w, h, r, col); return; }
+    if (alpha <= 0) return;
+    if (r < 1 || h < 4 || w < 4) {
+        alpha_blend_fill(dst, x, y, w, h, col, alpha);
+        return;
+    }
+    if (r > 3) r = 3;
+    if (r == 1) {
+        alpha_blend_fill(dst, x + 1, y, w - 2, 1, col, alpha);
+        alpha_blend_fill(dst, x, y + 1, w, h - 2, col, alpha);
+        alpha_blend_fill(dst, x + 1, y + h - 1, w - 2, 1, col, alpha);
+    } else if (r == 2) {
+        alpha_blend_fill(dst, x + 2, y, w - 4, 1, col, alpha);
+        alpha_blend_fill(dst, x + 1, y + 1, w - 2, 1, col, alpha);
+        alpha_blend_fill(dst, x, y + 2, w, h - 4, col, alpha);
+        alpha_blend_fill(dst, x + 1, y + h - 2, w - 2, 1, col, alpha);
+        alpha_blend_fill(dst, x + 2, y + h - 1, w - 4, 1, col, alpha);
+    } else {
+        alpha_blend_fill(dst, x + 3, y, w - 6, 1, col, alpha);
+        alpha_blend_fill(dst, x + 2, y + 1, w - 4, 1, col, alpha);
+        alpha_blend_fill(dst, x + 1, y + 2, w - 2, 1, col, alpha);
+        alpha_blend_fill(dst, x, y + 3, w, h - 6, col, alpha);
+        alpha_blend_fill(dst, x + 1, y + h - 3, w - 2, 1, col, alpha);
+        alpha_blend_fill(dst, x + 2, y + h - 2, w - 4, 1, col, alpha);
+        alpha_blend_fill(dst, x + 3, y + h - 1, w - 6, 1, col, alpha);
+    }
+}
+
 static const char* day_names[] = {
     "Sunday", "Monday", "Tuesday", "Wednesday",
     "Thursday", "Friday", "Saturday"
@@ -427,9 +491,10 @@ static void rebuild_desktop(void) {
     /* ---- Taskbar ---- */
     taskbar_y = sh - TASKBAR_H;
 
-    /* Taskbar background with rounded top appearance */
-    gui_surface_fill(&desk_surf, 0, taskbar_y, sw, TASKBAR_H, COL_TASKBAR_BG);
-    gui_surface_hline(&desk_surf, 0, taskbar_y, sw, COL_TASKBAR_SEP);
+    /* Taskbar background — translucent glass over wallpaper */
+    alpha_blend_fill(&desk_surf, 0, taskbar_y, sw, TASKBAR_H, 0x0D1117, 190);
+    /* Subtle accent line at top edge */
+    alpha_blend_fill(&desk_surf, 0, taskbar_y, sw, 1, THEME_COL_ACCENT, 30);
 
     /* == Left section: running app labels == */
     {
@@ -460,9 +525,9 @@ static void rebuild_desktop(void) {
         int icon_h = TASKBAR_H - DOCK_Y_PAD * 2;
         int i;
 
-        /* Dock background pill */
-        draw_rounded_rect(&desk_surf, dx - 6, taskbar_y + 2,
-                          dock_total_w() + 12, TASKBAR_H - 4, 3, COL_DOCK_BG);
+        /* Dock background pill — translucent */
+        draw_rounded_rect_alpha(&desk_surf, dx - 6, taskbar_y + 2,
+                                dock_total_w() + 12, TASKBAR_H - 4, 3, COL_DOCK_BG, 160);
 
         for (i = 0; i < dock_item_count; i++) {
             int ix = dx + DOCK_ICON_PAD + i * (DOCK_ICON_SIZE + DOCK_ICON_PAD);
@@ -486,11 +551,11 @@ static void rebuild_desktop(void) {
                     gui_window_t* w = gui_window_get(j);
                     if (w && (w->flags & GUI_WIN_VISIBLE) &&
                         str_starts_with(w->title, dock_items[i].label)) {
-                        /* small dot below icon */
-                        draw_dot(&desk_surf,
-                            ix + DOCK_ICON_SIZE / 2,
-                            taskbar_y + TASKBAR_H - 5,
-                            COL_DOCK_DOT);
+                        /* running indicator bar below icon */
+                        gui_surface_fill(&desk_surf,
+                            ix + DOCK_ICON_SIZE / 2 - 3,
+                            taskbar_y + TASKBAR_H - 4,
+                            6, 2, COL_DOCK_DOT);
                         break;
                     }
                 }
@@ -521,6 +586,28 @@ static void rebuild_desktop(void) {
             rx -= TRAY_PAD;
         }
 
+        /* Separator */
+        alpha_blend_fill(&desk_surf, rx, taskbar_y + 8, 1, TASKBAR_H - 16,
+                         COL_TASKBAR_SEP, 120);
+        rx -= TRAY_PAD;
+
+        /* Username from session */
+        {
+            const session_t* sess = session_get_current();
+            if (sess && sess->active && sess->username[0]) {
+                int ulen = (int)strlen(sess->username);
+                int uw = ulen * FONT_PSF_WIDTH;
+                rx -= uw;
+                gui_surface_draw_string(&desk_surf, rx,
+                    taskbar_y + (TASKBAR_H - FONT_PSF_HEIGHT) / 2,
+                    sess->username, COL_TRAY_TEXT, 0, 0);
+                rx -= TRAY_PAD;
+                alpha_blend_fill(&desk_surf, rx, taskbar_y + 8, 1,
+                                 TASKBAR_H - 16, COL_TASKBAR_SEP, 120);
+                rx -= TRAY_PAD;
+            }
+        }
+
         /* Volume icon */
         rx -= 12;
         draw_volume_icon(&desk_surf, rx, taskbar_y + (TASKBAR_H - 9) / 2,
@@ -532,13 +619,20 @@ static void rebuild_desktop(void) {
             int connected = net_is_connected();
             net_last_up = connected;
             rx -= 12;
+            tray_net_x = rx;
             draw_net_icon(&desk_surf, rx, taskbar_y + (TASKBAR_H - 9) / 2,
                           connected);
             rx -= TRAY_PAD;
         }
 
+        /* Separator */
+        alpha_blend_fill(&desk_surf, rx, taskbar_y + 8, 1, TASKBAR_H - 16,
+                         COL_TASKBAR_SEP, 120);
+        rx -= TRAY_PAD;
+
         /* Menu/hamburger icon */
         rx -= 12;
+        tray_menu_x = rx;
         draw_menu_icon(&desk_surf, rx, taskbar_y + (TASKBAR_H - 10) / 2,
                        COL_TRAY_TEXT);
     }
@@ -554,24 +648,47 @@ static void draw_start_menu(gui_surface_t* dst) {
     int grid_x = lx + 20;
     int grid_y = ly + 60;
 
-    /* Background panel */
-    draw_rounded_rect(dst, lx, ly, LAUNCHER_W, LAUNCHER_H, 12, COL_LAUNCH_BG);
+    /* Build filtered list based on search */
+    int filtered[LAUNCHER_MAX];
+    int fcount = 0;
+    for (i = 0; i < launcher_item_count; i++) {
+        if (launcher_search_len == 0 ||
+            str_starts_with_ignore_case(launcher_items[i].label, launcher_search))
+            filtered[fcount++] = i;
+    }
+
+    /* Background panel — translucent glass */
+    draw_rounded_rect_alpha(dst, lx, ly, LAUNCHER_W, LAUNCHER_H, 3, COL_LAUNCH_BG, 210);
+    /* Subtle accent border at top */
+    alpha_blend_fill(dst, lx + 3, ly, LAUNCHER_W - 6, 1, THEME_COL_ACCENT, 25);
 
     /* Top: OS title + search bar */
-    gui_surface_draw_string(dst, lx + 20, ly + 16, "Lyth OS", COL_LAUNCH_TEXT, 0, 0);
+    gui_surface_draw_string(dst, lx + 20, ly + 16, "Lyth OS", THEME_COL_ACCENT, 0, 0);
 
     /* Search bar */
     {
         int sx = lx + 100, sy = ly + 12, swidth = LAUNCHER_W - 140, sheight = 24;
-        draw_rounded_rect(dst, sx, sy, swidth, sheight, 6, COL_LAUNCH_SEARCH_BG);
-        gui_surface_draw_string(dst, sx + 10, sy + 4, "Search...", COL_LAUNCH_DIM, 0, 0);
+        draw_rounded_rect(dst, sx, sy, swidth, sheight, 2, COL_LAUNCH_SEARCH_BG);
+        /* Focus ring when search is active */
+        if (launcher_search_len > 0)
+            alpha_blend_fill(dst, sx, sy, swidth, 1, THEME_COL_ACCENT, 80);
+        if (launcher_search_len > 0) {
+            gui_surface_draw_string_n(dst, sx + 10, sy + 4,
+                launcher_search, 30, COL_LAUNCH_TEXT, 0, 0);
+            /* Cursor blink (simple solid bar) */
+            gui_surface_fill(dst, sx + 10 + launcher_search_len * FONT_PSF_WIDTH,
+                sy + 4, 1, FONT_PSF_HEIGHT, COL_LAUNCH_TEXT);
+        } else {
+            gui_surface_draw_string(dst, sx + 10, sy + 4, "Search...", COL_LAUNCH_DIM, 0, 0);
+        }
     }
 
     /* Separator */
-    gui_surface_hline(dst, lx + 16, ly + 48, LAUNCHER_W - 32, COL_LAUNCH_SEP);
+    alpha_blend_fill(dst, lx + 16, ly + 48, LAUNCHER_W - 32, 1, COL_LAUNCH_SEP, 150);
 
-    /* App grid */
-    for (i = 0; i < launcher_item_count; i++) {
+    /* App grid (filtered) */
+    for (i = 0; i < fcount; i++) {
+        int idx = filtered[i];
         row = i / LAUNCHER_COLS;
         col = i % LAUNCHER_COLS;
 
@@ -580,8 +697,8 @@ static void draw_start_menu(gui_surface_t* dst) {
 
         /* Hover highlight for selected item */
         if (i == menu_selected) {
-            draw_rounded_rect(dst, cx, cy, LAUNCHER_CELL_W - 4,
-                              LAUNCHER_CELL_H - 4, 6, COL_LAUNCH_HOVER);
+            draw_rounded_rect_alpha(dst, cx, cy, LAUNCHER_CELL_W - 4,
+                              LAUNCHER_CELL_H - 4, 2, COL_LAUNCH_HOVER, 60);
         }
 
         /* Icon (colored rounded square) */
@@ -589,46 +706,53 @@ static void draw_start_menu(gui_surface_t* dst) {
             int icon_x = cx + (LAUNCHER_CELL_W - 4 - LAUNCHER_ICON_SZ) / 2;
             int icon_y = cy + 4;
             draw_rounded_rect(dst, icon_x, icon_y, LAUNCHER_ICON_SZ,
-                              LAUNCHER_ICON_SZ, 8, launcher_items[i].icon_color);
+                              LAUNCHER_ICON_SZ, 3, launcher_items[idx].icon_color);
             /* Letter inside icon */
             gui_surface_draw_char(dst,
                 icon_x + (LAUNCHER_ICON_SZ - FONT_PSF_WIDTH) / 2,
                 icon_y + (LAUNCHER_ICON_SZ - FONT_PSF_HEIGHT) / 2,
-                (unsigned char)launcher_items[i].icon_letter,
+                (unsigned char)launcher_items[idx].icon_letter,
                 0xFFFFFF, 0, 0);
         }
 
         /* Label below icon */
         {
-            int lbl_w = (int)strlen(launcher_items[i].label) * FONT_PSF_WIDTH;
+            int lbl_w = (int)strlen(launcher_items[idx].label) * FONT_PSF_WIDTH;
             int lbl_x = cx + (LAUNCHER_CELL_W - 4 - lbl_w) / 2;
             if (lbl_x < cx) lbl_x = cx;
             gui_surface_draw_string_n(dst, lbl_x,
                 cy + LAUNCHER_ICON_SZ + 10,
-                launcher_items[i].label,
+                launcher_items[idx].label,
                 (LAUNCHER_CELL_W - 4) / FONT_PSF_WIDTH,
                 (i == menu_selected) ? 0xFFFFFF : COL_LAUNCH_TEXT, 0, 0);
         }
     }
 
+    /* "No results" message when search returns empty */
+    if (fcount == 0 && launcher_search_len > 0) {
+        gui_surface_draw_string(dst, lx + (LAUNCHER_W - 12 * FONT_PSF_WIDTH) / 2,
+            grid_y + 30, "No results.", COL_LAUNCH_DIM, 0, 0);
+    }
+
     /* Bottom row: Logout | Restart | Shutdown */
     {
         int by = ly + LAUNCHER_H - 36;
-        gui_surface_hline(dst, lx + 16, by - 8, LAUNCHER_W - 32, COL_LAUNCH_SEP);
+        alpha_blend_fill(dst, lx + 16, by - 8, LAUNCHER_W - 32, 1,
+                         COL_LAUNCH_SEP, 150);
 
         int bx = lx + 20;
         /* Logout */
-        draw_rounded_rect(dst, bx, by, 80, 24, 4, COL_LAUNCH_SEARCH_BG);
+        draw_rounded_rect(dst, bx, by, 80, 24, 2, COL_LAUNCH_SEARCH_BG);
         gui_surface_draw_string(dst, bx + 12, by + 4, "Logout", COL_LAUNCH_TEXT, 0, 0);
         bx += 90;
 
         /* Restart */
-        draw_rounded_rect(dst, bx, by, 80, 24, 4, COL_LAUNCH_SEARCH_BG);
+        draw_rounded_rect(dst, bx, by, 80, 24, 2, COL_LAUNCH_SEARCH_BG);
         gui_surface_draw_string(dst, bx + 8, by + 4, "Restart", COL_LAUNCH_TEXT, 0, 0);
         bx += 90;
 
         /* Shutdown */
-        draw_rounded_rect(dst, bx, by, 90, 24, 4, 0xF03E3E);
+        draw_rounded_rect(dst, bx, by, 90, 24, 2, THEME_COL_ERROR);
         gui_surface_draw_string(dst, bx + 6, by + 4, "Shutdown", 0xFFFFFF, 0, 0);
     }
 }
@@ -638,10 +762,10 @@ static void draw_context_menu(gui_surface_t* dst) {
     int i;
     int total_h = CTX_MAX_ITEMS * CTX_ITEM_H + 4;
 
-    draw_rounded_rect(dst, ctx_menu_x, ctx_menu_y, CTX_W, total_h, 6, COL_CTX_BG);
+    draw_rounded_rect_alpha(dst, ctx_menu_x, ctx_menu_y, CTX_W, total_h, 3, COL_CTX_BG, 220);
     /* border lines */
-    gui_surface_hline(dst, ctx_menu_x, ctx_menu_y, CTX_W, COL_CTX_BORDER);
-    gui_surface_hline(dst, ctx_menu_x, ctx_menu_y + total_h - 1, CTX_W, COL_CTX_BORDER);
+    alpha_blend_fill(dst, ctx_menu_x, ctx_menu_y, CTX_W, 1, COL_CTX_BORDER, 150);
+    alpha_blend_fill(dst, ctx_menu_x, ctx_menu_y + total_h - 1, CTX_W, 1, COL_CTX_BORDER, 150);
 
     for (i = 0; i < CTX_MAX_ITEMS; i++) {
         int iy = ctx_menu_y + 2 + i * CTX_ITEM_H;
@@ -658,6 +782,8 @@ static void close_start_menu(void) {
     int ly = sh - TASKBAR_H - LAUNCHER_H - 8;
     start_menu_open = 0;
     menu_selected = -1;
+    launcher_search_len = 0;
+    launcher_search[0] = '\0';
     gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H + 8);
 }
 
@@ -683,9 +809,9 @@ static void draw_net_popup(gui_surface_t* dst) {
     int ly;
     netif_t* iface = netif_get(0);
 
-    draw_rounded_rect(dst, px, py, NET_POPUP_W, NET_POPUP_H, 10, COL_POPUP_BG);
+    draw_rounded_rect_alpha(dst, px, py, NET_POPUP_W, NET_POPUP_H, 3, COL_POPUP_BG, 220);
     /* border accent line at top */
-    gui_surface_hline(dst, px + 10, py, NET_POPUP_W - 20, COL_POPUP_BORDER);
+    alpha_blend_fill(dst, px + 3, py, NET_POPUP_W - 6, 1, THEME_COL_ACCENT, 40);
 
     /* title */
     gui_surface_draw_string(dst, px + 10, py + 8, "Network", COL_POPUP_TEXT, 0, 0);
@@ -770,6 +896,10 @@ void desktop_init(int screen_w, int screen_h) {
     ctx_target_win = 0;
     net_popup_open = 0;
     net_last_up = 0;
+    launcher_search_len = 0;
+    launcher_search[0] = '\0';
+    tray_net_x = sw - 100;
+    tray_menu_x = sw - 140;
     desk_valid = 0;
 
     gui_surface_alloc(&desk_surf, sw, sh);
@@ -1022,23 +1152,28 @@ int desktop_handle_click(int mx, int my, int button) {
                 }
             }
 
-            /* Check app grid */
+            /* Check app grid (filtered) */
             if (button == 1) {
                 int grid_x = lx + 20;
                 int grid_y = ly + 60;
-                int i;
-                for (i = 0; i < launcher_item_count; i++) {
-                    int row = i / LAUNCHER_COLS;
-                    int col = i % LAUNCHER_COLS;
+                int fi, fpos = 0;
+                for (fi = 0; fi < launcher_item_count; fi++) {
+                    if (launcher_search_len > 0 &&
+                        !str_starts_with_ignore_case(launcher_items[fi].label,
+                                                      launcher_search))
+                        continue;
+                    int row = fpos / LAUNCHER_COLS;
+                    int col = fpos % LAUNCHER_COLS;
                     int cx = grid_x + col * LAUNCHER_CELL_W;
                     int cy = grid_y + row * LAUNCHER_CELL_H;
                     if (mx >= cx && mx < cx + LAUNCHER_CELL_W - 4 &&
                         my >= cy && my < cy + LAUNCHER_CELL_H - 4) {
                         close_start_menu();
-                        if (launcher_items[i].action)
-                            launcher_items[i].action();
+                        if (launcher_items[fi].action)
+                            launcher_items[fi].action();
                         return 1;
                     }
+                    fpos++;
                 }
             }
             return 1; /* consumed: inside launcher */
@@ -1105,11 +1240,9 @@ int desktop_handle_click(int mx, int my, int button) {
             }
         }
 
-        /* Right section: tray area — network icon region opens popup */
+        /* Right section: tray area — network icon opens popup */
         {
-            /* The tray spans the rightmost ~200px. Network icon is roughly in the middle */
-            int tray_x = sw - CLOCK_DATE_W - TRAY_PAD * 3 - 36;
-            if (mx >= tray_x && mx < tray_x + 20 && button == 1) {
+            if (mx >= tray_net_x && mx < tray_net_x + 20 && button == 1) {
                 close_start_menu();
                 close_context_menu();
                 if (net_popup_open) {
@@ -1126,8 +1259,7 @@ int desktop_handle_click(int mx, int my, int button) {
 
         /* Clicking on the hamburger/menu icon area toggles start menu */
         {
-            int menu_x = sw - CLOCK_DATE_W - TRAY_PAD * 4 - 48;
-            if (mx >= menu_x && mx < menu_x + 20 && button == 1) {
+            if (mx >= tray_menu_x && mx < tray_menu_x + 20 && button == 1) {
                 toggle_start_menu();
                 return 1;
             }
@@ -1151,13 +1283,25 @@ int desktop_handle_key(int event_type, char key) {
         int lx = (sw - LAUNCHER_W) / 2;
         int ly = sh - TASKBAR_H - LAUNCHER_H - 8;
 
+        /* Compute filtered count for navigation bounds */
+        int fcount = 0;
+        {
+            int fi;
+            for (fi = 0; fi < launcher_item_count; fi++) {
+                if (launcher_search_len == 0 ||
+                    str_starts_with_ignore_case(launcher_items[fi].label,
+                                                 launcher_search))
+                    fcount++;
+            }
+        }
+
         if (event_type == INPUT_EVENT_UP) {
             if (menu_selected >= LAUNCHER_COLS) menu_selected -= LAUNCHER_COLS;
             gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H);
             return 1;
         }
         if (event_type == INPUT_EVENT_DOWN) {
-            if (menu_selected + LAUNCHER_COLS < launcher_item_count)
+            if (menu_selected + LAUNCHER_COLS < fcount)
                 menu_selected += LAUNCHER_COLS;
             gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H);
             return 1;
@@ -1168,21 +1312,52 @@ int desktop_handle_key(int event_type, char key) {
             return 1;
         }
         if (event_type == INPUT_EVENT_RIGHT) {
-            if (menu_selected < launcher_item_count - 1) menu_selected++;
+            if (menu_selected < fcount - 1) menu_selected++;
             gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H);
             return 1;
         }
         if (event_type == INPUT_EVENT_ENTER) {
-            if (menu_selected >= 0 && menu_selected < launcher_item_count) {
-                void (*action)(void) = launcher_items[menu_selected].action;
-                close_start_menu();
-                gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H + TASKBAR_H + 8);
-                if (action) action();
+            /* Resolve filtered index to actual item */
+            if (menu_selected >= 0 && menu_selected < fcount) {
+                int fi, cnt = 0, actual = -1;
+                for (fi = 0; fi < launcher_item_count; fi++) {
+                    if (launcher_search_len == 0 ||
+                        str_starts_with_ignore_case(launcher_items[fi].label,
+                                                     launcher_search)) {
+                        if (cnt == menu_selected) { actual = fi; break; }
+                        cnt++;
+                    }
+                }
+                if (actual >= 0) {
+                    void (*action)(void) = launcher_items[actual].action;
+                    close_start_menu();
+                    gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H + TASKBAR_H + 8);
+                    if (action) action();
+                }
             }
             return 1;
         }
         if (event_type == INPUT_EVENT_CHAR && key == 27) {
             close_start_menu();
+            return 1;
+        }
+
+        /* Search: typed characters filter the app list */
+        if (event_type == INPUT_EVENT_CHAR && key >= 32 && key < 127) {
+            if (launcher_search_len < 31) {
+                launcher_search[launcher_search_len++] = key;
+                launcher_search[launcher_search_len] = '\0';
+                menu_selected = 0;
+                gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H);
+            }
+            return 1;
+        }
+        if (event_type == INPUT_EVENT_BACKSPACE) {
+            if (launcher_search_len > 0) {
+                launcher_search[--launcher_search_len] = '\0';
+                menu_selected = 0;
+                gui_dirty_add(lx, ly, LAUNCHER_W, LAUNCHER_H);
+            }
             return 1;
         }
     }
