@@ -2,6 +2,7 @@
 #include "compositor.h"
 #include "desktop.h"
 #include "font_psf.h"
+#include "theme.h"
 #include "string.h"
 #include "physmem.h"
 
@@ -149,6 +150,91 @@ void gui_surface_blit(gui_surface_t* dst, int dx, int dy,
                &src->pixels[(sy + row) * src->stride + sx],
                (size_t)w * 4);
     }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Centralized window decorations                                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Draw a filled circle (close/minimize/maximize buttons).
+ * cx, cy = center in surface coords; r = radius.
+ */
+static void draw_circle(gui_surface_t* s, int cx, int cy, int r, uint32_t col)
+{
+    int dy, dx;
+    int r2 = r * r;
+    for (dy = -r; dy <= r; dy++) {
+        for (dx = -r; dx <= r; dx++) {
+            if (dx * dx + dy * dy <= r2)
+                gui_surface_putpixel(s, cx + dx, cy + dy, col);
+        }
+    }
+}
+
+/*
+ * gui_window_draw_decorations — draw titlebar, traffic-light buttons,
+ * title text, and border separator.  Call this at the start of on_paint
+ * (after gui_surface_clear) for any decorated window.
+ *
+ * Renders:
+ *   - Titlebar background (active/inactive)
+ *   - Traffic-light close/minimize/maximize circles (left side, macOS-style)
+ *   - Title text (centered)
+ *   - Subtle separator line at titlebar bottom
+ */
+void gui_window_draw_decorations(gui_window_t* win)
+{
+    gui_surface_t* s;
+    int w, focused, title_len, title_x, text_y;
+    uint32_t tb_bg, tb_text, sep_col;
+    int btn_y, btn_r, btn_pad, btn_x;
+
+    if (!win) return;
+    if (win->flags & GUI_WIN_NO_DECOR) return;
+
+    s = &win->surface;
+    if (!s->pixels) return;
+
+    w = win->width;
+    focused = (win->flags & GUI_WIN_FOCUSED) ? 1 : 0;
+
+    /* Titlebar background */
+    tb_bg   = focused ? THEME_COL_TITLEBAR : THEME_COL_TITLEBAR_INACTIVE;
+    tb_text = focused ? THEME_COL_TITLEBAR_TEXT : THEME_COL_TITLEBAR_TEXT_DIM;
+    sep_col = THEME_COL_TITLEBAR_BORDER;
+
+    gui_surface_fill(s, 0, 0, w, GUI_TITLEBAR_HEIGHT, tb_bg);
+
+    /* ---- Traffic-light buttons (left side) ---- */
+    btn_y   = GUI_TITLEBAR_HEIGHT / 2;
+    btn_r   = 5;
+    btn_pad = 20;      /* center-to-center distance */
+    btn_x   = 16;      /* first button X center */
+
+    /* Close (red) */
+    if (win->flags & GUI_WIN_CLOSEABLE) {
+        draw_circle(s, btn_x, btn_y, btn_r,
+                    focused ? THEME_COL_CLOSE : THEME_COL_OVERLAY0);
+    }
+    /* Minimize (yellow) */
+    draw_circle(s, btn_x + btn_pad, btn_y, btn_r,
+                focused ? THEME_COL_MINIMIZE : THEME_COL_OVERLAY0);
+    /* Maximize (green) */
+    draw_circle(s, btn_x + btn_pad * 2, btn_y, btn_r,
+                focused ? THEME_COL_MAXIMIZE : THEME_COL_OVERLAY0);
+
+    /* ---- Title text (centered) ---- */
+    title_len = 0;
+    { const char* p = win->title; while (*p) { title_len++; p++; } }
+    title_x = (w - title_len * FONT_PSF_WIDTH) / 2;
+    if (title_x < btn_x + btn_pad * 3)
+        title_x = btn_x + btn_pad * 3;   /* don't overlap buttons */
+    text_y = (GUI_TITLEBAR_HEIGHT - FONT_PSF_HEIGHT) / 2;
+    gui_surface_draw_string(s, title_x, text_y, win->title, tb_text, 0, 0);
+
+    /* ---- Separator line ---- */
+    gui_surface_hline(s, 0, GUI_TITLEBAR_HEIGHT - 1, w, sep_col);
 }
 
 /* ------------------------------------------------------------------ */
