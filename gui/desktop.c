@@ -19,6 +19,8 @@
 #include "netif.h"
 #include "login.h"
 #include "acpi.h"
+#include "lib/png.h"
+#include "wallpaper_png.h"
 
 /* forward declarations for app launchers */
 void terminal_app_open(void);
@@ -168,6 +170,55 @@ static char date_str[32]  = "";
 /* ---- network popup ---- */
 static int net_popup_open;
 static int net_last_up;
+
+/* ---- wallpaper ---- */
+static png_image_t wallpaper_img;
+static int wallpaper_loaded = 0;
+
+static void try_load_wallpaper(void) {
+    if (wallpaper_loaded) return;
+    wallpaper_loaded = 1;
+    if (png_load(wallpaper_png_data, wallpaper_png_size, &wallpaper_img) != 0)
+        wallpaper_img.pixels = 0;
+}
+
+/* Bilinear interpolation for smooth wallpaper scaling (16.16 fixed-point) */
+static uint32_t bilinear_sample_wp(const uint32_t *pixels, int iw, int ih,
+                                    int fx16, int fy16)
+{
+    int x0 = fx16 >> 16;
+    int y0 = fy16 >> 16;
+    int x1 = x0 + 1;
+    int y1 = y0 + 1;
+    int fx = fx16 & 0xFFFF;
+    int fy = fy16 & 0xFFFF;
+
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= iw) x1 = iw - 1;
+    if (y1 >= ih) y1 = ih - 1;
+    if (x0 >= iw) x0 = iw - 1;
+    if (y0 >= ih) y0 = ih - 1;
+
+    uint32_t c00 = pixels[y0 * iw + x0];
+    uint32_t c10 = pixels[y0 * iw + x1];
+    uint32_t c01 = pixels[y1 * iw + x0];
+    uint32_t c11 = pixels[y1 * iw + x1];
+
+    int ifx = 0x10000 - fx;
+    int ify = 0x10000 - fy;
+
+    int r = (int)( (((c00>>16)&0xFF)*ifx + ((c10>>16)&0xFF)*fx) >> 16 ) * ify
+          + (int)( (((c01>>16)&0xFF)*ifx + ((c11>>16)&0xFF)*fx) >> 16 ) * fy;
+    int g = (int)( (((c00>>8)&0xFF)*ifx + ((c10>>8)&0xFF)*fx) >> 16 ) * ify
+          + (int)( (((c01>>8)&0xFF)*ifx + ((c11>>8)&0xFF)*fx) >> 16 ) * fy;
+    int b = (int)( ((c00&0xFF)*ifx + (c10&0xFF)*fx) >> 16 ) * ify
+          + (int)( ((c01&0xFF)*ifx + (c11&0xFF)*fx) >> 16 ) * fy;
+
+    r >>= 16; g >>= 16; b >>= 16;
+    if (r > 255) r = 255; if (g > 255) g = 255; if (b > 255) b = 255;
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
 
 /* ==================================================================*/
 
@@ -326,18 +377,51 @@ static int dock_start_x(void) {
 static void rebuild_desktop(void) {
     int y, taskbar_y;
     int half = sh / 2;
+    try_load_wallpaper();
+    if (wallpaper_img.pixels && wallpaper_img.width > 0 && wallpaper_img.height > 0) {
+        /* Scale/center-crop wallpaper to fill the desktop area */
+        int iw = wallpaper_img.width;
+        int ih = wallpaper_img.height;
+        int dh = sh;   /* fill full screen including taskbar area */
 
-    if (!desk_surf.pixels) return;
+        /* Use nearest-neighbor scaling (cover mode: fill, crop excess) */
+        int scale_num, scale_den;
+        int sx_off = 0, sy_off = 0;
 
-    /* ---- Sky-gradient wallpaper ---- */
-    for (y = 0; y < half; y++) {
-        uint32_t c = mix_rgb(COL_BG_TOP, COL_BG_MID, y, half > 1 ? half - 1 : 1);
-        memset32(&desk_surf.pixels[y * sw], c, (size_t)sw);
-    }
-    for (y = half; y < sh - TASKBAR_H; y++) {
-        uint32_t c = mix_rgb(COL_BG_MID, COL_BG_BOT, y - half,
-                             (sh - TASKBAR_H - half) > 1 ? (sh - TASKBAR_H - half - 1) : 1);
-        memset32(&desk_surf.pixels[y * sw], c, (size_t)sw);
+        /* Pick scale so image covers entire screen */
+        if (iw * dh > ih * sw) {
+            /* Image wider proportionally → scale by height, crop width */
+            scale_num = dh;
+            scale_den = ih;
+            int scaled_w = (int)((long)iw * scale_num / scale_den);
+            sx_off = (scaled_w - sw) / 2;
+        } else {
+            /* Image taller proportionally → scale by width, crop height */
+            scale_num = sw;
+            scale_den = iw;
+            int scaled_h = (int)((long)ih * scale_num / scale_den);
+            sy_off = (scaled_h - dh) / 2;
+        }
+
+        for (y = 0; y < dh; y++) {
+            int fy16 = (int)((long)(y + sy_off) * scale_den * 65536 / scale_num);
+            uint32_t *dst_row = &desk_surf.pixels[y * sw];
+            for (int x = 0; x < sw; x++) {
+                int fx16 = (int)((long)(x + sx_off) * scale_den * 65536 / scale_num);
+                dst_row[x] = bilinear_sample_wp(wallpaper_img.pixels, iw, ih, fx16, fy16);
+            }
+        }
+    } else {
+        /* fallback: gradient */
+        for (y = 0; y < half; y++) {
+            uint32_t c = mix_rgb(COL_BG_TOP, COL_BG_MID, y, half > 1 ? half - 1 : 1);
+            memset32(&desk_surf.pixels[y * sw], c, (size_t)sw);
+        }
+        for (y = half; y < sh - TASKBAR_H; y++) {
+            uint32_t c = mix_rgb(COL_BG_MID, COL_BG_BOT, y - half,
+                                 (sh - TASKBAR_H - half) > 1 ? (sh - TASKBAR_H - half - 1) : 1);
+            memset32(&desk_surf.pixels[y * sw], c, (size_t)sw);
+        }
     }
 
     /* ---- Taskbar ---- */

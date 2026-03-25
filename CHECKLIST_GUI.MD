@@ -71,8 +71,12 @@
 - [ ] No saltos en drag
 
 ### 6. Desktop y Wallpaper
-- [ ] Wallpaper engine
-- [ ] Escalado correcto
+- [x] Wallpaper engine
+      > PNG decoder completo (RFC 1951 inflate + zlib + PNG filters) en lib/png.c
+      > Wallpaper embebido como C array (tools/bin2h.py → include/gui/wallpaper_png.h)
+      > physmem_alloc_region para buffers grandes (~12MB pico durante decode)
+- [x] Escalado correcto
+      > Cover-mode: nearest-neighbor scale + center-crop en rebuild_desktop()
 - [ ] Blur opcional
 - [ ] Overlay sutil para legibilidad
 - [ ] Wallpapers dinámicos (futura)
@@ -242,7 +246,8 @@
 - [ ] Login/lock screen
 
 ### 23. Pantallas Clave
-- [ ] Boot splash
+- [x] Boot splash
+      > Splash PNG embebido (include/gui/splash_png.h), decodificado y escalado en splash.c
 - [ ] Login
 - [ ] Desktop inicial
 - [ ] Alt-tab
