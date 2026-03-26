@@ -40,6 +40,7 @@ static void apply_dark(void) {
     theme.wall_top = THEME_COL_WALL_TOP;
     theme.wall_mid = THEME_COL_WALL_MID;
     theme.wall_bot = THEME_COL_WALL_BOT;
+    theme.shadow_alpha_mul = 100;  /* dark: normal shadow intensity */
 }
 
 /* ---- Light palette (Catppuccin Latte inspired) ---- */
@@ -70,6 +71,7 @@ static void apply_light(void) {
     theme.wall_top = 0xB4BEFE;
     theme.wall_mid = 0x89B4FA;
     theme.wall_bot = 0x74C7EC;
+    theme.shadow_alpha_mul = 140;  /* light: stronger shadows for contrast */
 }
 
 void theme_init(void) {

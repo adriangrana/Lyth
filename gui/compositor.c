@@ -657,8 +657,10 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
             static const int sh_alpha[]  = { THEME_SHADOW_ALPHA0,  THEME_SHADOW_ALPHA1,  THEME_SHADOW_ALPHA2 };
             int layer;
             for (layer = THEME_SHADOW_LAYERS - 1; layer >= 0; layer--) {
+                int a = sh_alpha[layer] * theme.shadow_alpha_mul / 100;
+                if (a > 255) a = 255;
                 gpu_shadow(w->x, w->y, w->width, w->height,
-                           sh_off[layer], sh_spread[layer], sh_alpha[layer]);
+                           sh_off[layer], sh_spread[layer], a);
             }
         }
     }
@@ -2012,9 +2014,12 @@ void gui_run(void)
 
                 /* 2a. Draw single light shadow at new position (fast) */
                 gpu_set_target(g_gpu.backbuffer);
-                gpu_shadow(new_x, new_y, drag_win_w, drag_win_h,
-                           THEME_SHADOW_OFF0, THEME_SHADOW_SPREAD0,
-                           THEME_SHADOW_ALPHA0);
+                {
+                    int da = THEME_SHADOW_ALPHA0 * theme.shadow_alpha_mul / 100;
+                    if (da > 255) da = 255;
+                    gpu_shadow(new_x, new_y, drag_win_w, drag_win_h,
+                               THEME_SHADOW_OFF0, THEME_SHADOW_SPREAD0, da);
+                }
 
                 /* 2b. Blit window at new position */
                 sx = new_x < 0 ? -new_x : 0;

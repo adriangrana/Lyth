@@ -268,6 +268,7 @@ typedef struct {
     uint32_t wall_top;
     uint32_t wall_mid;
     uint32_t wall_bot;
+    int      shadow_alpha_mul;   /* shadow intensity: 100=normal, >100=stronger (light) */
 } gui_theme_t;
 
 extern gui_theme_t theme;    /* active palette — use instead of THEME_COL_* */
