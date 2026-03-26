@@ -439,7 +439,12 @@
 - [x] Estados: normal, hover, focus, active, disabled
       > 6 state flags (WID_ENABLED, WID_VISIBLE, WID_FOCUSED, WID_HOVERED, WID_PRESSED, WID_CHECKED)
       > Visual feedback en draw: hover highlight, pressed darken, disabled dim
-- [ ] Cada componente: error state, keyboard nav completa, accesibilidad
+- [x] Cada componente: error state, keyboard nav completa, accesibilidad
+      > Tab cycles focus through interactive widgets (skips labels, panels, separators)
+      > Space/Enter activates: buttons, checkboxes, switches, radios
+      > Arrow keys: slider left/right, tabs left/right, listview up/down
+      > Focus ring: 1px accent outline on focused widget
+      > Text input: backspace, printable chars, enter submit
 - [x] Migración real a widget kit
       > Settings Fondo page: wid_dropdown (scale mode), wid_switch (blur),
       > wid_button (Apply/Predeterminado) — 4 widgets, visibility toggle

@@ -108,8 +108,8 @@ static void tm_paint(gui_window_t* win) {
         int wcount = gui_window_count();
         int wi;
 
-        gui_surface_fill(s, ox, oy, win->width - ox * 2, row_h, 0x2A2B3D);
-        gui_surface_draw_string(s, ox + 4, oy + 2, "Applications", 0x89B4FA, 0, 0);
+        gui_surface_fill(s, ox, oy, win->width - ox * 2, row_h, COL_TM_HEADER);
+        gui_surface_draw_string(s, ox + 4, oy + 2, "Applications", COL_TM_ACCENT, 0, 0);
         oy += row_h;
 
         for (wi = 0; wi < wcount; wi++) {
@@ -124,14 +124,14 @@ static void tm_paint(gui_window_t* win) {
             gui_surface_draw_string(s, ox + 8, oy + 2, aw->title, COL_TM_TEXT, 0, 0);
             gui_surface_draw_string(s, ox + 220, oy + 2, state_str, state_col, 0, 0);
             oy += row_h;
-            gui_surface_hline(s, ox, oy - 1, win->width - ox * 2, 0x25253A);
+            gui_surface_hline(s, ox, oy - 1, win->width - ox * 2, THEME_COL_BORDER);
         }
         oy += 6;
     }
 
     /* ---- Processes header ---- */
-    gui_surface_fill(s, ox, oy, win->width - ox * 2, row_h, 0x2A2B3D);
-    gui_surface_draw_string(s, ox + 4, oy + 2, "Processes", 0x89B4FA, 0, 0);
+    gui_surface_fill(s, ox, oy, win->width - ox * 2, row_h, COL_TM_HEADER);
+    gui_surface_draw_string(s, ox + 4, oy + 2, "Processes", COL_TM_ACCENT, 0, 0);
     oy += row_h;
 
     /* header */
@@ -166,7 +166,7 @@ static void tm_paint(gui_window_t* win) {
         gui_surface_draw_string(s, ox + 260, oy + 2, tms.snaps[i].name, COL_TM_TEXT, 0, 0);
 
         oy += row_h;
-        gui_surface_hline(s, ox, oy - 1, win->width - ox * 2, 0x25253A);
+        gui_surface_hline(s, ox, oy - 1, win->width - ox * 2, THEME_COL_BORDER);
     }
 
     /* bottom bar: Kill button + hints */
@@ -178,7 +178,7 @@ static void tm_paint(gui_window_t* win) {
     gui_surface_draw_string(s, ox + 12, btn_y + 2, "Kill (K)", COL_TM_KILL_FG, 0, 0);
 
     /* Close Window button */
-    gui_surface_fill(s, ox + 90, btn_y, 120, 20, 0xF9E2AF);
+    gui_surface_fill(s, ox + 90, btn_y, 120, 20, THEME_COL_WARNING);
     gui_surface_draw_string(s, ox + 94, btn_y + 2, "Close Win (W)", COL_TM_KILL_FG, 0, 0);
 
     /* hints */

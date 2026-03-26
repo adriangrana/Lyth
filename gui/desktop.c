@@ -932,7 +932,7 @@ static void rebuild_desktop(void) {
                     icon_x + (DICON_SZ - FONT_PSF_WIDTH) / 2,
                     icon_y + (DICON_SZ - FONT_PSF_HEIGHT) / 2,
                     (unsigned char)dicon_items[di].icon_letter,
-                    0xFFFFFF, 220);
+                    THEME_COL_TEXT, 220);
             }
 
             /* Label centered below icon */
@@ -1030,7 +1030,7 @@ static void rebuild_desktop(void) {
                 gui_surface_draw_char(&desk_surf,
                     sqx + (sq - FONT_PSF_WIDTH) / 2,
                     sqy + (sq - FONT_PSF_HEIGHT) / 2,
-                    win_icon_letter, 0xFFFFFF, 0, 0);
+                    win_icon_letter, COL_TASKBAR_TEXT, 0, 0);
             }
             /* Underline indicator for active (non-minimized) */
             if (!minimized) {
@@ -1151,7 +1151,7 @@ static void rebuild_desktop(void) {
                     ix + (DOCK_ICON_SIZE - FONT_PSF_WIDTH) / 2,
                     iy + (DOCK_ICON_SIZE - FONT_PSF_HEIGHT) / 2,
                     (unsigned char)dock_items[i].shortcut,
-                    0xFFFFFF, 0, 0);
+                    COL_TASKBAR_TEXT, 0, 0);
             }
 
             /* Running indicator dot below icon (skip Lyth/menu item) */
@@ -1300,7 +1300,7 @@ static void draw_start_menu(void) {
                         icon_x + (LAUNCHER_ICON_SZ - FONT_PSF_WIDTH) / 2,
                         icon_y + (LAUNCHER_ICON_SZ - FONT_PSF_HEIGHT) / 2,
                         (unsigned char)launcher_items[i].icon_letter,
-                        0xFFFFFF, 0, 0);
+                        COL_LAUNCH_TEXT, 0, 0);
                 }
                 {
                     int lbl_w = (int)strlen(launcher_items[i].label) * FONT_PSF_WIDTH;
@@ -1344,7 +1344,7 @@ static void draw_start_menu(void) {
                             icon_x + (LAUNCHER_ICON_SZ - FONT_PSF_WIDTH) / 2,
                             icon_y + (LAUNCHER_ICON_SZ - FONT_PSF_HEIGHT) / 2,
                             (unsigned char)launcher_items[ri].icon_letter,
-                            0xFFFFFF, 0, 0);
+                            COL_LAUNCH_TEXT, 0, 0);
                     }
                     {
                         int lbl_w = (int)strlen(launcher_items[ri].label) * FONT_PSF_WIDTH;
@@ -1403,7 +1403,7 @@ static void draw_start_menu(void) {
                     icon_x + (LAUNCHER_ICON_SZ - FONT_PSF_WIDTH) / 2,
                     icon_y + (LAUNCHER_ICON_SZ - FONT_PSF_HEIGHT) / 2,
                     (unsigned char)launcher_items[idx].icon_letter,
-                    0xFFFFFF, 0, 0);
+                    COL_LAUNCH_TEXT, 0, 0);
             }
         }
 
@@ -2038,7 +2038,7 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
                     sx + (new_sz - FONT_PSF_WIDTH) / 2,
                     sy + (new_sz - FONT_PSF_HEIGHT) / 2,
                     (unsigned char)dock_items[hover_i].shortcut,
-                    0xFFFFFF, 0, 0);
+                    COL_TASKBAR_TEXT, 0, 0);
             }
             /* Tooltip label above icon */
             if (dock_items[hover_i].label && dock_scale >= DOCK_SCALE_MAX) {
@@ -2053,7 +2053,7 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
                 draw_rounded_rect_alpha(dst, tip_x, tip_y, tip_w, tip_h,
                                          3, 0x0D1117, 220);
                 gui_surface_draw_string(dst, tip_x + 6,
-                    tip_y + 4, tip, 0xFFFFFF, 0, 0);
+                    tip_y + 4, tip, COL_TASKBAR_TEXT, 0, 0);
             }
         }
     }

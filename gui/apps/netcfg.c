@@ -241,7 +241,7 @@ static void net_paint(gui_window_t* win) {
     if (!iface) return;
 
     /* Interface name + status */
-    gui_surface_draw_string(s, ox, oy, iface->name, 0x89B4FA, 0, 0);
+    gui_surface_draw_string(s, ox, oy, iface->name, THEME_COL_ACCENT, 0, 0);
     gui_surface_draw_string(s, ox + 80, oy, iface->up ? "UP" : "DOWN",
                             iface->up ? COL_NET_UP : COL_NET_DOWN, 0, 0);
     oy += row_h;
@@ -252,7 +252,7 @@ static void net_paint(gui_window_t* win) {
     gui_surface_draw_string(s, ox + 80, oy, buf, COL_NET_TEXT, 0, 0);
     oy += row_h + 4;
 
-    gui_surface_hline(s, ox, oy, win->width - ox * 2, 0x313244);
+    gui_surface_hline(s, ox, oy, win->width - ox * 2, THEME_COL_BORDER);
     oy += 8;
 
     /* Radio buttons: DHCP / Manual */
@@ -264,7 +264,7 @@ static void net_paint(gui_window_t* win) {
                focus_idx == FOCUS_MANUAL, "Manual");
     oy += row_h + 6;
 
-    gui_surface_hline(s, ox, oy, win->width - ox * 2, 0x313244);
+    gui_surface_hline(s, ox, oy, win->width - ox * 2, THEME_COL_BORDER);
     oy += 8;
 
     /* IP fields */

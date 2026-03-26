@@ -54,7 +54,7 @@ static void si_paint(gui_window_t* win) {
     /* OS name */
     gui_surface_draw_string(s, ox, oy, "Lyth OS", COL_SI_ACCENT, 0, 0);
     oy += row_h + 4;
-    gui_surface_hline(s, ox, oy, win->width - ox * 2, 0x313244);
+    gui_surface_hline(s, ox, oy, win->width - ox * 2, THEME_COL_BORDER);
     oy += 8;
 
     draw_info_row(s, ox, oy, "Architecture:", "x86_64"); oy += row_h;

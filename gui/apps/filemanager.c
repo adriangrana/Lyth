@@ -297,11 +297,11 @@ static void fm_draw_icon(gui_surface_t* s, int x, int y, int is_dir) {
         /* Folder icon: small filled rectangle with tab */
         gui_surface_fill(s, x, y + 2, 6, 1, COL_FM_ICON_DIR);
         gui_surface_fill(s, x, y + 3, 12, 9, COL_FM_ICON_DIR);
-        gui_surface_fill(s, x + 1, y + 4, 10, 7, 0x2B2B3B);
+        gui_surface_fill(s, x + 1, y + 4, 10, 7, THEME_COL_MANTLE);
     } else {
         /* File icon: rectangle with folded corner */
         gui_surface_fill(s, x, y + 1, 10, 12, COL_FM_ICON_FILE);
-        gui_surface_fill(s, x + 1, y + 2, 8, 10, 0x2B2B3B);
+        gui_surface_fill(s, x + 1, y + 2, 8, 10, THEME_COL_MANTLE);
         gui_surface_fill(s, x + 6, y + 1, 4, 4, COL_FM_DIM);
     }
 }
