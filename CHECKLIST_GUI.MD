@@ -252,7 +252,7 @@
 - [x] Indicadores de app abierta
       > Barra horizontal 6x2px debajo del icono (reemplaza dot 3x3)
       > Dock pill translúcido centrado (solo ancho de iconos anclados)
-- [ ] Drag-reorder
+- [x] Drag-reorder
 - [x] Pinned apps
       > Dock items definidos en desktop_init(): Lyth OS, Terminal, Calculator, Files, Settings, Notes
       > Primer icono (Lyth OS) abre start menu

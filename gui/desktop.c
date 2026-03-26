@@ -1422,7 +1422,7 @@ static void draw_start_menu(void) {
                 cy + LAUNCHER_ICON_SZ + 10,
                 launcher_items[idx].label,
                 (LAUNCHER_CELL_W - 4) / FONT_PSF_WIDTH,
-                (i == menu_selected) ? 0xFFFFFF : COL_LAUNCH_TEXT, 0, 0);
+                (i == menu_selected) ? theme_contrast_text(THEME_COL_ACCENT) : COL_LAUNCH_TEXT, 0, 0);
         }
         }
     }
@@ -1453,7 +1453,7 @@ static void draw_start_menu(void) {
 
         /* Shutdown */
         draw_rounded_rect(dst, bx, by, 90, 24, 2, THEME_COL_ERROR);
-        gui_surface_draw_string(dst, bx + 6, by + 4, "Shutdown", 0xFFFFFF, 0, 0);
+        gui_surface_draw_string(dst, bx + 6, by + 4, "Shutdown", theme_contrast_text(THEME_COL_ERROR), 0, 0);
     }
 }
 
@@ -1560,13 +1560,13 @@ static void draw_power_dialog(gui_surface_t* dst) {
     /* Reboot */
     draw_rounded_rect(dst, bx, brow_y, PWR_BTN_W, PWR_BTN_H, 2, THEME_COL_WARNING);
     gui_surface_draw_string(dst, bx + (PWR_BTN_W - 8 * FONT_PSF_WIDTH) / 2,
-                            brow_y + 6, "Reiniciar", 0x000000, 0, 0);
+                            brow_y + 6, "Reiniciar", theme_contrast_text(THEME_COL_WARNING), 0, 0);
     bx += PWR_BTN_W + 10;
 
     /* Shutdown */
     draw_rounded_rect(dst, bx, brow_y, PWR_BTN_W, PWR_BTN_H, 2, THEME_COL_ERROR);
     gui_surface_draw_string(dst, bx + (PWR_BTN_W - 6 * FONT_PSF_WIDTH) / 2,
-                            brow_y + 6, "Apagar", 0xFFFFFF, 0, 0);
+                            brow_y + 6, "Apagar", theme_contrast_text(THEME_COL_ERROR), 0, 0);
 }
 
 static int power_dialog_handle_click(int mx, int my, int button) {
@@ -1639,7 +1639,7 @@ static void draw_desktop_ctx(gui_surface_t* dst) {
         gui_surface_draw_string(dst, dctx_menu_x + 14,
             iy + (DCTX_ITEM_H - FONT_PSF_HEIGHT) / 2,
             dctx_items[i].label,
-            (i == dctx_hover) ? 0xFFFFFF : COL_CTX_TEXT, 0, 0);
+            (i == dctx_hover) ? theme_contrast_text(COL_CTX_HOVER) : COL_CTX_TEXT, 0, 0);
 
         /* Separator after each item except last */
         if (i < dctx_item_count - 1)
@@ -1707,7 +1707,7 @@ static void draw_net_popup(gui_surface_t* dst) {
         draw_rounded_rect(dst, px + 10, ly, NET_POPUP_W - 20, 24, 4, COL_POPUP_BTN);
         gui_surface_draw_string(dst, px + 10 + (NET_POPUP_W - 20 - 18 * FONT_PSF_WIDTH) / 2,
             ly + (24 - FONT_PSF_HEIGHT) / 2,
-            "Open Network Config", 0xFFFFFF, 0, 0);
+            "Open Network Config", theme_contrast_text(COL_POPUP_BTN), 0, 0);
     }
 }
 

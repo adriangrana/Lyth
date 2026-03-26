@@ -281,4 +281,21 @@ uint32_t theme_get_accent(void);
 void theme_save(void);       /* persist theme/accent/autohide to /etc/gui.conf */
 void theme_load(void);       /* restore settings from /etc/gui.conf */
 
+/* Contrast helpers — ensure readable text on any background */
+/* Returns relative luminance (0–255 range) of an RGB colour */
+static inline int theme_luminance(uint32_t c)
+{
+    /* Approximate: 0.299R + 0.587G + 0.114B (integer approximation) */
+    int r = (c >> 16) & 0xFF;
+    int g = (c >> 8) & 0xFF;
+    int b = c & 0xFF;
+    return (r * 77 + g * 150 + b * 29) >> 8;
+}
+
+/* Returns best text color (white/black) to use on given background */
+static inline uint32_t theme_contrast_text(uint32_t bg)
+{
+    return theme_luminance(bg) > 140 ? 0x1E1E2E : 0xCDD6F4;
+}
+
 #endif /* GUI_THEME_H */

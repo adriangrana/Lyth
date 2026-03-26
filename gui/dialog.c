@@ -469,7 +469,7 @@ static void mb_paint(gui_window_t* win) {
 
     /* Icon circle */
     gui_surface_fill(s, cx, cy, 20, 20, icon_col);
-    gui_surface_draw_char(s, cx + 6, cy + 2, (unsigned char)icon_ch[0], 0xFFFFFF, 0, 0);
+    gui_surface_draw_char(s, cx + 6, cy + 2, (unsigned char)icon_ch[0], theme_contrast_text(icon_col), 0, 0);
 
     /* Message text (word-wrapped manually across lines) */
     {
