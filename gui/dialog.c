@@ -425,3 +425,133 @@ void dialog_save_file(const char* start_dir, const char* default_name,
                       dialog_callback_t cb, void* userdata) {
     dlg_open_impl(1, start_dir, default_name, cb, userdata);
 }
+
+/* ==================================================================
+ *  Message Box dialog
+ * ================================================================== */
+#define MB_W     360
+#define MB_H     180
+#define MB_BTN_W  80
+#define MB_BTN_H  28
+#define MB_PAD     16
+#define MB_MSG_MAX 256
+
+static struct {
+    gui_window_t* win;
+    int type;
+    char msg[MB_MSG_MAX];
+    int open;
+} mb;
+
+static void mb_paint(gui_window_t* win) {
+    gui_surface_t* s = &win->surface;
+    int cx = GUI_BORDER_WIDTH + MB_PAD;
+    int cy = GUI_TITLEBAR_HEIGHT + MB_PAD;
+    int cw = win->width - 2 * (GUI_BORDER_WIDTH + MB_PAD);
+    uint32_t icon_col;
+    const char* icon_ch;
+    int by, bx;
+
+    if (!s->pixels) return;
+    gui_surface_clear(s, THEME_COL_BASE);
+
+    /* Icon/type indicator */
+    if (mb.type == MSGBOX_ERROR) {
+        icon_col = THEME_COL_ERROR;
+        icon_ch = "X";
+    } else if (mb.type == MSGBOX_WARNING) {
+        icon_col = THEME_COL_WARNING;
+        icon_ch = "!";
+    } else {
+        icon_col = THEME_COL_INFO;
+        icon_ch = "i";
+    }
+
+    /* Icon circle */
+    gui_surface_fill(s, cx, cy, 20, 20, icon_col);
+    gui_surface_draw_char(s, cx + 6, cy + 2, (unsigned char)icon_ch[0], 0xFFFFFF, 0, 0);
+
+    /* Message text (word-wrapped manually across lines) */
+    {
+        int tx = cx + 30;
+        int ty = cy;
+        int max_chars = (cw - 30) / THEME_FONT_W;
+        int i = 0, len = (int)strlen(mb.msg);
+        if (max_chars < 1) max_chars = 1;
+        while (i < len && ty < win->height - MB_BTN_H - MB_PAD * 2) {
+            int line_len = len - i;
+            if (line_len > max_chars) line_len = max_chars;
+            gui_surface_draw_string_n(s, tx, ty, mb.msg + i, line_len,
+                                      THEME_COL_TEXT, 0, 0);
+            i += line_len;
+            ty += THEME_FONT_H + 2;
+        }
+    }
+
+    /* OK button */
+    by = win->height - GUI_BORDER_WIDTH - MB_BTN_H - MB_PAD;
+    bx = win->width / 2 - MB_BTN_W / 2;
+    gui_surface_fill(s, bx, by, MB_BTN_W, MB_BTN_H, THEME_COL_ACCENT);
+    gui_surface_draw_string(s, bx + (MB_BTN_W - 2 * THEME_FONT_W) / 2,
+                            by + (MB_BTN_H - THEME_FONT_H) / 2,
+                            "OK", THEME_COL_BASE, 0, 0);
+}
+
+static void mb_click(gui_window_t* win, int x, int y, int button) {
+    int by = win->height - GUI_BORDER_WIDTH - MB_BTN_H - MB_PAD;
+    int bx = win->width / 2 - MB_BTN_W / 2;
+    if (button == 1 && y >= by && y < by + MB_BTN_H
+        && x >= bx && x < bx + MB_BTN_W) {
+        gui_window_close_animated(win);
+    }
+}
+
+static void mb_key(gui_window_t* win, int event_type, char key) {
+    if (event_type != 1) return;
+    if (key == '\n' || key == 0x1B)
+        gui_window_close_animated(win);
+}
+
+static void mb_close(gui_window_t* win) {
+    mb.open = 0;
+    mb.win = 0;
+    gui_dirty_add(win->x, win->y, win->width, win->height);
+    gui_window_destroy(win);
+}
+
+void dialog_msgbox(int type, const char* title, const char* message) {
+    const char *t;
+    int len;
+
+    if (mb.open && mb.win) {
+        gui_window_focus(mb.win);
+        return;
+    }
+
+    mb.type = type;
+    if (message) {
+        len = (int)strlen(message);
+        if (len >= MB_MSG_MAX) len = MB_MSG_MAX - 1;
+        memcpy(mb.msg, message, len);
+        mb.msg[len] = '\0';
+    } else {
+        mb.msg[0] = '\0';
+    }
+
+    t = title ? title : (type == MSGBOX_ERROR ? "Error" :
+                          type == MSGBOX_WARNING ? "Aviso" : "Info");
+
+    mb.win = gui_window_create(t, 200, 150, MB_W, MB_H,
+                               GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE |
+                               GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED);
+    if (!mb.win) return;
+
+    mb.win->on_paint = mb_paint;
+    mb.win->on_click = mb_click;
+    mb.win->on_key   = mb_key;
+    mb.win->on_close = mb_close;
+    mb.open = 1;
+
+    mb.win->needs_redraw = 1;
+    gui_dirty_add(mb.win->x, mb.win->y, mb.win->width, mb.win->height);
+}
