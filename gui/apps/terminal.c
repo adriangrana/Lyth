@@ -27,6 +27,7 @@
 #include "dns.h"
 #include "icmp.h"
 #include "e1000.h"
+#include "wifi.h"
 #include "session.h"
 
 #define TERM_COLS    80
@@ -655,6 +656,10 @@ static void cmd_dhcp(void) {
     char buf[20];
     if (!iface) {
         term_puts("No network interface.\n", COL_TERM_ERR);
+        return;
+    }
+    if (!e1000_link_up() && wifi_get_state() != WIFI_STATE_CONNECTED) {
+        term_puts("No link — connect to a network first.\n", COL_TERM_ERR);
         return;
     }
     term_puts("Sending DHCP discover...\n", COL_TERM_FG);

@@ -164,6 +164,11 @@ static void do_dhcp(void) {
         status_color = COL_STATUS_ERR;
         return;
     }
+    if (!e1000_link_up() && wifi_get_state() != WIFI_STATE_CONNECTED) {
+        nc_str_copy(status_msg, "No link (connect first)");
+        status_color = COL_STATUS_ERR;
+        return;
+    }
     nc_str_copy(status_msg, "Sending DHCP discover...");
     status_color = COL_NET_DIM;
     redraw();

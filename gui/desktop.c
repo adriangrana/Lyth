@@ -66,6 +66,7 @@ void editor_app_open(void);
 void calculator_app_open(void);
 void about_app_open(void);
 void viewer_app_open(void);
+void browser_app_open(void);
 
 static void power_shutdown(void) { acpi_shutdown(); }
 static void power_reboot(void) { acpi_reboot(); }
@@ -2252,6 +2253,7 @@ void desktop_init(int screen_w, int screen_h) {
     ADD_LAUNCHER("Notes",       editor_app_open,      COL_ICON_EDITOR,   'N', icon_notes_pixels,     icon_notes_24_pixels,    icon_notes_64_pixels,     1, CAT_CORE);
     ADD_LAUNCHER("Calculator",  calculator_app_open,  COL_ICON_CALC,     'C', icon_calc_pixels,      icon_calc_24_pixels,     icon_calc_64_pixels,      1, CAT_CORE);
     ADD_LAUNCHER("Viewer",      viewer_app_open,      COL_ICON_VIEWER,   'V', 0, 0, 0, 0, CAT_CORE);
+    ADD_LAUNCHER("Browser",     browser_app_open,     0x4285F4,          'B', 0, 0, 0, 1, CAT_CORE);
     /* Utilities */
     ADD_LAUNCHER("Settings",    settings_app_open,    COL_ICON_SETTINGS, 'S', icon_settings_pixels,  icon_settings_24_pixels, icon_settings_64_pixels,  1, CAT_UTIL);
     ADD_LAUNCHER("Network",     netcfg_app_open,      COL_ICON_NETCFG,   'W', 0, 0, 0, 0, CAT_UTIL);

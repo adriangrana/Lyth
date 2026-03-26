@@ -169,6 +169,7 @@
 - [x] WiFi: driver virtual (wlan0), scan, connect, disconnect
 - [x] WiFi: GUI de configuración (scan, selección SSID, password, connect)
 - [x] WiFi: integración popup de red y launcher
+- [x] HTTP/1.1: cliente GET con navegador básico (DNS, chunked, redirects)
 
 ## 13. Seguridad
 - [x] Separación kernel/user

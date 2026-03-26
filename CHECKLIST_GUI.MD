@@ -580,7 +580,12 @@
       > gui/apps/viewer.c: BMP 24-bit y texto plano
 - [x] Editor de texto
       > gui/apps/editor.c (Lyth Notes): open/edit/save via VFS, Ctrl shortcuts
-- [ ] Navegador básico
+- [x] Navegador básico
+      > gui/apps/browser.c: HTTP/1.1 GET, DNS resolve, chunked transfer
+      > HTML: text, h1-h6 (2x), p, br, hr, a href (clickable links), b/strong, pre, li
+      > URL bar editable, Go button, status bar, scrollbar widget
+      > Redirect (301/302) follow, entity decode (&amp; &lt; &gt; &nbsp;)
+      > Word-wrap, scroll (arrows/PgUp/PgDn/scrollbar), hover links
 - [x] Gestor de tareas/monitor
       > gui/apps/taskman.c: procesos, PID, estado, prioridad, kill/force-close
 - [x] Centro de notificaciones

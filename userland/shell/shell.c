@@ -26,6 +26,7 @@
 #include "ugdb.h"
 #include "pci.h"
 #include "e1000.h"
+#include "wifi.h"
 #include "netif.h"
 #include "ipv4.h"
 #include "icmp.h"
@@ -7050,6 +7051,10 @@ static int cmd_dhcpc(int argc, const char* argv[], int background) {
     netif_t* iface = netif_get_default();
     if (!iface) {
         terminal_print_line("Sin interfaz de red");
+        return 1;
+    }
+    if (!e1000_link_up() && wifi_get_state() != WIFI_STATE_CONNECTED) {
+        terminal_print_line("Sin enlace — conecta a una red primero");
         return 1;
     }
     terminal_print_line("Enviando DHCP Discover...");
