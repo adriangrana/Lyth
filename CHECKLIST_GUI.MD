@@ -344,7 +344,11 @@
       > Restore: fade-in desde alpha=0 al hacer click en taskbar
       > Context menu minimize/close también animados
       > No interaction durante animación (anim_minimizing check en hit_test)
-- [ ] Transiciones de workspace
+- [x] Transiciones de workspace
+      > 4 virtual desktops: Ctrl+Alt+1/2/3/4 to switch
+      > Workspace pills in taskbar center (clickable)
+      > Windows assigned to workspace at creation, GUI_WIN_STICKY for all-desktop
+      > Alt-Tab, overview, dock indicators all workspace-filtered
 - [x] Crossfades entre estados
       > Launcher crossfade: alpha-blended open/close con launch_alpha gradual
       > Per-pixel blend (src*a + bg*(255-a)) durante transición, memcpy fast-path cuando opaco
