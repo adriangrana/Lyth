@@ -201,8 +201,8 @@ void gui_window_draw_decorations(gui_window_t* win)
     focused = (win->flags & GUI_WIN_FOCUSED) ? 1 : 0;
 
     /* Titlebar background */
-    tb_bg   = focused ? THEME_COL_TITLEBAR : THEME_COL_TITLEBAR_INACTIVE;
-    tb_text = focused ? THEME_COL_TITLEBAR_TEXT : THEME_COL_TITLEBAR_TEXT_DIM;
+    tb_bg   = focused ? theme.titlebar : theme.titlebar_inactive;
+    tb_text = focused ? theme.titlebar_text : theme.titlebar_text_dim;
     sep_col = THEME_COL_TITLEBAR_BORDER;
 
     /* Rounded top corners for titlebar (radius 3) */

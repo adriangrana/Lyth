@@ -52,6 +52,9 @@ void        desktop_set_wallpaper(int idx);
 /* Invalidate the desktop cache so the taskbar window list gets redrawn */
 void desktop_invalidate_taskbar(void);
 
+/* Invalidate entire desktop (e.g. theme change) */
+void desktop_invalidate_all(void);
+
 /* Taskbar auto-hide API */
 int  desktop_taskbar_autohide_get(void);
 void desktop_taskbar_autohide_set(int on);

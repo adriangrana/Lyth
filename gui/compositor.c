@@ -1515,6 +1515,7 @@ void gui_init(void)
     memset(&metrics, 0, sizeof(metrics));
 
     fb_hide_mouse_cursor();
+    theme_init();
     cursor_init(scr_w, scr_h);
     cursor_set_pos(mouse_x, mouse_y);
     desktop_init(scr_w, scr_h);

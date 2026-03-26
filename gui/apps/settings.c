@@ -21,21 +21,21 @@
 #include "desktop.h"
 #include "renderer.h"
 
-/* ---- colours ---- */
-#define COL_BG          THEME_COL_BASE
-#define COL_SIDEBAR     THEME_COL_MANTLE
-#define COL_TEXT        THEME_COL_TEXT
-#define COL_DIM         THEME_COL_DIM
-#define COL_ACCENT      THEME_COL_ACCENT
-#define COL_LABEL       THEME_COL_SUBTEXT0
+/* ---- colours (runtime theme) ---- */
+#define COL_BG          theme.base
+#define COL_SIDEBAR     theme.mantle
+#define COL_TEXT        theme.text
+#define COL_DIM         theme.dim
+#define COL_ACCENT      theme.accent
+#define COL_LABEL       theme.subtext0
 #define COL_GOOD        THEME_COL_SUCCESS
 #define COL_WARN        THEME_COL_WARNING
-#define COL_SEP         THEME_COL_BORDER
-#define COL_HOVER       THEME_COL_SURFACE0
-#define COL_CARD        THEME_COL_SURFACE0
-#define COL_CARD_BRD    THEME_COL_BORDER_DIM
-#define COL_BTN         THEME_COL_ACCENT
-#define COL_BTN_SEC     THEME_COL_SURFACE1
+#define COL_SEP         theme.border
+#define COL_HOVER       theme.surface0
+#define COL_CARD        theme.surface0
+#define COL_CARD_BRD    theme.border
+#define COL_BTN         theme.accent
+#define COL_BTN_SEC     theme.surface1
 
 /* ---- layout ---- */
 #define SIDEBAR_W       140
@@ -209,18 +209,59 @@ static void draw_sidebar(gui_surface_t* s, int win_h) {
 }
 
 /* ---- page: Apariencia ---- */
+
+/* Accent choices */
+static const uint32_t accent_choices[] = {
+    0x00D4FF, /* Cyan   */
+    0x89B4FA, /* Blue   */
+    0xD946EF, /* Pink   */
+    0xA6E3A1, /* Green  */
+    0xF9E2AF, /* Yellow */
+    0xF38BA8, /* Red    */
+    0xCBA6F7, /* Mauve  */
+    0xFAB387, /* Peach  */
+};
+#define ACCENT_COUNT 8
+
+/* Y coords for click handling (surface-relative) */
+static int apariencia_theme_y;
+static int apariencia_accent_y;
+static int apariencia_autohide_y;
+
 static void page_apariencia(gui_surface_t* s, int ox, int oy, int cw, int rh) {
+    int is_dark = (theme_get_mode() == THEME_MODE_DARK);
+    int i;
+
     gui_surface_draw_string(s, ox, oy, "Apariencia", COL_TEXT, 0, 0);
     oy += rh;
     gui_surface_draw_string(s, ox, oy, "Personaliza el aspecto visual.", COL_DIM, 0, 0);
     oy += rh + 8;
 
+    /* Theme toggle */
     gui_surface_draw_string(s, ox, oy, "Tema:", COL_LABEL, 0, 0);
-    gui_surface_draw_string(s, ox + 120, oy, "Catppuccin Mocha", COL_TEXT, 0, 0);
+    apariencia_theme_y = oy;
+    draw_toggle(s, ox + 120, oy, !is_dark);
+    gui_surface_draw_string(s, ox + 164, oy + 1,
+                            is_dark ? "Oscuro" : "Claro", COL_TEXT, 0, 0);
     oy += rh;
 
+    /* Accent colour */
     gui_surface_draw_string(s, ox, oy, "Acento:", COL_LABEL, 0, 0);
-    gui_surface_draw_string(s, ox + 120, oy, "Cyan (#00D4FF)", COL_ACCENT, 0, 0);
+    apariencia_accent_y = oy;
+    {
+        uint32_t cur_acc = theme_get_accent();
+        for (i = 0; i < ACCENT_COUNT; i++) {
+            int bx = ox + 120 + i * 26;
+            gui_surface_fill(s, bx, oy, 20, 16, accent_choices[i]);
+            if (accent_choices[i] == cur_acc) {
+                /* Selection indicator: white border */
+                gui_surface_hline(s, bx - 1, oy - 1, 22, 0xFFFFFF);
+                gui_surface_hline(s, bx - 1, oy + 16, 22, 0xFFFFFF);
+                gui_surface_fill(s, bx - 1, oy, 1, 16, 0xFFFFFF);
+                gui_surface_fill(s, bx + 20, oy, 1, 16, 0xFFFFFF);
+            }
+        }
+    }
     oy += rh;
 
     gui_surface_draw_string(s, ox, oy, "Fuente:", COL_LABEL, 0, 0);
@@ -236,27 +277,23 @@ static void page_apariencia(gui_surface_t* s, int ox, int oy, int cw, int rh) {
     oy += rh;
 
     gui_surface_draw_string(s, ox, oy, "Auto-hide:", COL_LABEL, 0, 0);
-    gui_surface_draw_string(s, ox + 120, oy,
-        desktop_taskbar_autohide_get() ? "Si" : "No", COL_TEXT, 0, 0);
+    apariencia_autohide_y = oy;
+    draw_toggle(s, ox + 120, oy, desktop_taskbar_autohide_get());
     oy += rh + 8;
 
     /* Palette swatches */
-    gui_surface_draw_string(s, ox, oy, "Paleta de colores", COL_LABEL, 0, 0);
+    gui_surface_draw_string(s, ox, oy, "Paleta activa", COL_LABEL, 0, 0);
     oy += rh;
     {
-        static const uint32_t sw[] = {
+        static const uint32_t dark_sw[] = {
             THEME_COL_ACCENT, THEME_COL_SUCCESS, THEME_COL_WARNING,
             THEME_COL_ERROR, THEME_COL_INFO, THEME_COL_ACCENT_PINK,
             THEME_COL_ACCENT_ALT, THEME_COL_FOCUS
         };
         int si;
         for (si = 0; si < 8; si++)
-            gui_surface_fill(s, ox + si * 30, oy, 24, 16, sw[si]);
+            gui_surface_fill(s, ox + si * 30, oy, 24, 16, dark_sw[si]);
     }
-    oy += 28;
-
-    gui_surface_draw_string(s, ox, oy,
-        "Editar tema: include/gui/theme.h", COL_DIM, 0, 0);
 }
 
 /* ---- page: Fondo ---- */
@@ -837,16 +874,50 @@ static void set_on_click(gui_window_t* win, int lx, int ly, int button) {
             fondo_handle_click(win, sx, sy);
         }
         if (set_section == SEC_APARIENCIA) {
-            /* Auto-hide toggle: row offset = header(rh) + desc(rh+8) + 4*rh + rh = 7*rh+8
-               At ox+120 for the value text. Approximate. */
-            int rh = ITEM_H;
-            int base_y = GUI_TITLEBAR_HEIGHT + 8;
-            int autohide_y = base_y + rh + (rh + 8) + 4 * rh; /* 6th row */
-            if (sy >= autohide_y && sy < autohide_y + rh && sx >= SIDEBAR_W + 120) {
-                desktop_taskbar_autohide_set(!desktop_taskbar_autohide_get());
-                win->needs_redraw = 1;
-                gui_dirty_add(win->x, win->y, win->width, win->height);
+            int ox_content = SIDEBAR_W + 16;
+            /* Theme toggle */
+            if (sy >= apariencia_theme_y && sy < apariencia_theme_y + ITEM_H
+                && sx >= ox_content + 120 && sx < ox_content + 220) {
+                theme_toggle();
+                desktop_invalidate_all();
+                /* Invalidate all open windows so they repaint with new colours */
+                {
+                    int wi;
+                    for (wi = 0; wi < gui_window_count(); wi++) {
+                        gui_window_t *ww = gui_window_get(wi);
+                        if (ww) {
+                            ww->needs_redraw = 1;
+                            gui_dirty_add(ww->x, ww->y, ww->width, ww->height);
+                        }
+                    }
+                }
             }
+            /* Accent colour selection */
+            if (sy >= apariencia_accent_y && sy < apariencia_accent_y + ITEM_H
+                && sx >= ox_content + 120) {
+                int ai = (sx - (ox_content + 120)) / 26;
+                if (ai >= 0 && ai < ACCENT_COUNT) {
+                    theme_set_accent(accent_choices[ai]);
+                    desktop_invalidate_all();
+                    {
+                        int wi;
+                        for (wi = 0; wi < gui_window_count(); wi++) {
+                            gui_window_t *ww = gui_window_get(wi);
+                            if (ww) {
+                                ww->needs_redraw = 1;
+                                gui_dirty_add(ww->x, ww->y, ww->width, ww->height);
+                            }
+                        }
+                    }
+                }
+            }
+            /* Auto-hide toggle */
+            if (sy >= apariencia_autohide_y && sy < apariencia_autohide_y + ITEM_H
+                && sx >= ox_content + 120 && sx < ox_content + 220) {
+                desktop_taskbar_autohide_set(!desktop_taskbar_autohide_get());
+            }
+            win->needs_redraw = 1;
+            gui_dirty_add(win->x, win->y, win->width, win->height);
         }
     }
 }

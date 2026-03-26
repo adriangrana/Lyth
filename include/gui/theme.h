@@ -218,4 +218,51 @@
 #define THEME_FONT_SZ_TITLE      18
 #define THEME_FONT_SZ_HEADING    24
 
+/* ==================================================================
+ *  8. RUNTIME THEME (light / dark switching)
+ * ================================================================== */
+
+#define THEME_MODE_DARK   0
+#define THEME_MODE_LIGHT  1
+
+/* Runtime palette — subset of colours that change between themes */
+typedef struct {
+    uint32_t base;
+    uint32_t mantle;
+    uint32_t crust;
+    uint32_t surface0;
+    uint32_t surface1;
+    uint32_t surface2;
+    uint32_t overlay0;
+    uint32_t overlay1;
+    uint32_t text;
+    uint32_t subtext1;
+    uint32_t subtext0;
+    uint32_t dim;
+    uint32_t accent;
+    uint32_t border;
+    uint32_t titlebar;
+    uint32_t titlebar_inactive;
+    uint32_t titlebar_text;
+    uint32_t titlebar_text_dim;
+    uint32_t taskbar_bg;
+    uint32_t dock_bg;
+    uint32_t popup_bg;
+    uint32_t popup_border;
+    uint32_t launcher_bg;
+    uint32_t wall_top;
+    uint32_t wall_mid;
+    uint32_t wall_bot;
+} gui_theme_t;
+
+extern gui_theme_t theme;    /* active palette — use instead of THEME_COL_* */
+
+void theme_init(void);       /* call once at startup */
+void theme_set_dark(void);
+void theme_set_light(void);
+void theme_toggle(void);
+int  theme_get_mode(void);   /* returns THEME_MODE_DARK or THEME_MODE_LIGHT */
+void theme_set_accent(uint32_t colour);
+uint32_t theme_get_accent(void);
+
 #endif /* GUI_THEME_H */

@@ -66,54 +66,54 @@ void viewer_app_open(void);
 static void power_shutdown(void) { acpi_shutdown(); }
 static void power_reboot(void) { acpi_reboot(); }
 
-/* ---- colours: all sourced from theme.h ---- */
-#define COL_BG_TOP       THEME_COL_WALL_TOP
-#define COL_BG_MID       THEME_COL_WALL_MID
-#define COL_BG_BOT       THEME_COL_WALL_BOT
+/* ---- colours: all sourced from theme runtime ---- */
+#define COL_BG_TOP       theme.wall_top
+#define COL_BG_MID       theme.wall_mid
+#define COL_BG_BOT       theme.wall_bot
 
-#define COL_TASKBAR_BG   THEME_COL_TASKBAR_BG
+#define COL_TASKBAR_BG   theme.taskbar_bg
 #define COL_TASKBAR_SEP  THEME_COL_TASKBAR_SEP
-#define COL_TASKBAR_TEXT THEME_COL_TASKBAR_TEXT
-#define COL_TASKBAR_DIM  THEME_COL_TASKBAR_DIM
+#define COL_TASKBAR_TEXT theme.text
+#define COL_TASKBAR_DIM  theme.dim
 
-#define COL_DOCK_BG      THEME_COL_DOCK_BG
+#define COL_DOCK_BG      theme.dock_bg
 #define COL_DOCK_HOVER   THEME_COL_DOCK_HOVER
-#define COL_DOCK_ACTIVE  THEME_COL_DOCK_ACTIVE
-#define COL_DOCK_DOT     THEME_COL_DOCK_DOT
+#define COL_DOCK_ACTIVE  theme.accent
+#define COL_DOCK_DOT     theme.accent
 
-#define COL_TRAY_TEXT    THEME_COL_TASKBAR_TEXT
-#define COL_TRAY_DIM     THEME_COL_TASKBAR_DIM
+#define COL_TRAY_TEXT    theme.text
+#define COL_TRAY_DIM     theme.dim
 
 /* Launcher (app menu) colours */
-#define COL_LAUNCH_BG    THEME_COL_LAUNCHER_BG
-#define COL_LAUNCH_PANEL THEME_COL_LAUNCHER_PANEL
-#define COL_LAUNCH_SEARCH_BG THEME_COL_LAUNCHER_SEARCH
-#define COL_LAUNCH_TEXT  THEME_COL_LAUNCHER_TEXT
-#define COL_LAUNCH_DIM   THEME_COL_LAUNCHER_DIM
-#define COL_LAUNCH_HOVER THEME_COL_LAUNCHER_HOVER
-#define COL_LAUNCH_SEP   THEME_COL_LAUNCHER_SEP
-#define COL_LAUNCH_ICON_BG THEME_COL_LAUNCHER_ICON
-#define COL_LAUNCH_FOLDER  THEME_COL_DOCK_BG
+#define COL_LAUNCH_BG    theme.launcher_bg
+#define COL_LAUNCH_PANEL theme.mantle
+#define COL_LAUNCH_SEARCH_BG theme.surface0
+#define COL_LAUNCH_TEXT  theme.text
+#define COL_LAUNCH_DIM   theme.dim
+#define COL_LAUNCH_HOVER theme.accent
+#define COL_LAUNCH_SEP   theme.border
+#define COL_LAUNCH_ICON_BG theme.surface0
+#define COL_LAUNCH_FOLDER  theme.dock_bg
 
 /* Context menu */
-#define COL_CTX_BG       THEME_COL_POPUP_BG
-#define COL_CTX_HOVER    THEME_COL_POPUP_HOVER
-#define COL_CTX_TEXT     THEME_COL_POPUP_TEXT
-#define COL_CTX_BORDER   THEME_COL_POPUP_BORDER
+#define COL_CTX_BG       theme.popup_bg
+#define COL_CTX_HOVER    theme.accent
+#define COL_CTX_TEXT     theme.text
+#define COL_CTX_BORDER   theme.popup_border
 
 /* Network / control panel */
-#define COL_POPUP_BG     THEME_COL_POPUP_BG
-#define COL_POPUP_BORDER THEME_COL_POPUP_BORDER
-#define COL_POPUP_TEXT   THEME_COL_POPUP_TEXT
-#define COL_POPUP_DIM    THEME_COL_POPUP_DIM
-#define COL_POPUP_BTN    THEME_COL_FOCUS
+#define COL_POPUP_BG     theme.popup_bg
+#define COL_POPUP_BORDER theme.popup_border
+#define COL_POPUP_TEXT   theme.text
+#define COL_POPUP_DIM    theme.dim
+#define COL_POPUP_BTN    theme.accent
 
 #define COL_NET_GREEN    THEME_COL_SUCCESS
 #define COL_NET_RED      THEME_COL_ERROR
 
 /* Running app label */
-#define COL_APP_LABEL_BG THEME_COL_DOCK_BG
-#define COL_APP_LABEL_FG THEME_COL_TEXT
+#define COL_APP_LABEL_BG theme.dock_bg
+#define COL_APP_LABEL_FG theme.text
 
 /* ---- dock icon colours (per-app) ---- */
 #define COL_ICON_FILES    THEME_COL_ICON_FILES
@@ -2586,4 +2586,9 @@ void desktop_invalidate_taskbar(void) {
     desk_valid = 0;
     gui_dirty_add(0, 0, sw, TASKBAR_H);
     gui_dirty_add(0, sh - DOCK_H, sw, DOCK_H);
+}
+
+void desktop_invalidate_all(void) {
+    desk_valid = 0;
+    gui_dirty_screen();
 }
