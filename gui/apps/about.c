@@ -35,7 +35,7 @@
 
 /* ---- Layout ---- */
 #define AB_WIN_W   380
-#define AB_WIN_H   380
+#define AB_WIN_H   440
 #define AB_PAD     16
 
 /* ---- State ---- */
@@ -67,12 +67,12 @@ static void ab_paint(gui_window_t* win) {
 
     y = GUI_TITLEBAR_HEIGHT + AB_PAD;
 
-    /* Logo area */
+    /* Logo area — 2x title */
     {
         const char* logo = LYTH_KERNEL_NAME;
-        int lw = str_length(logo) * GUI_FONT_W;
-        gui_surface_draw_string(s, (w - lw) / 2, y, logo, COL_AB_LOGO, 0, 0);
-        y += GUI_FONT_H + 4;
+        int lw = str_length(logo) * THEME_TYPO_TITLE_W;
+        gui_surface_draw_string_2x(s, (w - lw) / 2, y, logo, COL_AB_LOGO, 0, 0);
+        y += THEME_TYPO_TITLE_H + 4;
     }
     {
         const char* ver = "Version " LYTH_KERNEL_VERSION;
@@ -91,9 +91,9 @@ static void ab_paint(gui_window_t* win) {
     gui_surface_hline(s, AB_PAD, y, w - 2 * AB_PAD, COL_AB_BORDER);
     y += 12;
 
-    /* Section: Hardware */
-    gui_surface_draw_string(s, AB_PAD, y, "Hardware", COL_AB_ACCENT, 0, 0);
-    y += GUI_FONT_H + 6;
+    /* Section: Hardware — 2x subtitle */
+    gui_surface_draw_string_2x(s, AB_PAD, y, "Hardware", COL_AB_ACCENT, 0, 0);
+    y += THEME_TYPO_SUBTITLE_H + 6;
 
     /* Display */
     {
@@ -174,9 +174,9 @@ static void ab_paint(gui_window_t* win) {
     gui_surface_hline(s, AB_PAD, y, w - 2 * AB_PAD, COL_AB_BORDER);
     y += 12;
 
-    /* Section: System */
-    gui_surface_draw_string(s, AB_PAD, y, "System", COL_AB_ACCENT, 0, 0);
-    y += GUI_FONT_H + 6;
+    /* Section: System — 2x subtitle */
+    gui_surface_draw_string_2x(s, AB_PAD, y, "System", COL_AB_ACCENT, 0, 0);
+    y += THEME_TYPO_SUBTITLE_H + 6;
 
     /* Uptime */
     {
