@@ -153,7 +153,7 @@ static int overview_tw[OVERVIEW_MAX], overview_th[OVERVIEW_MAX];
 #define PERF_OVL_W 170
 #define PERF_OVL_LINE (THEME_FONT_H + 2)
 #define PERF_OVL_GRAPH_H 40
-#define PERF_OVL_LINES 10  /* FPS, Avg, Max, P95, Dirty, Win, Render, Compose, Present, Resolution */
+#define PERF_OVL_LINES 11  /* FPS, Avg, Max, P95, Dirty, Win, Render, Compose, Present, Resolution, GPU */
 #define PERF_OVL_TOTAL_H (PERF_OVL_LINE * PERF_OVL_LINES + 8 + PERF_OVL_GRAPH_H + 4)
 
 static unsigned int dropped_frames;  /* frames exceeding 16.7ms budget */
@@ -256,6 +256,13 @@ static void paint_perf_overlay(gui_surface_t *s)
     /* Resolution */
     uint_to_str((unsigned int)scr_w, buf, 10);
     { int l = (int)strlen(buf); buf[l] = 'x'; uint_to_str((unsigned int)scr_h, buf + l + 1, 10); }
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, 0x88AACC, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* GPU upload (Kpx) */
+    buf[0] = 'G'; buf[1] = 'P'; buf[2] = 'U'; buf[3] = ':'; buf[4] = ' ';
+    uint_to_str(metrics.gpu_upload_px / 1000, buf + 5, 10);
+    { int l = (int)strlen(buf); buf[l] = 'K'; buf[l+1] = 'p'; buf[l+2] = 'x'; buf[l+3] = 0; }
     gui_surface_draw_string(s, PERF_OVL_X, y, buf, 0x88AACC, 0, 0);
     y += PERF_OVL_LINE;
 
@@ -1031,6 +1038,7 @@ static void rebuild_bg(gui_window_t *skip_win)
 static void present_dirty(void)
 {
     unsigned int t0, t1;
+    unsigned int upload_px = 0;
     int i;
 
     t0 = timer_get_monotonic_us();
@@ -1042,9 +1050,11 @@ static void present_dirty(void)
      * otherwise present each rect individually.
      * For the SW backend, presents are cheap memcpy — always individual. */
     if (dirty_count <= 1) {
-        if (dirty_count == 1)
+        if (dirty_count == 1) {
             gpu_present(dirty_list[0].x, dirty_list[0].y,
                         dirty_list[0].w, dirty_list[0].h);
+            upload_px += (unsigned int)(dirty_list[0].w * dirty_list[0].h);
+        }
     } else if (g_gpu.ops && g_gpu.ops->name && g_gpu.ops->name[0] == 'v') {
         /* virtio path: union only if efficient */
         int ux = dirty_list[0].x, uy = dirty_list[0].y;
@@ -1064,11 +1074,14 @@ static void present_dirty(void)
             if (union_area <= sum_area * 3) {
                 /* union is efficient, single present */
                 gpu_present(ux, uy, ur - ux, ub - uy);
+                upload_px += union_area;
             } else {
                 /* union would waste >3× bandwidth, present individually */
-                for (i = 0; i < dirty_count; i++)
+                for (i = 0; i < dirty_count; i++) {
                     gpu_present(dirty_list[i].x, dirty_list[i].y,
                                 dirty_list[i].w, dirty_list[i].h);
+                    upload_px += (unsigned int)(dirty_list[i].w * dirty_list[i].h);
+                }
             }
         }
     } else {
@@ -1076,11 +1089,13 @@ static void present_dirty(void)
         for (i = 0; i < dirty_count; i++) {
             gpu_present(dirty_list[i].x, dirty_list[i].y,
                         dirty_list[i].w, dirty_list[i].h);
+            upload_px += (unsigned int)(dirty_list[i].w * dirty_list[i].h);
         }
     }
 
     t1 = timer_get_monotonic_us();
     metrics.present_us = t1 - t0;
+    metrics.gpu_upload_px = upload_px;
 }
 
 /* ==================================================================

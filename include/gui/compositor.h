@@ -39,6 +39,7 @@ typedef struct {
     unsigned int present_us;
     unsigned int dirty_count;
     unsigned int pixels_copied;
+    unsigned int gpu_upload_px;    /* pixels sent to GPU/FB via present */
     unsigned int drag_active;      /* 1 if currently dragging */
     unsigned int coalesced_moves;  /* mouse moves coalesced this frame */
     /* drag instrumentation */
