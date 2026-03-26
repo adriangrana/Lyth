@@ -133,7 +133,11 @@
       > Watermark "Lyth OS" centrado, texto alpha-blended (alpha 25)
       > draw_char_alpha/draw_string_alpha para texto semitransparente
       > Visible sobre escritorio vacío, cubierto por ventanas
-- [ ] Gestión de iconos
+- [x] Gestión de iconos
+      > Desktop shortcut icons: upper-right grid (48x48 scaled, labeled)
+      > 4 default shortcuts: Terminal, Files, Notes, Settings
+      > Click-to-launch, baked into desk_surf during rebuild_desktop()
+      > Uses blit_icon_scaled() with 64px source icons
 
 #### 6.1. Interacción del escritorio
 - [x] detectar click derecho sobre escritorio

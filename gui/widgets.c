@@ -9,6 +9,7 @@
 #include "window.h"
 #include "theme.h"
 #include "string.h"
+#include "input.h"
 
 /* ==================================================================
  *  Internal helpers
@@ -136,6 +137,14 @@ static uint32_t resolve_fg(wid_t *w)
 static uint32_t resolve_bg(wid_t *w)
 {
     return w->bg ? w->bg : THEME_COL_SURFACE0;
+}
+
+/* Draw a 1px accent outline around a focused widget */
+static void draw_focus_ring(gui_surface_t *s, wid_t *w, int ox, int oy)
+{
+    if (!(w->state & WID_FOCUSED)) return;
+    sf_rrect_outline(s, ox + w->x - 1, oy + w->y - 1,
+                     w->width + 2, w->height + 2, THEME_COL_FOCUS);
 }
 
 /* ==================================================================
@@ -891,6 +900,8 @@ void wid_draw_all(gui_window_t *win)
         case WID_LISTVIEW:  draw_listview(s, w, ox, oy);  break;
         case WID_SCROLLBAR: draw_scrollbar(s, w, ox, oy); break;
         }
+        /* Focus ring for keyboard-navigated widgets */
+        draw_focus_ring(s, w, ox, oy);
     }
 
     /* Second pass: draw open dropdown popups on top of all other widgets */
@@ -1155,41 +1166,150 @@ int wid_handle_key(gui_window_t *win, int event_type, char key)
 {
     int i;
     wid_t *focused = 0;
+    int focused_idx = -1;
 
     if (!win) return 0;
 
-    /* find focused textinput */
+    /* find any focused widget */
     for (i = 0; i < win->widget_count; i++) {
         wid_t *w = &win->widgets[i];
-        if (w->type == WID_TEXTINPUT && (w->state & WID_FOCUSED)) {
+        if (w->state & WID_FOCUSED) {
             focused = w;
+            focused_idx = i;
             break;
         }
     }
-    if (!focused) return 0;
 
-    /* only handle key-down (event_type 0 = press, 1 = release typically) */
-    if (event_type != 0) return 0;
-
-    if (key == '\b') {
-        /* backspace */
-        int len = (int)strlen(focused->text);
-        if (len > 0) {
-            focused->text[len - 1] = '\0';
-            win->needs_redraw = 1;
+    /* ---- Tab: cycle focus through interactive widgets ---- */
+    if (event_type == INPUT_EVENT_TAB) {
+        int start = focused_idx >= 0 ? focused_idx + 1 : 0;
+        int j;
+        /* unfocus current */
+        if (focused) {
+            focused->state &= (uint16_t)~WID_FOCUSED;
+            /* collapse dropdown if it was open */
+            if (focused->type == WID_DROPDOWN)
+                focused->height = (int16_t)THEME_BTN_H;
         }
+        /* find next focusable widget */
+        for (j = 0; j < win->widget_count; j++) {
+            int idx = (start + j) % win->widget_count;
+            wid_t *cand = &win->widgets[idx];
+            if (!(cand->state & WID_VISIBLE) || !(cand->state & WID_ENABLED))
+                continue;
+            if (cand->type == WID_LABEL || cand->type == WID_PANEL ||
+                cand->type == WID_SEPARATOR || cand->type == WID_PROGRESS)
+                continue;
+            cand->state |= WID_FOCUSED;
+            win->needs_redraw = 1;
+            return 1;
+        }
+        win->needs_redraw = 1;
         return 1;
     }
 
-    if (key >= 0x20 && key < 0x7F) {
-        /* printable */
-        int len = (int)strlen(focused->text);
-        if (len < 63) {
-            focused->text[len] = key;
-            focused->text[len + 1] = '\0';
-            win->needs_redraw = 1;
+    if (!focused) return 0;
+
+    /* ---- Text input handling ---- */
+    if (focused->type == WID_TEXTINPUT) {
+        if (event_type == INPUT_EVENT_BACKSPACE) {
+            int len = (int)strlen(focused->text);
+            if (len > 0) {
+                focused->text[len - 1] = '\0';
+                win->needs_redraw = 1;
+            }
+            return 1;
         }
-        return 1;
+        if (event_type == INPUT_EVENT_CHAR && key >= 0x20 && key < 0x7F) {
+            int len = (int)strlen(focused->text);
+            if (len < 63) {
+                focused->text[len] = key;
+                focused->text[len + 1] = '\0';
+                win->needs_redraw = 1;
+            }
+            return 1;
+        }
+        if (event_type == INPUT_EVENT_ENTER) {
+            if (focused->on_click) focused->on_click(focused);
+            return 1;
+        }
+        return 0;
+    }
+
+    /* ---- Space / Enter: activate focused widget ---- */
+    if (event_type == INPUT_EVENT_ENTER ||
+        (event_type == INPUT_EVENT_CHAR && key == ' ')) {
+        switch (focused->type) {
+        case WID_BUTTON:
+            focused->state |= WID_PRESSED;
+            if (focused->on_click) focused->on_click(focused);
+            focused->state &= (uint16_t)~WID_PRESSED;
+            win->needs_redraw = 1;
+            return 1;
+        case WID_CHECKBOX:
+            focused->state ^= WID_CHECKED;
+            if (focused->on_change)
+                focused->on_change(focused, (focused->state & WID_CHECKED) ? 1 : 0);
+            win->needs_redraw = 1;
+            return 1;
+        case WID_SWITCH:
+            focused->state ^= WID_CHECKED;
+            if (focused->on_change)
+                focused->on_change(focused, (focused->state & WID_CHECKED) ? 1 : 0);
+            win->needs_redraw = 1;
+            return 1;
+        case WID_RADIO:
+            if (!(focused->state & WID_CHECKED)) {
+                radio_uncheck_group(win, focused->value, focused);
+                focused->state |= WID_CHECKED;
+                if (focused->on_change) focused->on_change(focused, 1);
+                win->needs_redraw = 1;
+            }
+            return 1;
+        default:
+            break;
+        }
+    }
+
+    /* ---- Arrow keys for slider / listview / tabs ---- */
+    if (event_type == INPUT_EVENT_LEFT || event_type == INPUT_EVENT_RIGHT) {
+        if (focused->type == WID_SLIDER) {
+            int step = (focused->max_val - focused->min_val) / 20;
+            if (step < 1) step = 1;
+            if (event_type == INPUT_EVENT_LEFT)
+                focused->value -= step;
+            else
+                focused->value += step;
+            if (focused->value < focused->min_val) focused->value = focused->min_val;
+            if (focused->value > focused->max_val) focused->value = focused->max_val;
+            if (focused->on_change) focused->on_change(focused, focused->value);
+            win->needs_redraw = 1;
+            return 1;
+        }
+        if (focused->type == WID_TABS) {
+            int ns = focused->sel;
+            if (event_type == INPUT_EVENT_LEFT && ns > 0) ns--;
+            if (event_type == INPUT_EVENT_RIGHT && ns < focused->item_count - 1) ns++;
+            if (ns != focused->sel) {
+                focused->sel = (int16_t)ns;
+                if (focused->on_change) focused->on_change(focused, ns);
+                win->needs_redraw = 1;
+            }
+            return 1;
+        }
+    }
+    if (event_type == INPUT_EVENT_UP || event_type == INPUT_EVENT_DOWN) {
+        if (focused->type == WID_LISTVIEW) {
+            int ns = focused->sel;
+            if (event_type == INPUT_EVENT_UP && ns > 0) ns--;
+            if (event_type == INPUT_EVENT_DOWN && ns < focused->item_count - 1) ns++;
+            if (ns != focused->sel) {
+                focused->sel = (int16_t)ns;
+                if (focused->on_change) focused->on_change(focused, ns);
+                win->needs_redraw = 1;
+            }
+            return 1;
+        }
     }
 
     return 0;
