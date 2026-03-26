@@ -24,6 +24,7 @@ void desktop_update_hover(int mx, int my, int buttons);
 /* Input handlers - return 1 if consumed */
 int desktop_handle_click(int mx, int my, int button);
 int desktop_handle_key(int event_type, char key);
+int desktop_handle_scroll(int mx, int my, int delta);
 
 /* Height of the top menu bar area */
 int desktop_get_menubar_height(void);

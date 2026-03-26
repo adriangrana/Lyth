@@ -25,6 +25,7 @@
 #include "netif.h"
 #include "e1000.h"
 #include "wifi.h"
+#include "audio.h"
 #include "timer.h"
 #include "klog.h"
 
@@ -141,6 +142,10 @@ static void normal_boot_step(void) {
         /* Initialise WiFi subsystem (virtual adapter over eth0) */
         if (wifi_init() == 0)
             klog_write(KLOG_LEVEL_INFO, "init", "WiFi adapter ready");
+
+        /* Initialise audio subsystem (Intel HDA) */
+        if (audio_init() == 0)
+            klog_write(KLOG_LEVEL_INFO, "init", "Audio subsystem ready");
 
         current_boot_state = BOOT_STATE_SESSION;
         break;

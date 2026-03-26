@@ -240,6 +240,17 @@ xhci_irq_stub:
     add     $16, %rsp
     iretq
 
+/* Intel HDA audio IRQ */
+.global hda_irq_stub
+hda_irq_stub:
+    push    $0
+    push    $49
+    SAVE_ALL
+    call    hda_interrupt_handler_asm
+    RESTORE_ALL
+    add     $16, %rsp
+    iretq
+
 /* INT 0x80 — syscall */
 syscall_stub:
     push    $0

@@ -13,6 +13,7 @@
 #include "apic.h"
 #include "e1000.h"
 #include "xhci.h"
+#include "hda.h"
 
 static const char* exception_names[32] = {
     "Division by zero",
@@ -59,6 +60,7 @@ extern void irq11_stub(void);
 extern void irq12_stub(void);
 extern void irq14_stub(void);
 extern void xhci_irq_stub(void);
+extern void hda_irq_stub(void);
 extern void syscall_stub(void);
 extern void isr0_stub(void);
 extern void isr1_stub(void);
@@ -186,6 +188,11 @@ void xhci_interrupt_handler_asm(void) {
     send_eoi(0);  /* APIC EOI — no legacy IRQ mapping for xHCI */
 }
 
+void hda_interrupt_handler_asm(void) {
+    hda_irq_handler();
+    send_eoi(0);  /* APIC EOI — PCI level-triggered */
+}
+
 uintptr_t syscall_interrupt_handler(uintptr_t current_esp) {
     panic_frame_t* frame = (panic_frame_t*)current_esp;
 
@@ -303,6 +310,7 @@ void interrupts_init(void) {
     idt_set_gate(44, (uintptr_t)irq12_stub, code_selector, 0x8E);
     idt_set_gate(46, (uintptr_t)irq14_stub, code_selector, 0x8E);
     idt_set_gate(48, (uintptr_t)xhci_irq_stub, code_selector, 0x8E);
+    idt_set_gate(49, (uintptr_t)hda_irq_stub, code_selector, 0x8E);
     idt_set_gate(0x80, (uintptr_t)syscall_stub, code_selector, 0xEE);
 
     if (apic_is_enabled()) {

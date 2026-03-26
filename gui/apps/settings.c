@@ -21,6 +21,7 @@
 #include "desktop.h"
 #include "renderer.h"
 #include "dialog.h"
+#include "audio.h"
 
 /* ---- colours (runtime theme) ---- */
 #define COL_BG          theme.base
@@ -547,14 +548,64 @@ static void page_sonido(gui_surface_t* s, int ox, int oy, int cw, int rh) {
         "Configuracion de audio.", COL_DIM, 0, 0);
     oy += rh + 10;
 
-    gui_surface_draw_string(s, ox, oy,
-        "Sin dispositivos de audio detectados.", COL_LABEL, 0, 0);
-    oy += rh + 4;
-    gui_surface_draw_string(s, ox, oy,
-        "El driver de audio no esta implementado", COL_DIM, 0, 0);
-    oy += rh;
-    gui_surface_draw_string(s, ox, oy,
-        "en esta version del kernel.", COL_DIM, 0, 0);
+    int state = audio_get_state();
+    if (state == AUDIO_STATE_NONE) {
+        gui_surface_draw_string(s, ox, oy,
+            "Sin dispositivos de audio detectados.", COL_LABEL, 0, 0);
+        oy += rh + 4;
+        gui_surface_draw_string(s, ox, oy,
+            "Conecte un dispositivo de audio o inicie", COL_DIM, 0, 0);
+        oy += rh;
+        gui_surface_draw_string(s, ox, oy,
+            "QEMU con: -device intel-hda -device hda-output", COL_DIM, 0, 0);
+    } else {
+        gui_surface_draw_string(s, ox, oy, "Backend:", COL_LABEL, 0, 0);
+        gui_surface_draw_string(s, ox + 140, oy, audio_backend_name(), COL_TEXT, 0, 0);
+        oy += rh;
+
+        gui_surface_draw_string(s, ox, oy, "Estado:", COL_LABEL, 0, 0);
+        {
+            const char *st = (state == AUDIO_STATE_PLAYING) ? "Reproduciendo" : "Listo";
+            gui_surface_draw_string(s, ox + 140, oy, st, COL_TEXT, 0, 0);
+        }
+        oy += rh;
+
+        gui_surface_draw_string(s, ox, oy, "Volumen:", COL_LABEL, 0, 0);
+        {
+            int vol = audio_get_volume();
+            /* Draw volume bar */
+            int bar_x = ox + 140;
+            int bar_w = 160;
+            int bar_h = 10;
+            int bar_y_c = oy + (rh - bar_h) / 2;
+            gui_surface_fill(s, bar_x, bar_y_c, bar_w, bar_h, 0x333333);
+            int fill_w = (bar_w * vol) / 100;
+            if (fill_w > 0) {
+                uint32_t acol = theme.accent;
+                gui_surface_fill(s, bar_x, bar_y_c, fill_w, bar_h, acol);
+            }
+            /* Percentage label */
+            char vbuf[8];
+            int vi = 0;
+            if (vol >= 100) { vbuf[vi++] = '1'; vbuf[vi++] = '0'; vbuf[vi++] = '0'; }
+            else if (vol >= 10) { vbuf[vi++] = (char)('0' + vol / 10); vbuf[vi++] = (char)('0' + vol % 10); }
+            else { vbuf[vi++] = (char)('0' + vol); }
+            vbuf[vi++] = '%'; vbuf[vi] = 0;
+            gui_surface_draw_string(s, bar_x + bar_w + 8, oy, vbuf, COL_TEXT, 0, 0);
+        }
+        oy += rh;
+
+        gui_surface_draw_string(s, ox, oy, "Silencio:", COL_LABEL, 0, 0);
+        gui_surface_draw_string(s, ox + 140, oy,
+            audio_get_mute() ? "Si" : "No", COL_TEXT, 0, 0);
+        oy += rh + 8;
+
+        gui_surface_draw_string(s, ox, oy,
+            "Usar rueda del raton sobre icono de volumen", COL_DIM, 0, 0);
+        oy += rh;
+        gui_surface_draw_string(s, ox, oy,
+            "en la barra de tareas para ajustar.", COL_DIM, 0, 0);
+    }
 }
 
 /* ---- page: Red ---- */

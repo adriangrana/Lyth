@@ -151,6 +151,9 @@
 - [x] PCI
 - [x] RTC
 - [x] Serie (COM1) para debug
+- [x] Audio: Intel HDA (High Definition Audio) controller driver
+- [x] Audio: subsistema de audio con sonidos de sistema (click, notif, error, startup, logout)
+- [x] Audio: control de volumen y mute (OSD + scroll en taskbar)
 
 ## 12. Red
 - [x] ARP

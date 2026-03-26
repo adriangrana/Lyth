@@ -1444,9 +1444,13 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
         }
     }
 
-    /* scroll wheel — dispatch to widget under cursor in focused window */
+    /* scroll wheel — dispatch to desktop popups first, then widgets */
     if (ev->scroll && !*dragging_win && !*resizing_win)
     {
+        /* Desktop popups (e.g. network popup WiFi list) */
+        if (desktop_handle_scroll(mouse_x, mouse_y, ev->scroll)) {
+            /* consumed by desktop */
+        } else {
         int wc = gui_window_count();
         int wi;
         for (wi = 0; wi < wc; wi++) {
@@ -1462,6 +1466,7 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
                 }
                 break;
             }
+        }
         }
     }
 

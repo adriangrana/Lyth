@@ -495,7 +495,11 @@
       > THEME_COL_ICON_* defines preserved for backward compat
 
 ### 18. Sonido e Haptics
-- [ ] Sonidos discretos del sistema
+- [x] Sonidos discretos del sistema
+      > audio_play_sound(SND_CLICK/NOTIFY/ERROR/STARTUP/LOGOUT)
+      > Tonos generados con aproximación parabólica (integer math, sin SSE)
+      > 5 sonidos: click (30ms 1200Hz), notify (C5→E5 chime), error (300→200Hz),
+      > startup (C4→E4→G4 rising), logout (G4→C4 descending)
 - [x] Feedback visual (volumen, brillo, etc.)
       > osd_show(icon, label, level) — centred bar auto-dismiss 1.5s
 - [x] OSD limpio

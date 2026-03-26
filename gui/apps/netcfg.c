@@ -24,6 +24,7 @@
 #include "input.h"
 #include "e1000.h"
 #include "timer.h"
+#include "wifi.h"
 
 #define COL_NET_BG       THEME_COL_BASE
 #define COL_NET_TEXT     THEME_COL_TEXT
@@ -73,6 +74,12 @@ static const char* field_labels[NUM_FIELDS] = { "IP:", "Mask:", "GW:", "DNS:" };
 /* Status message */
 static char status_msg[48];
 static int  status_color;
+
+/* WiFi section state */
+static int wifi_scanned;     /* 1 = scan done */
+static int wifi_hover_idx;   /* hovered WiFi row, -1 = none */
+#define WIFI_VIS_MAX 5       /* max visible WiFi rows */
+static int wifi_scroll;      /* scroll offset for WiFi list */
 
 /* ---- helpers ---- */
 
@@ -320,6 +327,132 @@ static void net_paint(gui_window_t* win) {
     if (status_msg[0]) {
         gui_surface_draw_string(s, ox, oy, status_msg, status_color, 0, 0);
     }
+    oy += row_h + 8;
+
+    /* ── WiFi Section ── */
+    gui_surface_hline(s, ox, oy, win->width - ox * 2, THEME_COL_BORDER);
+    oy += 8;
+
+    {
+        int ws = wifi_get_state();
+        gui_surface_draw_string(s, ox, oy, "WiFi", THEME_COL_ACCENT, 0, 0);
+        if (ws == WIFI_STATE_OFF) {
+            gui_surface_draw_string(s, ox + 5 * FONT_PSF_WIDTH, oy,
+                " - Disabled", COL_NET_DOWN, 0, 0);
+            oy += row_h;
+        } else {
+            if (ws == WIFI_STATE_CONNECTED) {
+                const wifi_network_t* cur = wifi_current_network();
+                if (cur) {
+                    gui_surface_draw_string(s, ox + 5 * FONT_PSF_WIDTH, oy,
+                        " - ", COL_NET_DIM, 0, 0);
+                    gui_surface_draw_string(s, ox + 8 * FONT_PSF_WIDTH, oy,
+                        cur->ssid, COL_NET_UP, 0, 0);
+                }
+            } else {
+                gui_surface_draw_string(s, ox + 5 * FONT_PSF_WIDTH, oy,
+                    " - Idle", COL_NET_DIM, 0, 0);
+            }
+            oy += row_h;
+
+            /* Scan trigger on first paint */
+            if (!wifi_scanned) {
+                wifi_scan();
+                wifi_scanned = 1;
+            }
+
+            /* Network list */
+            {
+                int cnt = wifi_scan_count();
+                const wifi_network_t* nets = wifi_scan_results();
+                const wifi_network_t* cur_net = wifi_current_network();
+                int show = cnt;
+                if (show > WIFI_VIS_MAX) show = WIFI_VIS_MAX;
+
+                /* Clamp scroll */
+                if (cnt > WIFI_VIS_MAX) {
+                    int max_scr = cnt - WIFI_VIS_MAX;
+                    if (wifi_scroll > max_scr) wifi_scroll = max_scr;
+                    if (wifi_scroll < 0) wifi_scroll = 0;
+                } else {
+                    wifi_scroll = 0;
+                }
+
+                if (cnt == 0) {
+                    gui_surface_draw_string(s, ox + 8, oy + 2,
+                        "No networks found", COL_NET_DIM, 0, 0);
+                    oy += 22;
+                } else {
+                    int cw = win->width - ox * 2;
+                    int wi;
+                    for (wi = 0; wi < show; wi++) {
+                        int si = wi + wifi_scroll;
+                        int ry = oy;
+                        int is_cur = (cur_net && strcmp(nets[si].ssid, cur_net->ssid) == 0);
+                        int is_hov = (wi == wifi_hover_idx);
+
+                        /* Row highlight */
+                        if (is_hov) {
+                            gui_surface_fill(s, ox, ry, cw, 20, THEME_COL_SURFACE1);
+                        }
+
+                        /* Signal indicator (simple bars) */
+                        {
+                            int bars;
+                            int sig = nets[si].signal;
+                            if (sig >= -45) bars = 4;
+                            else if (sig >= -55) bars = 3;
+                            else if (sig >= -70) bars = 2;
+                            else if (sig >= -85) bars = 1;
+                            else bars = 0;
+                            int bi;
+                            for (bi = 0; bi < 4; bi++) {
+                                int bh = 3 + bi * 2;
+                                int bx = ox + 2 + bi * 3;
+                                int by = ry + 18 - bh;
+                                uint32_t bc = (bi < bars) ? (is_cur ? COL_NET_UP : COL_NET_TEXT) : THEME_COL_DIM;
+                                gui_surface_fill(s, bx, by, 2, bh, bc);
+                            }
+                        }
+
+                        /* SSID */
+                        gui_surface_draw_string(s, ox + 16, ry + 2,
+                            nets[si].ssid,
+                            is_cur ? COL_NET_UP : COL_NET_TEXT, 0, 0);
+
+                        /* Lock icon for secured */
+                        if (nets[si].security != WIFI_SEC_OPEN) {
+                            gui_surface_draw_string(s, ox + cw - 30, ry + 2,
+                                "*", COL_NET_DIM, 0, 0);
+                        }
+
+                        /* Connected badge */
+                        if (is_cur) {
+                            gui_surface_draw_string(s, ox + cw - 60, ry + 2,
+                                "On", COL_NET_UP, 0, 0);
+                        }
+
+                        oy += 22;
+                    }
+
+                    /* Scroll indicators */
+                    if (wifi_scroll > 0) {
+                        gui_surface_draw_string(s, ox + cw / 2 - 4,
+                            oy - show * 22 - FONT_PSF_HEIGHT, "^", COL_NET_DIM, 0, 0);
+                    }
+                    if (wifi_scroll + WIFI_VIS_MAX < cnt) {
+                        gui_surface_draw_string(s, ox + cw / 2 - 4, oy,
+                            "v", COL_NET_DIM, 0, 0);
+                        oy += FONT_PSF_HEIGHT;
+                    }
+                }
+            }
+
+            oy += 4;
+            gui_surface_draw_string(s, ox, oy,
+                "Click a network to connect", COL_NET_DIM, 0, 0);
+        }
+    }
 }
 
 /* ---- key handling ---- */
@@ -488,7 +621,7 @@ void netcfg_app_open(void) {
         return;
     }
 
-    net_window = gui_window_create("Network", 280, 80, 360, 400,
+    net_window = gui_window_create("Network", 280, 60, 360, 560,
         GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE | GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED);
     if (!net_window) return;
 
@@ -496,6 +629,9 @@ void netcfg_app_open(void) {
     net_mode = MODE_DHCP;
     focus_idx = FOCUS_DHCP;
     status_msg[0] = '\0';
+    wifi_scanned = 0;
+    wifi_hover_idx = -1;
+    wifi_scroll = 0;
     {
         netif_t* iface = netif_get(0);
         if (iface) {

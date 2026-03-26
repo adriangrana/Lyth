@@ -19,6 +19,8 @@
 #include "physmem.h"
 #include "netif.h"
 #include "wifi.h"
+#include "audio.h"
+#include "notify.h"
 #include "login.h"
 #include "acpi.h"
 #include "session.h"
@@ -213,8 +215,9 @@ static dctx_item_t dctx_items[DCTX_MAX_ITEMS];
 static int dctx_item_count;
 
 /* ---- network / control popup ---- */
-#define NET_POPUP_W  260
-#define NET_POPUP_H  280
+#define NET_POPUP_W  270
+#define NET_POPUP_MAX_WIFI  6   /* max WiFi entries shown */
+#define NET_WIFI_ROW_H  22  /* height per WiFi network row */
 
 /* ---- state ---- */
 static int sw, sh;
@@ -238,6 +241,36 @@ static char date_str[32]  = "";
 /* ---- network popup ---- */
 static int net_popup_open;
 static int net_last_up;
+static int net_popup_wifi_hover;  /* hovered WiFi row index, -1 = none */
+static int net_popup_scanned;    /* 1 = scan done for current popup open */
+static int net_popup_wifi_scroll; /* scroll offset for WiFi list */
+
+/* Dynamically compute popup height based on WiFi scan results */
+static int net_popup_height(void) {
+    /* Base: title(8+16+4+10) + ethernet(~3 lines max) + separator + wifi header + buttons */
+    int h = 8 + FONT_PSF_HEIGHT + 14;  /* title + separator + padding */
+    /* Ethernet section: status + interface + IP = up to 3 lines */
+    h += 3 * (FONT_PSF_HEIGHT + 5);
+    /* Separator */
+    h += 10;
+    /* WiFi header line */
+    h += FONT_PSF_HEIGHT + 6;
+    /* WiFi network list */
+    int ws = wifi_get_state();
+    if (ws != WIFI_STATE_OFF) {
+        int cnt = wifi_scan_count();
+        if (cnt > NET_POPUP_MAX_WIFI) cnt = NET_POPUP_MAX_WIFI;
+        if (cnt < 1) cnt = 1;  /* at least "No networks" line */
+        h += cnt * NET_WIFI_ROW_H;
+    }
+    /* Connected info (SSID + IP) */
+    if (ws == WIFI_STATE_CONNECTED) {
+        h += 2 * (FONT_PSF_HEIGHT + 4);
+    }
+    /* Bottom padding + button */
+    h += 8 + 30 + 8;
+    return h;
+}
 
 /* ---- power dialog ---- */
 #define PWR_DLG_W  320
@@ -251,7 +284,7 @@ static char launcher_search[32];
 static int launcher_search_len;
 
 /* ---- tray click regions (set during render) ---- */
-static int tray_net_x, tray_menu_x;
+static int tray_net_x, tray_menu_x, tray_vol_x;
 
 /* ---- dock/taskbar hover ---- */
 static int dock_hover_idx = -1;  /* -1 = none */
@@ -576,23 +609,76 @@ static void draw_rounded_rect(gui_surface_t* dst, int x, int y, int w, int h,
     }
 }
 
-/* tiny network/wifi icon (9x9) */
-static void draw_net_icon(gui_surface_t* dst, int ox, int oy, int connected) {
-    uint32_t col = connected ? COL_NET_GREEN : COL_NET_RED;
-    int x, y;
-    /* wifi-like arcs */
+/* tiny ethernet PC icon (9x9) — monitor shape */
+static void draw_eth_icon(gui_surface_t* dst, int ox, int oy, uint32_t col) {
+    int x;
+    /* monitor top edge */
     for (x = 1; x < 8; x++) gui_surface_putpixel(dst, ox + x, oy, col);
-    for (y = 1; y < 5; y++) {
-        gui_surface_putpixel(dst, ox, oy + y, col);
-        gui_surface_putpixel(dst, ox + 8, oy + y, col);
-    }
+    /* monitor sides */
+    gui_surface_putpixel(dst, ox, oy + 1, col); gui_surface_putpixel(dst, ox + 8, oy + 1, col);
+    gui_surface_putpixel(dst, ox, oy + 2, col); gui_surface_putpixel(dst, ox + 8, oy + 2, col);
+    gui_surface_putpixel(dst, ox, oy + 3, col); gui_surface_putpixel(dst, ox + 8, oy + 3, col);
+    gui_surface_putpixel(dst, ox, oy + 4, col); gui_surface_putpixel(dst, ox + 8, oy + 4, col);
+    /* monitor bottom edge */
     for (x = 1; x < 8; x++) gui_surface_putpixel(dst, ox + x, oy + 5, col);
+    /* stand */
     gui_surface_putpixel(dst, ox + 4, oy + 6, col);
+    /* base */
     for (x = 2; x < 7; x++) gui_surface_putpixel(dst, ox + x, oy + 7, col);
-    if (connected) {
-        for (y = 2; y < 4; y++)
-            for (x = 3; x < 6; x++)
-                gui_surface_putpixel(dst, ox + x, oy + y, col);
+    /* screen fill (inner pixels) */
+    gui_surface_putpixel(dst, ox + 3, oy + 2, col);
+    gui_surface_putpixel(dst, ox + 4, oy + 2, col);
+    gui_surface_putpixel(dst, ox + 5, oy + 2, col);
+    gui_surface_putpixel(dst, ox + 3, oy + 3, col);
+    gui_surface_putpixel(dst, ox + 4, oy + 3, col);
+    gui_surface_putpixel(dst, ox + 5, oy + 3, col);
+}
+
+/* tiny wifi arcs icon (9x9) */
+static void draw_wifi_icon(gui_surface_t* dst, int ox, int oy, uint32_t col) {
+    /* dot at bottom center */
+    gui_surface_putpixel(dst, ox + 4, oy + 7, col);
+    gui_surface_putpixel(dst, ox + 4, oy + 8, col);
+    /* inner arc */
+    gui_surface_putpixel(dst, ox + 3, oy + 5, col);
+    gui_surface_putpixel(dst, ox + 4, oy + 5, col);
+    gui_surface_putpixel(dst, ox + 5, oy + 5, col);
+    /* mid arc */
+    gui_surface_putpixel(dst, ox + 2, oy + 3, col);
+    gui_surface_putpixel(dst, ox + 3, oy + 3, col);
+    gui_surface_putpixel(dst, ox + 5, oy + 3, col);
+    gui_surface_putpixel(dst, ox + 6, oy + 3, col);
+    /* outer arc */
+    gui_surface_putpixel(dst, ox + 1, oy + 1, col);
+    gui_surface_putpixel(dst, ox + 2, oy + 1, col);
+    gui_surface_putpixel(dst, ox + 6, oy + 1, col);
+    gui_surface_putpixel(dst, ox + 7, oy + 1, col);
+    gui_surface_putpixel(dst, ox + 0, oy + 2, col);
+    gui_surface_putpixel(dst, ox + 8, oy + 2, col);
+}
+
+/* tiny disconnected icon (9x9) — X mark */
+static void draw_nonet_icon(gui_surface_t* dst, int ox, int oy, uint32_t col) {
+    int i;
+    for (i = 0; i < 9; i++) {
+        gui_surface_putpixel(dst, ox + i, oy + i, col);
+        gui_surface_putpixel(dst, ox + 8 - i, oy + i, col);
+    }
+}
+
+/* draw the appropriate network icon based on connection state */
+static void draw_net_icon(gui_surface_t* dst, int ox, int oy, int connected) {
+    (void)connected;
+    int ws = wifi_get_state();
+    netif_t* eth = netif_get(0);
+    int eth_up = (eth && eth->up && eth->ip_addr != 0);
+
+    if (ws == WIFI_STATE_CONNECTED) {
+        draw_wifi_icon(dst, ox, oy, COL_NET_GREEN);
+    } else if (eth_up) {
+        draw_eth_icon(dst, ox, oy, COL_NET_GREEN);
+    } else {
+        draw_nonet_icon(dst, ox, oy, COL_NET_RED);
     }
 }
 
@@ -1211,8 +1297,12 @@ static void rebuild_desktop(void) {
 
         /* Volume icon */
         rx -= 12;
-        draw_volume_icon(&desk_surf, rx, taskbar_y + (TASKBAR_H - 9) / 2,
-                         COL_TRAY_TEXT);
+        tray_vol_x = rx;
+        {
+            uint32_t vcol = audio_get_mute() ? 0x888888 : COL_TRAY_TEXT;
+            draw_volume_icon(&desk_surf, rx, taskbar_y + (TASKBAR_H - 9) / 2,
+                             vcol);
+        }
         rx -= TRAY_PAD;
 
         /* Network icon */
@@ -1617,9 +1707,13 @@ static void close_context_menu(void) {
 static void close_net_popup(void) {
     if (!net_popup_open) return;
     int px = sw - NET_POPUP_W - 8;
-    int py = sh - DOCK_H - NET_POPUP_H - 8;
-    gui_dirty_add(px, py, NET_POPUP_W, NET_POPUP_H);
+    int py = TASKBAR_H + 4;
+    int ph = net_popup_height();
+    gui_dirty_add(px, py, NET_POPUP_W, ph);
     net_popup_open = 0;
+    net_popup_scanned = 0;
+    net_popup_wifi_hover = -1;
+    net_popup_wifi_scroll = 0;
 }
 
 /* ---- Power dialog (Shutdown / Reboot / Cancel) ---- */
@@ -1767,15 +1861,58 @@ static void draw_desktop_ctx(gui_surface_t* dst) {
     }
 }
 
+/* Helper: draw a tiny wifi signal strength indicator (4 bars) */
+static void draw_signal_bars(gui_surface_t* dst, int ox, int oy, int signal, uint32_t col) {
+    /* signal: -30=excellent, -90=terrible → map to 0..4 bars */
+    int bars;
+    if (signal >= -45) bars = 4;
+    else if (signal >= -55) bars = 3;
+    else if (signal >= -70) bars = 2;
+    else if (signal >= -85) bars = 1;
+    else bars = 0;
+    int i;
+    for (i = 0; i < 4; i++) {
+        int bh = 2 + i * 2;   /* bar heights: 2,4,6,8 */
+        int bx = ox + i * 3;
+        int by = oy + 8 - bh;
+        uint32_t c = (i < bars) ? col : (theme.dim);
+        gui_surface_fill(dst, bx, by, 2, bh, c);
+    }
+}
+
+/* Helper: draw a small lock icon (for secured networks) */
+static void draw_lock_tiny(gui_surface_t* dst, int ox, int oy, uint32_t col) {
+    gui_surface_putpixel(dst, ox + 1, oy, col);
+    gui_surface_putpixel(dst, ox + 2, oy, col);
+    gui_surface_putpixel(dst, ox + 3, oy, col);
+    gui_surface_putpixel(dst, ox, oy + 1, col);
+    gui_surface_putpixel(dst, ox + 4, oy + 1, col);
+    gui_surface_putpixel(dst, ox, oy + 2, col);
+    gui_surface_putpixel(dst, ox + 4, oy + 2, col);
+    gui_surface_fill(dst, ox, oy + 3, 5, 4, col);
+}
+
 static void draw_net_popup(gui_surface_t* dst) {
     int px = sw - NET_POPUP_W - 8;
-    int py = sh - DOCK_H - NET_POPUP_H - 8;
+    int py = TASKBAR_H + 4;
+    int ph = net_popup_height();
     int ly;
     netif_t* iface = netif_get(0);
 
-    draw_rounded_rect_alpha(dst, px, py, NET_POPUP_W, NET_POPUP_H, THEME_RADIUS_MD, COL_POPUP_BG, 220);
-    /* border accent line at top */
-    alpha_blend_fill(dst, px + 3, py, NET_POPUP_W - 6, 1, THEME_COL_ACCENT, 40);
+    /* Trigger scan on first open */
+    if (!net_popup_scanned) {
+        wifi_scan();
+        net_popup_scanned = 1;
+    }
+
+    draw_rounded_rect_alpha(dst, px, py, NET_POPUP_W, ph, THEME_RADIUS_MD, COL_POPUP_BG, 230);
+    /* border */
+    alpha_blend_fill(dst, px, py, NET_POPUP_W, 1, theme.border, 80);
+    alpha_blend_fill(dst, px, py + ph - 1, NET_POPUP_W, 1, theme.border, 80);
+    alpha_blend_fill(dst, px, py, 1, ph, theme.border, 80);
+    alpha_blend_fill(dst, px + NET_POPUP_W - 1, py, 1, ph, theme.border, 80);
+    /* accent top line */
+    alpha_blend_fill(dst, px + 3, py, NET_POPUP_W - 6, 1, THEME_COL_ACCENT, 50);
 
     /* title */
     gui_surface_draw_string(dst, px + 10, py + 8, "Network", COL_POPUP_TEXT, 0, 0);
@@ -1786,15 +1923,14 @@ static void draw_net_popup(gui_surface_t* dst) {
     /* ── Ethernet section ── */
     if (!iface) {
         gui_surface_draw_string(dst, px + 10, ly, "No interface", COL_POPUP_DIM, 0, 0);
-        ly += FONT_PSF_HEIGHT + 6;
+        ly += FONT_PSF_HEIGHT + 5;
     } else {
         int connected = (iface->up && iface->ip_addr != 0);
-        /* status line */
         gui_surface_draw_string(dst, px + 10, ly, "Ethernet:", COL_POPUP_TEXT, 0, 0);
         gui_surface_draw_string(dst, px + 10 + 10 * FONT_PSF_WIDTH, ly,
             connected ? "Connected" : "Disconnected",
             connected ? COL_NET_GREEN : COL_NET_RED, 0, 0);
-        ly += FONT_PSF_HEIGHT + 6;
+        ly += FONT_PSF_HEIGHT + 5;
 
         gui_surface_draw_string(dst, px + 10, ly, "Interface:", COL_POPUP_DIM, 0, 0);
         gui_surface_draw_string(dst, px + 10 + 11 * FONT_PSF_WIDTH, ly,
@@ -1804,7 +1940,6 @@ static void draw_net_popup(gui_surface_t* dst) {
         if (connected) {
             char ip_buf[16];
             uint32_t ip = iface->ip_addr;
-            /* format IP as a.b.c.d */
             {
                 int pos = 0, oct;
                 for (oct = 0; oct < 4; oct++) {
@@ -1830,64 +1965,118 @@ static void draw_net_popup(gui_surface_t* dst) {
 
     {
         int ws = wifi_get_state();
-        gui_surface_draw_string(dst, px + 10, ly, "WiFi:", COL_POPUP_TEXT, 0, 0);
+        gui_surface_draw_string(dst, px + 10, ly, "WiFi", COL_POPUP_TEXT, 0, 0);
 
         if (ws == WIFI_STATE_OFF) {
-            gui_surface_draw_string(dst, px + 10 + 10 * FONT_PSF_WIDTH, ly,
+            gui_surface_draw_string(dst, px + 10 + 6 * FONT_PSF_WIDTH, ly,
                 "Disabled", COL_NET_RED, 0, 0);
-        } else if (ws == WIFI_STATE_CONNECTED) {
-            const wifi_network_t* cur = wifi_current_network();
-            gui_surface_draw_string(dst, px + 10 + 10 * FONT_PSF_WIDTH, ly,
-                "Connected", COL_NET_GREEN, 0, 0);
             ly += FONT_PSF_HEIGHT + 4;
-            if (cur) {
-                gui_surface_draw_string(dst, px + 10, ly, "SSID:", COL_POPUP_DIM, 0, 0);
-                gui_surface_draw_string(dst, px + 10 + 11 * FONT_PSF_WIDTH, ly,
-                    cur->ssid, COL_POPUP_TEXT, 0, 0);
-                ly += FONT_PSF_HEIGHT + 4;
-            }
-            /* Show wlan0 IP */
-            {
-                netif_t* wlan = netif_find("wlan0");
-                if (wlan && wlan->ip_addr) {
-                    char wip[16];
-                    int pos = 0, oct;
-                    uint32_t ip = wlan->ip_addr;
-                    for (oct = 0; oct < 4; oct++) {
-                        uint8_t b = (uint8_t)(ip >> (oct * 8));
-                        if (b >= 100) wip[pos++] = '0' + b / 100;
-                        if (b >= 10)  wip[pos++] = '0' + (b / 10) % 10;
-                        wip[pos++] = '0' + b % 10;
-                        if (oct < 3) wip[pos++] = '.';
-                    }
-                    wip[pos] = '\0';
-                    gui_surface_draw_string(dst, px + 10, ly, "IP:", COL_POPUP_DIM, 0, 0);
-                    gui_surface_draw_string(dst, px + 10 + 11 * FONT_PSF_WIDTH, ly,
-                        wip, COL_POPUP_TEXT, 0, 0);
-                    ly += FONT_PSF_HEIGHT + 4;
+        } else {
+            /* Show connection status next to title */
+            if (ws == WIFI_STATE_CONNECTED) {
+                const wifi_network_t* cur = wifi_current_network();
+                if (cur) {
+                    gui_surface_draw_string(dst, px + 10 + 5 * FONT_PSF_WIDTH, ly,
+                        "-", COL_POPUP_DIM, 0, 0);
+                    gui_surface_draw_string(dst, px + 10 + 7 * FONT_PSF_WIDTH, ly,
+                        cur->ssid, COL_NET_GREEN, 0, 0);
                 }
             }
-        } else {
-            gui_surface_draw_string(dst, px + 10 + 10 * FONT_PSF_WIDTH, ly,
-                "Not connected", COL_POPUP_DIM, 0, 0);
+            ly += FONT_PSF_HEIGHT + 4;
+
+            /* Show WiFi network list from scan results */
+            {
+                int cnt = wifi_scan_count();
+                const wifi_network_t* nets = wifi_scan_results();
+                const wifi_network_t* cur_net = wifi_current_network();
+                int show = cnt;
+                if (show > NET_POPUP_MAX_WIFI) show = NET_POPUP_MAX_WIFI;
+
+                /* Clamp scroll */
+                if (cnt > NET_POPUP_MAX_WIFI) {
+                    int max_scroll = cnt - NET_POPUP_MAX_WIFI;
+                    if (net_popup_wifi_scroll > max_scroll)
+                        net_popup_wifi_scroll = max_scroll;
+                    if (net_popup_wifi_scroll < 0)
+                        net_popup_wifi_scroll = 0;
+                } else {
+                    net_popup_wifi_scroll = 0;
+                }
+
+                if (cnt == 0) {
+                    gui_surface_draw_string(dst, px + 14, ly + 2,
+                        "No networks found", COL_POPUP_DIM, 0, 0);
+                    ly += NET_WIFI_ROW_H;
+                } else {
+                    /* Scroll indicator top */
+                    if (net_popup_wifi_scroll > 0) {
+                        int ax;
+                        for (ax = -3; ax <= 3; ax++)
+                            gui_surface_putpixel(dst, px + NET_POPUP_W / 2 + ax,
+                                ly - 2, COL_POPUP_DIM);
+                        gui_surface_putpixel(dst, px + NET_POPUP_W / 2, ly - 3, COL_POPUP_DIM);
+                    }
+
+                    int wi;
+                    for (wi = 0; wi < show; wi++) {
+                        int si = wi + net_popup_wifi_scroll;  /* actual index in scan array */
+                        int ry = ly;
+                        int is_current = (cur_net && strcmp(nets[si].ssid, cur_net->ssid) == 0);
+                        int is_hover = (wi == net_popup_wifi_hover);
+
+                        /* Hover/selection highlight */
+                        if (is_hover) {
+                            draw_rounded_rect_alpha(dst, px + 6, ry,
+                                NET_POPUP_W - 12, NET_WIFI_ROW_H - 2,
+                                THEME_RADIUS_SM, theme.accent, 40);
+                        }
+
+                        /* Signal bars */
+                        draw_signal_bars(dst, px + 12, ry + (NET_WIFI_ROW_H - 10) / 2,
+                            nets[si].signal, is_current ? COL_NET_GREEN : COL_POPUP_TEXT);
+
+                        /* SSID name */
+                        gui_surface_draw_string(dst, px + 26, ry + (NET_WIFI_ROW_H - FONT_PSF_HEIGHT) / 2,
+                            nets[si].ssid,
+                            is_current ? COL_NET_GREEN : COL_POPUP_TEXT, 0, 0);
+
+                        /* Lock icon for secured networks */
+                        if (nets[si].security != WIFI_SEC_OPEN) {
+                            draw_lock_tiny(dst, px + NET_POPUP_W - 28,
+                                ry + (NET_WIFI_ROW_H - 7) / 2, COL_POPUP_DIM);
+                        }
+
+                        /* "Connected" badge */
+                        if (is_current) {
+                            gui_surface_draw_string(dst, px + NET_POPUP_W - 80,
+                                ry + (NET_WIFI_ROW_H - FONT_PSF_HEIGHT) / 2,
+                                "On", COL_NET_GREEN, 0, 0);
+                        }
+
+                        ly += NET_WIFI_ROW_H;
+                    }
+
+                    /* Scroll indicator bottom */
+                    if (net_popup_wifi_scroll + NET_POPUP_MAX_WIFI < cnt) {
+                        int ax;
+                        for (ax = -3; ax <= 3; ax++)
+                            gui_surface_putpixel(dst, px + NET_POPUP_W / 2 + ax,
+                                ly + 1, COL_POPUP_DIM);
+                        gui_surface_putpixel(dst, px + NET_POPUP_W / 2, ly + 2, COL_POPUP_DIM);
+                    }
+                }
+            }
         }
     }
 
-    ly += 6;
+    ly += 4;
 
-    /* ── Buttons ── */
-    /* "Open Network Config" */
-    draw_rounded_rect(dst, px + 10, ly, NET_POPUP_W - 20, 24, THEME_RADIUS_SM, COL_POPUP_BTN);
-    gui_surface_draw_string(dst, px + 10 + (NET_POPUP_W - 20 - 18 * FONT_PSF_WIDTH) / 2,
-        ly + (24 - FONT_PSF_HEIGHT) / 2,
-        "Open Network Config", theme_contrast_text(COL_POPUP_BTN), 0, 0);
-    ly += 28;
-
-    /* "Open WiFi Config" */
-    draw_rounded_rect(dst, px + 10, ly, NET_POPUP_W - 20, 24, THEME_RADIUS_SM, COL_POPUP_BTN);
-    gui_surface_draw_string(dst, px + 10 + (NET_POPUP_W - 20 - 15 * FONT_PSF_WIDTH) / 2,
-        ly + (24 - FONT_PSF_HEIGHT) / 2,
-        "Open WiFi Config", theme_contrast_text(COL_POPUP_BTN), 0, 0);
+    /* ── Settings button ── */
+    draw_rounded_rect_alpha(dst, px + 12, ly, NET_POPUP_W - 24, 30, THEME_RADIUS_MD, theme.surface0, 180);
+    alpha_blend_fill(dst, px + 12, ly + 29, NET_POPUP_W - 24, 1, theme.border, 50);
+    gui_surface_draw_string(dst, px + 12 + (NET_POPUP_W - 24 - 16 * FONT_PSF_WIDTH) / 2,
+        ly + (30 - FONT_PSF_HEIGHT) / 2,
+        "Network Settings", COL_POPUP_TEXT, 0, 0);
 }
 
 static void open_start_menu(void) {
@@ -2137,12 +2326,13 @@ void desktop_paint_region(gui_surface_t* dst, int x0, int y0, int x1, int y1) {
     /* overlay network popup if open and intersects dirty region */
     if (net_popup_open) {
         int npx = sw - NET_POPUP_W - 8;
-        int npy = sh - DOCK_H - NET_POPUP_H - 8;
+        int npy = TASKBAR_H + 4;
+        int nph = net_popup_height();
         if (!(npx + NET_POPUP_W <= x0 || x1 <= npx ||
-              npy + NET_POPUP_H <= y0 || y1 <= npy)) {
+              npy + nph <= y0 || y1 <= npy)) {
             {
                 int ax0 = npx, ay0 = npy;
-                int ax1 = npx + NET_POPUP_W, ay1 = npy + NET_POPUP_H;
+                int ax1 = npx + NET_POPUP_W, ay1 = npy + nph;
                 int ar;
                 if (ax0 < 0) ax0 = 0; if (ay0 < 0) ay0 = 0;
                 if (ax1 > sw) ax1 = sw; if (ay1 > sh) ay1 = sh;
@@ -2594,6 +2784,33 @@ void desktop_update_hover(int mx, int my, int buttons) {
             gui_dirty_add(dctx_menu_x, dctx_menu_y, DCTX_W, dth);
     }
 
+    /* Update network popup WiFi row hover */
+    if (net_popup_open) {
+        int old_wh = net_popup_wifi_hover;
+        int npx = sw - NET_POPUP_W - 8;
+        int npy = TASKBAR_H + 4;
+        int nph = net_popup_height();
+        int ws = wifi_get_state();
+        net_popup_wifi_hover = -1;
+        if (ws != WIFI_STATE_OFF &&
+            mx >= npx && mx < npx + NET_POPUP_W &&
+            my >= npy && my < npy + nph) {
+            /* Compute WiFi list start Y */
+            int wly = npy + 8 + FONT_PSF_HEIGHT + 10;
+            wly += 3 * (FONT_PSF_HEIGHT + 5);
+            wly += 10;
+            wly += FONT_PSF_HEIGHT + 4;
+            int cnt = wifi_scan_count();
+            int show = cnt;
+            if (show > NET_POPUP_MAX_WIFI) show = NET_POPUP_MAX_WIFI;
+            if (my >= wly && my < wly + show * NET_WIFI_ROW_H) {
+                net_popup_wifi_hover = (my - wly) / NET_WIFI_ROW_H;
+            }
+        }
+        if (net_popup_wifi_hover != old_wh)
+            gui_dirty_add(npx, npy, NET_POPUP_W, nph);
+    }
+
     if (dock_hover_idx != old_hover) {
         /* Reset scale for immediate feedback on hover change */
         if (dock_hover_idx < 0) dock_scale = 0;
@@ -2621,29 +2838,56 @@ int desktop_handle_click(int mx, int my, int button) {
     /* handle net popup clicks */
     if (net_popup_open) {
         int px = sw - NET_POPUP_W - 8;
-        int py = sh - DOCK_H - NET_POPUP_H - 8;
+        int py = TASKBAR_H + 4;
+        int ph = net_popup_height();
         if (mx >= px && mx < px + NET_POPUP_W &&
-            my >= py && my < py + NET_POPUP_H) {
+            my >= py && my < py + ph) {
             if (button == 1) {
-                /* Two buttons at bottom of popup: Network Config and WiFi Config.
-                 * Compute button positions from bottom of popup. */
-                int btn_w = NET_POPUP_W - 20;
-                int btn_h = 24;
-                /* WiFi config button is at bottom - 4, Network config button above it */
-                int wifi_btn_y = py + NET_POPUP_H - 4 - btn_h;
-                int net_btn_y  = wifi_btn_y - 28;
+                /* Settings button at bottom of popup */
+                int btn_w = NET_POPUP_W - 24;
+                int btn_h = 30;
+                int btn_y = py + ph - 8 - btn_h;
 
-                if (my >= net_btn_y && my < net_btn_y + btn_h &&
-                    mx >= px + 10 && mx < px + 10 + btn_w) {
+                if (my >= btn_y && my < btn_y + btn_h &&
+                    mx >= px + 12 && mx < px + 12 + btn_w) {
                     close_net_popup();
                     netcfg_app_open();
                     return 1;
                 }
-                if (my >= wifi_btn_y && my < wifi_btn_y + btn_h &&
-                    mx >= px + 10 && mx < px + 10 + btn_w) {
-                    close_net_popup();
-                    wificfg_app_open();
-                    return 1;
+
+                /* WiFi network row clicks */
+                {
+                    int ws = wifi_get_state();
+                    if (ws != WIFI_STATE_OFF) {
+                        /* Compute WiFi list start Y (same as in draw_net_popup) */
+                        int wly = py + 8 + FONT_PSF_HEIGHT + 10;  /* after title */
+                        wly += 3 * (FONT_PSF_HEIGHT + 5);  /* ethernet section */
+                        wly += 10;  /* separator gap */
+                        wly += FONT_PSF_HEIGHT + 4;  /* wifi header */
+
+                        int cnt = wifi_scan_count();
+                        int show = cnt;
+                        if (show > NET_POPUP_MAX_WIFI) show = NET_POPUP_MAX_WIFI;
+                        int wi;
+                        for (wi = 0; wi < show; wi++) {
+                            int ry = wly + wi * NET_WIFI_ROW_H;
+                            if (my >= ry && my < ry + NET_WIFI_ROW_H) {
+                                int si = wi + net_popup_wifi_scroll;
+                                const wifi_network_t* nets = wifi_scan_results();
+                                if (si < cnt) {
+                                    /* Try to connect (password handling via wificfg for secured nets) */
+                                    if (nets[si].security == WIFI_SEC_OPEN) {
+                                        wifi_connect(nets[si].ssid, "");
+                                    } else {
+                                        /* Open WiFi config for password entry */
+                                        close_net_popup();
+                                        wificfg_app_open();
+                                    }
+                                }
+                                return 1;
+                            }
+                        }
+                    }
                 }
             }
             return 1;
@@ -2904,10 +3148,27 @@ int desktop_handle_click(int mx, int my, int button) {
                     close_net_popup();
                 } else {
                     net_popup_open = 1;
+                    net_popup_scanned = 0;
+                    net_popup_wifi_hover = -1;
+                    net_popup_wifi_scroll = 0;
                     int px = sw - NET_POPUP_W - 8;
-                    int py = sh - DOCK_H - NET_POPUP_H - 8;
-                    gui_dirty_add(px, py, NET_POPUP_W, NET_POPUP_H);
+                    int py = TASKBAR_H + 4;
+                    gui_dirty_add(px, py, NET_POPUP_W, net_popup_height());
                 }
+                return 1;
+            }
+        }
+
+        /* Volume icon: left-click toggles mute, scroll changes volume */
+        {
+            if (mx >= tray_vol_x && mx < tray_vol_x + 20 && button == 1) {
+                audio_set_mute(!audio_get_mute());
+                int vol = audio_get_volume();
+                if (audio_get_mute())
+                    osd_show('M', "Muted", 0);
+                else
+                    osd_show('V', "Volume", vol);
+                desk_valid = 0;
                 return 1;
             }
         }
@@ -3006,6 +3267,47 @@ int desktop_handle_click(int mx, int my, int button) {
     }
 
     return 0;
+}
+
+int desktop_handle_scroll(int mx, int my, int delta) {
+    /* Scroll on taskbar near volume icon → adjust volume */
+    if (my < TASKBAR_H && mx >= tray_vol_x - 4 && mx < tray_vol_x + 24) {
+        int vol = audio_get_volume();
+        vol += delta * 5;
+        if (vol < 0)   vol = 0;
+        if (vol > 100) vol = 100;
+        audio_set_volume(vol);
+        if (audio_get_mute() && vol > 0)
+            audio_set_mute(0);
+        osd_show('V', "Volume", vol);
+        desk_valid = 0;
+        return 1;
+    }
+
+    if (!net_popup_open) return 0;
+    int px = sw - NET_POPUP_W - 8;
+    int py = TASKBAR_H + 4;
+    int ph = net_popup_height();
+    if (mx < px || mx >= px + NET_POPUP_W ||
+        my < py || my >= py + ph)
+        return 0;
+
+    int ws = wifi_get_state();
+    if (ws == WIFI_STATE_OFF) return 1;  /* consume but nothing to scroll */
+
+    int cnt = wifi_scan_count();
+    if (cnt <= NET_POPUP_MAX_WIFI) return 1;  /* all fit, no scroll needed */
+
+    int old_scroll = net_popup_wifi_scroll;
+    net_popup_wifi_scroll -= delta;  /* scroll up = positive delta → decrease offset */
+    if (net_popup_wifi_scroll < 0) net_popup_wifi_scroll = 0;
+    int max_scroll = cnt - NET_POPUP_MAX_WIFI;
+    if (net_popup_wifi_scroll > max_scroll) net_popup_wifi_scroll = max_scroll;
+
+    if (net_popup_wifi_scroll != old_scroll)
+        gui_dirty_add(px, py, NET_POPUP_W, ph);
+
+    return 1;
 }
 
 int desktop_handle_key(int event_type, char key) {
