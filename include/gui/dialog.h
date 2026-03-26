@@ -23,4 +23,15 @@ void dialog_save_file(const char* start_dir, const char* default_name,
  * title and message are displayed. User dismisses with OK. */
 void dialog_msgbox(int type, const char* title, const char* message);
 
+/* ---- Color picker ---- */
+#include <stdint.h>
+
+/* Callback invoked when the user picks a color or cancels.
+ * colour is the RGB value chosen; cancelled is 1 if dismissed. */
+typedef void (*color_callback_t)(uint32_t colour, int cancelled, void* userdata);
+
+/* Open a color picker dialog.  initial is the starting RGB color.
+ * cb is called when the user confirms or cancels. */
+void dialog_color_picker(uint32_t initial, color_callback_t cb, void* userdata);
+
 #endif

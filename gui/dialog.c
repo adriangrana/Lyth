@@ -555,3 +555,355 @@ void dialog_msgbox(int type, const char* title, const char* message) {
     mb.win->needs_redraw = 1;
     gui_dirty_add(mb.win->x, mb.win->y, mb.win->width, mb.win->height);
 }
+
+/* ==================================================================
+ *  Color Picker dialog
+ *
+ *  Layout:  [SV gradient 160x128]  [Hue bar 16x128]
+ *           [Preview swatch]  [Hex: RRGGBB input]
+ *           [Cancel]                [OK]
+ * ================================================================== */
+
+#define CP_W        280
+#define CP_H        260
+#define CP_PAD      12
+#define CP_SV_W     160
+#define CP_SV_H     128
+#define CP_HUE_W     16
+#define CP_HUE_H    128
+#define CP_BTN_W     70
+#define CP_BTN_H     26
+#define CP_PREV_SZ   24
+
+static struct {
+    gui_window_t* win;
+    int open;
+    int hue;        /* 0..359 */
+    int sat;        /* 0..255 */
+    int val;        /* 0..255 */
+    uint32_t rgb;
+    char hex_buf[8]; /* "RRGGBB\0" */
+    int hex_len;
+    int hex_focus;
+    color_callback_t cb;
+    void* userdata;
+} cp;
+
+/* HSV (h:0..359, s:0..255, v:0..255) -> RGB */
+static uint32_t hsv_to_rgb(int h, int s, int v) {
+    int region, remainder, p, q, t;
+    int r, g, b;
+
+    if (s == 0) return ((uint32_t)v << 16) | ((uint32_t)v << 8) | (uint32_t)v;
+
+    region = h / 60;
+    remainder = (h - region * 60) * 255 / 60;
+
+    p = (v * (255 - s)) >> 8;
+    q = (v * (255 - ((s * remainder) >> 8))) >> 8;
+    t = (v * (255 - ((s * (255 - remainder)) >> 8))) >> 8;
+
+    switch (region) {
+        case 0:  r = v; g = t; b = p; break;
+        case 1:  r = q; g = v; b = p; break;
+        case 2:  r = p; g = v; b = t; break;
+        case 3:  r = p; g = q; b = v; break;
+        case 4:  r = t; g = p; b = v; break;
+        default: r = v; g = p; b = q; break;
+    }
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
+/* RGB -> HSV */
+static void rgb_to_hsv(uint32_t rgb, int *h, int *s, int *v) {
+    int r = (rgb >> 16) & 0xFF;
+    int g = (rgb >> 8) & 0xFF;
+    int b = rgb & 0xFF;
+    int mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    int mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    int delta = mx - mn;
+
+    *v = mx;
+    if (mx == 0) { *s = 0; *h = 0; return; }
+    *s = delta * 255 / mx;
+    if (delta == 0) { *h = 0; return; }
+
+    if (mx == r)      *h = 60 * (g - b) / delta;
+    else if (mx == g) *h = 120 + 60 * (b - r) / delta;
+    else               *h = 240 + 60 * (r - g) / delta;
+    if (*h < 0) *h += 360;
+}
+
+static void cp_update_hex(void) {
+    static const char hx[] = "0123456789ABCDEF";
+    uint32_t c = cp.rgb;
+    cp.hex_buf[0] = hx[(c >> 20) & 0xF];
+    cp.hex_buf[1] = hx[(c >> 16) & 0xF];
+    cp.hex_buf[2] = hx[(c >> 12) & 0xF];
+    cp.hex_buf[3] = hx[(c >>  8) & 0xF];
+    cp.hex_buf[4] = hx[(c >>  4) & 0xF];
+    cp.hex_buf[5] = hx[ c        & 0xF];
+    cp.hex_buf[6] = '\0';
+    cp.hex_len = 6;
+}
+
+static void cp_update_rgb(void) {
+    cp.rgb = hsv_to_rgb(cp.hue, cp.sat, cp.val);
+    cp_update_hex();
+}
+
+static void cp_paint(gui_window_t* win) {
+    gui_surface_t* s = &win->surface;
+    int ox = GUI_BORDER_WIDTH + CP_PAD;
+    int oy = GUI_TITLEBAR_HEIGHT + CP_PAD;
+    int hue_x = ox + CP_SV_W + 8;
+    int x, y;
+
+    if (!s->pixels) return;
+    gui_surface_clear(s, THEME_COL_BASE);
+
+    /* SV gradient (saturation horizontal, value vertical) */
+    for (y = 0; y < CP_SV_H; y++) {
+        int v = 255 - y * 255 / (CP_SV_H - 1);
+        for (x = 0; x < CP_SV_W; x++) {
+            int sv = x * 255 / (CP_SV_W - 1);
+            gui_surface_putpixel(s, ox + x, oy + y, hsv_to_rgb(cp.hue, sv, v));
+        }
+    }
+    /* SV crosshair */
+    {
+        int cx = ox + cp.sat * (CP_SV_W - 1) / 255;
+        int cy = oy + (255 - cp.val) * (CP_SV_H - 1) / 255;
+        int i;
+        for (i = -3; i <= 3; i++) {
+            if (cx + i >= ox && cx + i < ox + CP_SV_W)
+                gui_surface_putpixel(s, cx + i, cy, 0xFFFFFF);
+            if (cy + i >= oy && cy + i < oy + CP_SV_H)
+                gui_surface_putpixel(s, cx, cy + i, 0xFFFFFF);
+        }
+    }
+
+    /* Hue bar */
+    for (y = 0; y < CP_HUE_H; y++) {
+        uint32_t hc = hsv_to_rgb(y * 359 / (CP_HUE_H - 1), 255, 255);
+        for (x = 0; x < CP_HUE_W; x++)
+            gui_surface_putpixel(s, hue_x + x, oy + y, hc);
+    }
+    /* Hue indicator */
+    {
+        int hy = oy + cp.hue * (CP_HUE_H - 1) / 359;
+        gui_surface_hline(s, hue_x - 1, hy, CP_HUE_W + 2, 0xFFFFFF);
+    }
+
+    /* Preview swatch + hex field */
+    {
+        int py = oy + CP_SV_H + 12;
+        gui_surface_fill(s, ox, py, CP_PREV_SZ, CP_PREV_SZ, cp.rgb);
+        /* border around preview */
+        gui_surface_hline(s, ox - 1, py - 1, CP_PREV_SZ + 2, THEME_COL_BORDER);
+        gui_surface_hline(s, ox - 1, py + CP_PREV_SZ, CP_PREV_SZ + 2, THEME_COL_BORDER);
+
+        gui_surface_draw_string(s, ox + CP_PREV_SZ + 10, py + 4, "#", THEME_COL_DIM, 0, 0);
+
+        /* hex input field */
+        {
+            int fx = ox + CP_PREV_SZ + 10 + THEME_FONT_W + 4;
+            int fw = 6 * THEME_FONT_W + 8;
+            gui_surface_fill(s, fx, py, fw, CP_PREV_SZ, THEME_COL_CRUST);
+            gui_surface_hline(s, fx, py, fw, cp.hex_focus ? THEME_COL_ACCENT : THEME_COL_BORDER);
+            gui_surface_hline(s, fx, py + CP_PREV_SZ - 1, fw, cp.hex_focus ? THEME_COL_ACCENT : THEME_COL_BORDER);
+            gui_surface_draw_string(s, fx + 4, py + (CP_PREV_SZ - THEME_FONT_H) / 2,
+                                    cp.hex_buf, THEME_COL_TEXT, 0, 0);
+            /* cursor */
+            if (cp.hex_focus) {
+                int curx = fx + 4 + cp.hex_len * THEME_FONT_W;
+                gui_surface_fill(s, curx, py + 4, 1, THEME_FONT_H, THEME_COL_ACCENT);
+            }
+        }
+    }
+
+    /* Buttons: Cancel / OK */
+    {
+        int by = win->height - GUI_BORDER_WIDTH - CP_BTN_H - CP_PAD;
+        int bx_cancel = ox;
+        int bx_ok = win->width - GUI_BORDER_WIDTH - CP_PAD - CP_BTN_W;
+
+        gui_surface_fill(s, bx_cancel, by, CP_BTN_W, CP_BTN_H, THEME_COL_SURFACE0);
+        gui_surface_draw_string(s, bx_cancel + (CP_BTN_W - 8 * THEME_FONT_W) / 2,
+                                by + (CP_BTN_H - THEME_FONT_H) / 2,
+                                "Cancelar", THEME_COL_TEXT, 0, 0);
+
+        gui_surface_fill(s, bx_ok, by, CP_BTN_W, CP_BTN_H, THEME_COL_ACCENT);
+        gui_surface_draw_string(s, bx_ok + (CP_BTN_W - 2 * THEME_FONT_W) / 2,
+                                by + (CP_BTN_H - THEME_FONT_H) / 2,
+                                "OK", THEME_COL_BASE, 0, 0);
+    }
+
+    gui_window_draw_decorations(win);
+}
+
+static void cp_close_confirm(void) {
+    if (cp.cb)
+        cp.cb(cp.rgb, 0, cp.userdata);
+    gui_window_close_animated(cp.win);
+}
+
+static void cp_close_cancel(void) {
+    if (cp.cb)
+        cp.cb(0, 1, cp.userdata);
+    gui_window_close_animated(cp.win);
+}
+
+static int cp_hex_digit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+    if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+    return -1;
+}
+
+static void cp_apply_hex(void) {
+    uint32_t v = 0;
+    int i;
+    if (cp.hex_len != 6) return;
+    for (i = 0; i < 6; i++) {
+        int d = cp_hex_digit(cp.hex_buf[i]);
+        if (d < 0) return;
+        v = (v << 4) | (uint32_t)d;
+    }
+    cp.rgb = v;
+    rgb_to_hsv(v, &cp.hue, &cp.sat, &cp.val);
+}
+
+static void cp_click(gui_window_t* win, int x, int y, int button) {
+    int ox = GUI_BORDER_WIDTH + CP_PAD;
+    int oy = GUI_TITLEBAR_HEIGHT + CP_PAD;
+    int hue_x = ox + CP_SV_W + 8;
+
+    if (button != 1) return;
+
+    /* SV area click */
+    if (x >= ox && x < ox + CP_SV_W && y >= oy && y < oy + CP_SV_H) {
+        cp.sat = (x - ox) * 255 / (CP_SV_W - 1);
+        cp.val = 255 - (y - oy) * 255 / (CP_SV_H - 1);
+        if (cp.sat < 0) cp.sat = 0; if (cp.sat > 255) cp.sat = 255;
+        if (cp.val < 0) cp.val = 0; if (cp.val > 255) cp.val = 255;
+        cp_update_rgb();
+        cp.hex_focus = 0;
+        win->needs_redraw = 1;
+        gui_dirty_add(win->x, win->y, win->width, win->height);
+        return;
+    }
+
+    /* Hue bar click */
+    if (x >= hue_x && x < hue_x + CP_HUE_W && y >= oy && y < oy + CP_HUE_H) {
+        cp.hue = (y - oy) * 359 / (CP_HUE_H - 1);
+        if (cp.hue < 0) cp.hue = 0; if (cp.hue > 359) cp.hue = 359;
+        cp_update_rgb();
+        cp.hex_focus = 0;
+        win->needs_redraw = 1;
+        gui_dirty_add(win->x, win->y, win->width, win->height);
+        return;
+    }
+
+    /* Hex field click */
+    {
+        int py = oy + CP_SV_H + 12;
+        int fx = ox + CP_PREV_SZ + 10 + THEME_FONT_W + 4;
+        int fw = 6 * THEME_FONT_W + 8;
+        if (x >= fx && x < fx + fw && y >= py && y < py + CP_PREV_SZ) {
+            cp.hex_focus = 1;
+            win->needs_redraw = 1;
+            gui_dirty_add(win->x, win->y, win->width, win->height);
+            return;
+        }
+    }
+
+    /* Buttons */
+    {
+        int by = win->height - GUI_BORDER_WIDTH - CP_BTN_H - CP_PAD;
+        int bx_cancel = ox;
+        int bx_ok = win->width - GUI_BORDER_WIDTH - CP_PAD - CP_BTN_W;
+
+        if (y >= by && y < by + CP_BTN_H) {
+            if (x >= bx_cancel && x < bx_cancel + CP_BTN_W) {
+                cp_close_cancel();
+                return;
+            }
+            if (x >= bx_ok && x < bx_ok + CP_BTN_W) {
+                cp_close_confirm();
+                return;
+            }
+        }
+    }
+
+    /* Click elsewhere — deselect hex field */
+    if (cp.hex_focus) {
+        cp.hex_focus = 0;
+        cp_apply_hex();
+        win->needs_redraw = 1;
+        gui_dirty_add(win->x, win->y, win->width, win->height);
+    }
+}
+
+static void cp_key(gui_window_t* win, int event_type, char key) {
+    if (event_type != 1) return;
+
+    if (key == '\n') {
+        if (cp.hex_focus) cp_apply_hex();
+        cp_close_confirm();
+        return;
+    }
+    if (key == 0x1B) {
+        cp_close_cancel();
+        return;
+    }
+
+    if (cp.hex_focus) {
+        if (key == 0x08) { /* backspace */
+            if (cp.hex_len > 0) {
+                cp.hex_buf[--cp.hex_len] = '\0';
+            }
+        } else if (cp_hex_digit(key) >= 0 && cp.hex_len < 6) {
+            cp.hex_buf[cp.hex_len++] = (key >= 'a' && key <= 'f') ? (char)(key - 32) : key;
+            cp.hex_buf[cp.hex_len] = '\0';
+            if (cp.hex_len == 6) cp_apply_hex();
+        }
+        win->needs_redraw = 1;
+        gui_dirty_add(win->x, win->y, win->width, win->height);
+    }
+}
+
+static void cp_close(gui_window_t* win) {
+    cp.open = 0;
+    cp.win = 0;
+    gui_dirty_add(win->x, win->y, win->width, win->height);
+    gui_window_destroy(win);
+}
+
+void dialog_color_picker(uint32_t initial, color_callback_t cb, void* userdata) {
+    if (cp.open && cp.win) {
+        gui_window_focus(cp.win);
+        return;
+    }
+
+    cp.rgb = initial;
+    cp.cb = cb;
+    cp.userdata = userdata;
+    cp.hex_focus = 0;
+    rgb_to_hsv(initial, &cp.hue, &cp.sat, &cp.val);
+    cp_update_hex();
+
+    cp.win = gui_window_create("Color", 180, 120, CP_W, CP_H,
+                               GUI_WIN_VISIBLE | GUI_WIN_CLOSEABLE |
+                               GUI_WIN_DRAGGABLE | GUI_WIN_FOCUSED);
+    if (!cp.win) return;
+
+    cp.win->on_paint = cp_paint;
+    cp.win->on_click = cp_click;
+    cp.win->on_key   = cp_key;
+    cp.win->on_close = cp_close;
+    cp.open = 1;
+
+    cp.win->needs_redraw = 1;
+    gui_dirty_add(cp.win->x, cp.win->y, cp.win->width, cp.win->height);
+}

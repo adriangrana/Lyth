@@ -20,6 +20,7 @@
 #include "session.h"
 #include "desktop.h"
 #include "renderer.h"
+#include "dialog.h"
 
 /* ---- colours (runtime theme) ---- */
 #define COL_BG          theme.base
@@ -228,6 +229,25 @@ static int apariencia_theme_y;
 static int apariencia_accent_y;
 static int apariencia_autohide_y;
 
+/* Color picker callback for custom accent */
+static void settings_color_cb(uint32_t colour, int cancelled, void* userdata) {
+    (void)userdata;
+    if (cancelled) return;
+    theme_set_accent(colour);
+    theme_save();
+    desktop_invalidate_all();
+    {
+        int wi;
+        for (wi = 0; wi < gui_window_count(); wi++) {
+            gui_window_t *ww = gui_window_get(wi);
+            if (ww) {
+                ww->needs_redraw = 1;
+                gui_dirty_add(ww->x, ww->y, ww->width, ww->height);
+            }
+        }
+    }
+}
+
 static void page_apariencia(gui_surface_t* s, int ox, int oy, int cw, int rh) {
     int is_dark = (theme_get_mode() == THEME_MODE_DARK);
     int i;
@@ -259,6 +279,24 @@ static void page_apariencia(gui_surface_t* s, int ox, int oy, int cw, int rh) {
                 gui_surface_hline(s, bx - 1, oy + 16, 22, 0xFFFFFF);
                 gui_surface_fill(s, bx - 1, oy, 1, 16, 0xFFFFFF);
                 gui_surface_fill(s, bx + 20, oy, 1, 16, 0xFFFFFF);
+            }
+        }
+        /* Custom colour "+" button */
+        {
+            int bx = ox + 120 + ACCENT_COUNT * 26;
+            gui_surface_fill(s, bx, oy, 20, 16, THEME_COL_SURFACE0);
+            gui_surface_draw_char(s, bx + 6, oy, '+', COL_TEXT, 0, 0);
+            /* if current accent is custom (not in preset list), highlight it */
+            {
+                int is_preset = 0, pi;
+                for (pi = 0; pi < ACCENT_COUNT; pi++)
+                    if (accent_choices[pi] == cur_acc) { is_preset = 1; break; }
+                if (!is_preset) {
+                    gui_surface_hline(s, bx - 1, oy - 1, 22, 0xFFFFFF);
+                    gui_surface_hline(s, bx - 1, oy + 16, 22, 0xFFFFFF);
+                    gui_surface_fill(s, bx - 1, oy, 1, 16, 0xFFFFFF);
+                    gui_surface_fill(s, bx + 20, oy, 1, 16, 0xFFFFFF);
+                }
             }
         }
     }
@@ -911,6 +949,9 @@ static void set_on_click(gui_window_t* win, int lx, int ly, int button) {
                             }
                         }
                     }
+                } else if (ai == ACCENT_COUNT) {
+                    /* "+" button: open color picker */
+                    dialog_color_picker(theme_get_accent(), settings_color_cb, 0);
                 }
             }
             /* Auto-hide toggle */
