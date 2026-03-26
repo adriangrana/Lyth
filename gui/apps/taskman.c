@@ -106,7 +106,7 @@ static void tm_paint(gui_window_t* win) {
     /* ---- Applications (open windows) ---- */
     {
         int wcount = gui_window_count();
-        int wi;
+        int wi, app_shown = 0;
 
         gui_surface_fill(s, ox, oy, win->width - ox * 2, row_h, COL_TM_HEADER);
         gui_surface_draw_string(s, ox + 4, oy + 2, "Applications", COL_TM_ACCENT, 0, 0);
@@ -123,9 +123,13 @@ static void tm_paint(gui_window_t* win) {
 
             gui_surface_draw_string(s, ox + 8, oy + 2, aw->title, COL_TM_TEXT, 0, 0);
             gui_surface_draw_string(s, ox + 220, oy + 2, state_str, state_col, 0, 0);
+            app_shown++;
             oy += row_h;
             gui_surface_hline(s, ox, oy - 1, win->width - ox * 2, THEME_COL_BORDER);
         }
+        if (app_shown == 0)
+            gui_surface_draw_string(s, ox + 8, oy + 2,
+                                    "No other applications open", COL_TM_DIM, 0, 0);
         oy += 6;
     }
 

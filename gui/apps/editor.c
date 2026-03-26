@@ -333,6 +333,20 @@ static void ed_paint(gui_window_t* win) {
         /* Gutter separator */
         gui_surface_putpixel(s, ED_GUTTER_W - 1, ly, COL_ED_BORDER);
     }
+
+    /* Empty state: show placeholder when buffer is empty and no file loaded */
+    if (ed_buf_len == 0 && !ed_filepath[0]) {
+        int area_w = w - ED_GUTTER_W;
+        int area_h = ED_WIN_H - GUI_TITLEBAR_HEIGHT - ED_STATUS_H;
+        int cx = ED_GUTTER_W + (area_w - 23 * GUI_FONT_W) / 2;
+        int cy = GUI_TITLEBAR_HEIGHT + area_h / 2 - GUI_FONT_H;
+        if (cx < ED_GUTTER_W + 4) cx = ED_GUTTER_W + 4;
+        gui_surface_draw_string(s, cx, cy,
+                                "Start typing to begin...", COL_ED_DIM, 0, 0);
+        gui_surface_draw_string(s, cx, cy + GUI_FONT_H + 4,
+                                "Ctrl+O: Open   Ctrl+N: New", COL_ED_DIM, 0, 0);
+    }
+
     /* Gutter separator full line */
     {
         int r;

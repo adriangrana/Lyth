@@ -270,7 +270,7 @@
       > Título centrado bajo cada thumbnail, cycle con Tab, confirm con Alt release
       > keyboard_get_modifiers() detecta soltar Alt para confirmar
       > Enter confirma, Escape cancela
-- [ ] Exposé/overview (futura)
+- [x] Exposé/overview (futura)
 
 ## FASE 3 — Compositor GPU
 
@@ -324,7 +324,7 @@
 - [x] Dim de fondo para modales
       > Alt-Tab overlay: backdrop semitransparente alpha 220 oscurece fondo
       > Auth prompt: fondo dimmed completo
-- [ ] Overview mode
+- [x] Overview mode
 - [x] Animaciones minimize/maximize
       > Minimize: fade-out via anim_minimizing flag (alpha→0, 51/frame)
       > Restore: fade-in desde alpha=0 al hacer click en taskbar

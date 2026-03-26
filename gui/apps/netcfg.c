@@ -231,8 +231,16 @@ static void net_paint(gui_window_t* win) {
 
     int count = netif_count();
     if (count == 0) {
-        gui_surface_draw_string(s, ox, oy,
-            "No network interfaces found.", COL_NET_DIM, 0, 0);
+        const char *m1 = "No network interfaces found";
+        const char *m2 = "Check your hardware connection";
+        int cw = win->width;
+        int ch = win->height - GUI_TITLEBAR_HEIGHT;
+        int m1w = (int)strlen(m1) * GUI_FONT_W;
+        int m2w = (int)strlen(m2) * GUI_FONT_W;
+        int my = GUI_TITLEBAR_HEIGHT + ch / 2 - GUI_FONT_H;
+        gui_surface_draw_string(s, (cw - m1w) / 2, my, m1, COL_NET_DIM, 0, 0);
+        gui_surface_draw_string(s, (cw - m2w) / 2, my + GUI_FONT_H + 4,
+                                m2, COL_NET_DIM, 0, 0);
         return;
     }
 

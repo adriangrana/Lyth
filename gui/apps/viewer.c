@@ -202,9 +202,15 @@ static void viewer_paint(gui_window_t* win) {
     gui_window_draw_decorations(win);
 
     if (!vst.buf) {
-        gui_surface_draw_string(s, cx + VW_PAD, cy + VW_PAD,
-                                "No file loaded. Open with File Manager.",
-                                COL_V_DIM, 0, 0);
+        const char *msg1 = "No file loaded";
+        const char *msg2 = "Open a file from the File Manager";
+        int m1w = (int)strlen(msg1) * GUI_FONT_W;
+        int m2w = (int)strlen(msg2) * GUI_FONT_W;
+        int my = cy + ch / 2 - GUI_FONT_H;
+        gui_surface_draw_string(s, cx + (cw - m1w) / 2, my,
+                                msg1, COL_V_TEXT, 0, 0);
+        gui_surface_draw_string(s, cx + (cw - m2w) / 2, my + GUI_FONT_H + 4,
+                                msg2, COL_V_DIM, 0, 0);
     } else if (vst.is_image && vst.pixels) {
         /* Blit image centered or at (0,0) if larger than viewport */
         int ox = cx + (cw > vst.img_w ? (cw - vst.img_w) / 2 : 0);
