@@ -95,6 +95,7 @@ typedef struct gui_window {
     uint8_t anim_alpha_start;   /* alpha when animation started */
     unsigned int anim_start_ms; /* timestamp when current anim began */
     unsigned int anim_dur_ms;   /* duration of current animation (ms) */
+    unsigned int redraw_count;  /* debug: total redraws for this window */
     void* app_data;
 } gui_window_t;
 

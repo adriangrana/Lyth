@@ -140,7 +140,7 @@ static gui_window_t *alttab_wins[ALTTAB_MAX_ITEMS];
 #define PERF_OVL_W 170
 #define PERF_OVL_LINE (THEME_FONT_H + 2)
 #define PERF_OVL_GRAPH_H 40
-#define PERF_OVL_LINES 9  /* FPS, Avg, Max, P95, Dirty, Render, Compose, Present, Resolution */
+#define PERF_OVL_LINES 10  /* FPS, Avg, Max, P95, Dirty, Win, Render, Compose, Present, Resolution */
 #define PERF_OVL_TOTAL_H (PERF_OVL_LINE * PERF_OVL_LINES + 8 + PERF_OVL_GRAPH_H + 4)
 
 static unsigned int dropped_frames;  /* frames exceeding 16.7ms budget */
@@ -210,6 +210,12 @@ static void paint_perf_overlay(gui_surface_t *s)
     buf[0] = 'D'; buf[1] = 'i'; buf[2] = 'r'; buf[3] = 't'; buf[4] = 'y';
     buf[5] = ':'; buf[6] = ' ';
     uint_to_str(metrics.dirty_count, buf + 7, 10);
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, fg, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* Windows redrawn this frame */
+    buf[0] = 'W'; buf[1] = 'i'; buf[2] = 'n'; buf[3] = ':'; buf[4] = ' ';
+    uint_to_str(metrics.windows_redrawn, buf + 5, 10);
     gui_surface_draw_string(s, PERF_OVL_X, y, buf, fg, 0, 0);
     y += PERF_OVL_LINE;
 
@@ -669,6 +675,7 @@ static void compose_frame(void)
     {
         gui_dirty_rect_t repaint_rects[GUI_MAX_WINDOWS];
         int repaint_count = 0;
+        int win_redrawn = 0;
 
         wcount = gui_window_count();
         for (i = 0; i < wcount; i++)
@@ -695,6 +702,8 @@ static void compose_frame(void)
                     if (w->widget_count > 0)
                         wid_draw_all(w);
                     w->needs_redraw = 0;
+                    w->redraw_count++;
+                    win_redrawn++;
                     /* queue full window rect for dirty merge */
                     if (repaint_count < GUI_MAX_WINDOWS)
                     {
@@ -707,6 +716,7 @@ static void compose_frame(void)
                 }
             }
         }
+        metrics.windows_redrawn = (unsigned int)win_redrawn;
 
         /* merge repainted window rects into dirty list */
         for (i = 0; i < repaint_count; i++)

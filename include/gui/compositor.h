@@ -48,6 +48,7 @@ typedef struct {
     unsigned int drag_win_y;       /* window y after last move */
     unsigned int drag_move_count;  /* window_move() calls this second */
     unsigned int drag_pending_count; /* loop iters with drag pending */
+    unsigned int windows_redrawn;    /* windows repainted this frame */
 } gui_metrics_t;
 
 void gui_get_metrics(gui_metrics_t* out);

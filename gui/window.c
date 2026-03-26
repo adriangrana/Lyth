@@ -292,6 +292,7 @@ gui_window_t* gui_window_create(const char* title, int x, int y,
             win->anim_alpha_start = 0;
             win->anim_start_ms = timer_get_uptime_ms();
             win->anim_dur_ms = THEME_ANIM_NORMAL;
+            win->redraw_count = 0;
             win->needs_redraw = 1;
 
             len = strlen(title);
