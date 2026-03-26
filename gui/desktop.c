@@ -1962,7 +1962,7 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
         }
     }
 
-    /* ---- Launcher (with slide animation) ---- */
+    /* ---- Launcher (with slide + crossfade animation) ---- */
     if (start_menu_open || launcher_anim != 0) {
         int lx = (sw - LAUNCHER_W) / 2;
         int ly = sh - DOCK_H - LAUNCHER_H - 8;
@@ -1972,6 +1972,10 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
         if (anim_frac < 0) anim_frac = 0;
         int slide_off = LAUNCHER_H * (LAUNCHER_ANIM_STEPS - anim_frac) / LAUNCHER_ANIM_STEPS;
         int visible_h = LAUNCHER_H - slide_off;
+        /* Alpha for crossfade: 0 = transparent, 255 = opaque */
+        int launch_alpha = anim_frac * 255 / LAUNCHER_ANIM_STEPS;
+        if (launch_alpha > 255) launch_alpha = 255;
+        if (launch_alpha < 0) launch_alpha = 0;
         if (visible_h <= 0) goto skip_launcher;
 
         if (!(lx + LAUNCHER_W <= x0 || x1 <= lx ||
@@ -1982,19 +1986,41 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
                 launcher_cache_render();
 
             if (launcher_cache.pixels) {
-                /* Blit only the dirty-rect intersection from cache */
+                /* Blit with alpha blending for crossfade */
                 int bx0 = x0 > lx ? x0 : lx;
                 int by0 = y0 > (ly + slide_off) ? y0 : (ly + slide_off);
                 int bx1 = x1 < (lx + LAUNCHER_W) ? x1 : (lx + LAUNCHER_W);
                 int by1 = y1 < (ly + slide_off + visible_h) ? y1 : (ly + slide_off + visible_h);
                 if (bx0 < bx1 && by0 < by1) {
                     int br;
-                    for (br = by0; br < by1; br++) {
-                        int cache_y = br - ly;
-                        int cache_x = bx0 - lx;
-                        memcpy(&dst->pixels[br * dst->stride + bx0],
-                               &launcher_cache.pixels[cache_y * LAUNCHER_W + cache_x],
-                               (size_t)(bx1 - bx0) * 4);
+                    if (launch_alpha >= 255) {
+                        /* Fully opaque — fast path */
+                        for (br = by0; br < by1; br++) {
+                            int cache_y = br - ly;
+                            int cache_x = bx0 - lx;
+                            memcpy(&dst->pixels[br * dst->stride + bx0],
+                                   &launcher_cache.pixels[cache_y * LAUNCHER_W + cache_x],
+                                   (size_t)(bx1 - bx0) * 4);
+                        }
+                    } else {
+                        /* Alpha-blended crossfade */
+                        int a = launch_alpha;
+                        int inv_a = 255 - a;
+                        for (br = by0; br < by1; br++) {
+                            int cache_y = br - ly;
+                            int bx;
+                            for (bx = bx0; bx < bx1; bx++) {
+                                int cache_x = bx - lx;
+                                uint32_t src = launcher_cache.pixels[cache_y * LAUNCHER_W + cache_x];
+                                uint32_t bg  = dst->pixels[br * dst->stride + bx];
+                                uint32_t sr = (src >> 16) & 0xFF, sg = (src >> 8) & 0xFF, sb = src & 0xFF;
+                                uint32_t br2 = (bg >> 16) & 0xFF, bg2 = (bg >> 8) & 0xFF, bb = bg & 0xFF;
+                                uint32_t r = (sr * a + br2 * inv_a) / 255;
+                                uint32_t g = (sg * a + bg2 * inv_a) / 255;
+                                uint32_t b = (sb * a + bb  * inv_a) / 255;
+                                dst->pixels[br * dst->stride + bx] = (r << 16) | (g << 8) | b;
+                            }
+                        }
                     }
                 }
             }
