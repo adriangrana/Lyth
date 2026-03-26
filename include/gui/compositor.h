@@ -50,6 +50,8 @@ typedef struct {
     unsigned int drag_move_count;  /* window_move() calls this second */
     unsigned int drag_pending_count; /* loop iters with drag pending */
     unsigned int windows_redrawn;    /* windows repainted this frame */
+    unsigned int idle_pct;             /* % of loop iters idle (no compose) */
+    unsigned int vram_kb;              /* total surface memory in KB */
 } gui_metrics_t;
 
 void gui_get_metrics(gui_metrics_t* out);

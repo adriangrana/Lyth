@@ -114,6 +114,8 @@ static unsigned int fps_timer_ms;
 static unsigned int frame_time_acc;
 static unsigned int frame_time_samples;
 static unsigned int frame_time_max_this_sec;
+static unsigned int loop_total_count;  /* total main-loop iters this second */
+static unsigned int loop_busy_count;   /* iters that composed a frame */
 
 /* ---- perf overlay ---- */
 static int perf_overlay;  /* 1 = show FPS/frametime overlay (toggle with F3) */
@@ -153,7 +155,7 @@ static int overview_tw[OVERVIEW_MAX], overview_th[OVERVIEW_MAX];
 #define PERF_OVL_W 170
 #define PERF_OVL_LINE (THEME_FONT_H + 2)
 #define PERF_OVL_GRAPH_H 40
-#define PERF_OVL_LINES 11  /* FPS, Avg, Max, P95, Dirty, Win, Render, Compose, Present, Resolution, GPU */
+#define PERF_OVL_LINES 13  /* FPS, Avg, Max, P95, Dirty, Win, Render, Compose, Present, Resolution, GPU, Idle, VRAM */
 #define PERF_OVL_TOTAL_H (PERF_OVL_LINE * PERF_OVL_LINES + 8 + PERF_OVL_GRAPH_H + 4)
 
 static unsigned int dropped_frames;  /* frames exceeding 16.7ms budget */
@@ -263,6 +265,20 @@ static void paint_perf_overlay(gui_surface_t *s)
     buf[0] = 'G'; buf[1] = 'P'; buf[2] = 'U'; buf[3] = ':'; buf[4] = ' ';
     uint_to_str(metrics.gpu_upload_px / 1000, buf + 5, 10);
     { int l = (int)strlen(buf); buf[l] = 'K'; buf[l+1] = 'p'; buf[l+2] = 'x'; buf[l+3] = 0; }
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, 0x88AACC, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* CPU idle % */
+    buf[0] = 'I'; buf[1] = 'd'; buf[2] = 'l'; buf[3] = 'e'; buf[4] = ':'; buf[5] = ' ';
+    uint_to_str(metrics.idle_pct, buf + 6, 10);
+    { int l = (int)strlen(buf); buf[l] = '%'; buf[l+1] = 0; }
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, metrics.idle_pct > 50 ? fg : 0xFF4444, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* VRAM usage (KB) */
+    buf[0] = 'V'; buf[1] = 'R'; buf[2] = 'A'; buf[3] = 'M'; buf[4] = ':'; buf[5] = ' ';
+    uint_to_str(metrics.vram_kb, buf + 6, 10);
+    { int l = (int)strlen(buf); buf[l] = 'K'; buf[l+1] = 'B'; buf[l+2] = 0; }
     gui_surface_draw_string(s, PERF_OVL_X, y, buf, 0x88AACC, 0, 0);
     y += PERF_OVL_LINE;
 
@@ -1907,6 +1923,8 @@ void gui_run(void)
         int mouse_scroll = 0;
         unsigned int coalesced = 0;
 
+        loop_total_count++;
+
         usb_hid_poll();
         e1000_poll_rx();
 
@@ -2105,6 +2123,7 @@ void gui_run(void)
 
                 last_frame_ms = timer_get_uptime_ms();
                 present_count++;
+                loop_busy_count++;
             }
 
             dirty_count = 0;
@@ -2182,6 +2201,7 @@ void gui_run(void)
                 last_frame_ms = now_ms;
 
                 present_count++;
+                loop_busy_count++;
             }
         }
 
@@ -2203,6 +2223,33 @@ void gui_run(void)
                 frame_time_max_this_sec = 0;
                 metrics.drag_move_count = 0;
                 metrics.drag_pending_count = 0;
+
+                /* CPU idle: % of loop iters that did NOT compose */
+                if (loop_total_count > 0)
+                    metrics.idle_pct = ((loop_total_count - loop_busy_count) * 100) / loop_total_count;
+                else
+                    metrics.idle_pct = 100;
+                loop_total_count = 0;
+                loop_busy_count = 0;
+
+                /* VRAM: backbuffer + bg_buffer + all window surfaces */
+                {
+                    unsigned int vram = 0;
+                    int vi, vc;
+                    /* backbuffer: scr_w * scr_h * 4 bytes */
+                    vram += (unsigned int)(scr_w * scr_h) * 4;
+                    /* bg_buffer: same size */
+                    if (bg_buffer)
+                        vram += (unsigned int)(scr_w * scr_h) * 4;
+                    /* window surfaces */
+                    vc = gui_window_count();
+                    for (vi = 0; vi < vc; vi++) {
+                        gui_window_t *vw = gui_window_get(vi);
+                        if (vw && vw->surface.pixels)
+                            vram += (unsigned int)(vw->surface.width * vw->surface.height) * 4;
+                    }
+                    metrics.vram_kb = vram / 1024;
+                }
 
                 /* refresh perf overlay each second */
                 if (perf_overlay)
