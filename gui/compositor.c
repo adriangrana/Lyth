@@ -86,6 +86,12 @@ static int gui_running;
 static int mouse_x, mouse_y;
 static int need_compose;
 
+/* ---- double-click detection ---- */
+#define DBLCLICK_MS   400  /* max interval between clicks */
+#define DBLCLICK_DIST 6    /* max pixel drift between clicks */
+static unsigned int dblclick_last_ms;
+static int dblclick_last_x, dblclick_last_y;
+
 /* ---- deferred drag state ---- */
 static int drag_pending;           /* 1 if drag position needs applying at frame time */
 static int drag_old_x, drag_old_y; /* position before this frame's drag */
@@ -1136,6 +1142,29 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
                 int rx = mouse_x - gui_window_content_x(w);
                 int ry = mouse_y - gui_window_content_y(w);
                 w->on_click(w, rx, ry, 1);
+            }
+
+            /* Double-click detection */
+            {
+                unsigned int now = timer_get_uptime_ms();
+                int dx = mouse_x - dblclick_last_x;
+                int dy = mouse_y - dblclick_last_y;
+                if (dx < 0) dx = -dx;
+                if (dy < 0) dy = -dy;
+                if (now - dblclick_last_ms <= DBLCLICK_MS &&
+                    dx <= DBLCLICK_DIST && dy <= DBLCLICK_DIST) {
+                    /* Fire double-click */
+                    if (w->on_dblclick) {
+                        int rx = mouse_x - gui_window_content_x(w);
+                        int ry = mouse_y - gui_window_content_y(w);
+                        w->on_dblclick(w, rx, ry);
+                    }
+                    dblclick_last_ms = 0; /* reset to avoid triple-click */
+                } else {
+                    dblclick_last_ms = now;
+                    dblclick_last_x = mouse_x;
+                    dblclick_last_y = mouse_y;
+                }
             }
         }
     }

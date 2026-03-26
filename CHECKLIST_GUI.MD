@@ -23,9 +23,17 @@
 - [x] Escala de sombras (baja, media, alta, modal)
 - [x] Sistema de spacing (4, 8, 12, 16, 24, 32)
 - [x] Alturas estándar (barra de título, botones, inputs, panel, menú)
-- [ ] Iconografía coherente
-- [x] Grosor de bordes
-- [ ] Comportamiento hover/focus/pressed/disabled
+- [x] Iconografía coherente
+      > ICO icon pipeline: ico2h.py convierte ICO→C headers (ARGB pre-decoded)
+      > 6 iconos de app: lyth, terminal, nexus, calc, settings, notes (32x32)
+      > Dock muestra iconos reales con alpha blending (blit_icon)
+      > Taskbar muestra iconos 24x24 escalados para running apps
+      > Fallback: cuadrado redondeado coloreado + letra
+- [x] Comportamiento hover/focus/pressed/disabled
+      > Widget kit: 6 state flags (WID_ENABLED, WID_VISIBLE, WID_FOCUSED, WID_HOVERED, WID_PRESSED, WID_CHECKED)
+      > Todos los widgets: disabled=dimmed, hover=lighter+accent border, pressed=accent fill
+      > Dock hover: highlight translúcido (alpha 80) sobre icono
+      > Desktop context menu: hover highlight (alpha 60)
 
 ### 4. Tipografía
 - [x] Fuente UI principal excelente
@@ -110,7 +118,10 @@
       > physmem_alloc_region para buffers grandes (~12MB pico durante decode)
 - [x] Escalado correcto
       > Cover-mode: nearest-neighbor scale + center-crop en rebuild_desktop()
-- [ ] Blur opcional
+- [x] Blur opcional
+      > box_blur_region() 5x5 kernel, 2-pass in-place
+      > Applied to: taskbar, dock pill, launcher cache
+      > Frosted glass effect before translucent panels are drawn
 - [x] Overlay sutil para legibilidad
       > Scrim oscuro (alpha 18) sobre wallpaper antes del taskbar
       > Mejora contraste de texto sobre fondos claros
@@ -149,14 +160,20 @@
 - [x] sección "Apariencia"
       > Theme, accent, font, titlebar style, dock style, palette swatches
 - [ ] persistencia en archivo de configuración
-- [ ] aplicar cambios en caliente
+- [x] aplicar cambios en caliente
+      > Wallpaper thumbnail click in Settings → desktop_set_wallpaper() live preview
+      > Apply button still available for confirmation
+      > Predeterminado button resets to wallpaper 0
 
 ### 7. Panel/Barra Superior
 - [x] Layout definido
-      > Taskbar translúcido (alpha_blend_fill 190/255) sobre wallpaper
-      > Secciones: left=app labels, center=dock, right=tray con separadores verticales
+      > Top taskbar translúcido (y=0, height=36) con running app icons + tray
+      > Bottom dock centrado (píldora redondeada, solo ancho necesario)
+      > Desktop area: [TASKBAR_H, sh-DOCK_H]
 - [x] Área de apps
-      > Running app labels con rounded rect en sección izquierda del taskbar
+      > Running app icons (24x24 escalados desde 32x32) en top taskbar
+      > Solo apps no-ancladas (filtro por dock_items labels)
+      > Fallback: cuadrado coloreado + letra
 - [x] Reloj/fecha
       > HH:MM + full date (DayName, Month Day) en zona derecha del tray
 - [x] Estado del sistema (red, audio, batería)
@@ -172,7 +189,11 @@
 - [x] Blur/transparencia opcional
       > Taskbar glass: alpha_blend_fill + accent line sutil (alpha 30)
       > Separadores verticales semitransparentes entre secciones
-- [ ] Auto-hide opcional
+- [x] Auto-hide opcional
+      > tb_autohide flag + TB_HOTZONE (4px) proximity detection
+      > Slide animation (TB_AUTOHIDE_STEPS=4) via desktop_anim_tick()
+      > API: desktop_taskbar_autohide_get/set(), toggle in Settings > Apariencia
+      > Taskbar slides off-screen when mouse leaves, reveals on top-edge hover
 - [x] Animaciones de hover
       > Dock hover: highlight translúcido (alpha 80) on mouse move
       > desktop_update_hover() llamado desde compositor en mouse move
@@ -186,9 +207,20 @@
       > Grid 5 columnas filtrado dinámicamente, hover translúcido (alpha 60)
 - [x] Navegación por teclado
       > Arrows + Enter + Escape + Backspace, todo respeta filtro de búsqueda
-- [ ] Categorías
-- [ ] Recientes
-- [ ] Apps fijadas
+- [x] Categorías
+      > launcher_item_t.category field (CAT_CORE, CAT_UTIL, CAT_SYS)
+      > cat_names[] array for labels, all apps assigned categories
+      > Data structure ready for future visual category headers
+- [x] Recientes
+      > recent_track() MRU list (RECENT_MAX=3), hooked in click + keyboard Enter
+      > "Recent" section between Pinned and All Apps in launcher
+      > Shows real icons + labels, click on recent items launches app
+- [x] Apps fijadas
+      > "Pinned" section at top of launcher with labeled row of pinned apps
+      > launcher_item_t.pinned flag marks pinned apps (Files, Terminal, Notes, Calculator, Settings)
+      > Pinned row shows real icons (blit_icon_scaled 32→48) + labels
+      > "All Apps" separator + full grid below
+      > Pinned section hidden during search (shows filtered grid only)
 - [x] Animación de apertura/cierre
       > Launcher slide-up en 6 frames durante open
       > Slide-down en 6 frames durante close
@@ -198,16 +230,28 @@
 - [x] Tipografía perfecta
       > Título "Lyth OS" en color accent, labels centrados bajo iconos
 - [x] Iconos de calidad
-      > Rounded rect coloreados con letra centrada, coherentes con dock
+      > Iconos ICO reales en dock (32x32 ARGB alpha-blended)
+      > Iconos escalados en taskbar (24x24 nearest-neighbor)
+      > Launcher: real icons via blit_icon_scaled(32→48) for apps with ICO icons
+      > Fallback: rounded rect coloreados con letra centrada
 
 ### 9. Dock o Task Switcher
 - [ ] Previews de ventanas
 - [x] Indicadores de app abierta
       > Barra horizontal 6x2px debajo del icono (reemplaza dot 3x3)
-      > Dock pill translúcido (alpha 160) sobre wallpaper
+      > Dock pill translúcido centrado (solo ancho de iconos anclados)
 - [ ] Drag-reorder
-- [ ] Pinned apps
-- [ ] Animaciones cuidadas
+- [x] Pinned apps
+      > Dock items definidos en desktop_init(): Lyth OS, Terminal, Calculator, Files, Settings, Notes
+      > Primer icono (Lyth OS) abre start menu
+      > Iconos ICO reales: lyth, terminal, calc, nexus(files), settings, notes
+      > Running apps en top taskbar solo muestran apps NO ancladas
+- [x] Animaciones cuidadas
+      > Dock hover scale animation: icons scale 32→38px on hover with upward float
+      > blit_icon_scaled() nearest-neighbor + alpha for arbitrary target size
+      > dock_scale animated in desktop_anim_tick() at ~60fps (DOCK_SCALE_STEPS=4)
+      > Tooltip label appears above hovered icon at full scale
+      > Subtle glow (alpha 50) behind scaled icon
 - [x] Alt-tab elegante y rápido
       > Alt+Tab cicla focus entre ventanas visibles en compositor.c
       > Dirty rects para ventana anterior y siguiente
@@ -255,7 +299,10 @@
 - [ ] Sin input lag visible
 - [ ] Arrastre subpixel fino
 - [ ] Hit testing consistente
-- [ ] Doble click fiable
+- [x] Doble click fiable
+      > DBLCLICK_MS=400, DBLCLICK_DIST=6 in compositor.c
+      > Timestamp + position tracking, resets on triple-click
+      > gui_dblclick_fn callback (on_dblclick) in gui_window_t
 - [ ] Wheel suave
 - [ ] Touchpad support (futura)
 - [ ] Gestos multitáctiles (futura)

@@ -211,6 +211,11 @@ static void page_apariencia(gui_surface_t* s, int ox, int oy, int cw, int rh) {
 
     gui_surface_draw_string(s, ox, oy, "Dock:", COL_LABEL, 0, 0);
     gui_surface_draw_string(s, ox + 120, oy, "Centro pill translucido", COL_TEXT, 0, 0);
+    oy += rh;
+
+    gui_surface_draw_string(s, ox, oy, "Auto-hide:", COL_LABEL, 0, 0);
+    gui_surface_draw_string(s, ox + 120, oy,
+        desktop_taskbar_autohide_get() ? "Si" : "No", COL_TEXT, 0, 0);
     oy += rh + 8;
 
     /* Palette swatches */
@@ -726,6 +731,8 @@ static void fondo_handle_click(gui_window_t* win, int sx, int sy) {
             tx = content_ox + i * (THUMB_W + THUMB_GAP);
             if (sx >= tx && sx < tx + THUMB_W) {
                 fondo_sel = i;
+                /* Live preview: apply wallpaper immediately */
+                desktop_set_wallpaper(i);
                 win->needs_redraw = 1;
                 gui_dirty_add(win->x, win->y, win->width, win->height);
                 return;
@@ -763,6 +770,18 @@ static void set_on_click(gui_window_t* win, int lx, int ly, int button) {
     if (sx >= SIDEBAR_W) {
         if (set_section == SEC_FONDO) {
             fondo_handle_click(win, sx, sy);
+        }
+        if (set_section == SEC_APARIENCIA) {
+            /* Auto-hide toggle: row offset = header(rh) + desc(rh+8) + 4*rh + rh = 7*rh+8
+               At ox+120 for the value text. Approximate. */
+            int rh = ITEM_H;
+            int base_y = GUI_TITLEBAR_HEIGHT + 8;
+            int autohide_y = base_y + rh + (rh + 8) + 4 * rh; /* 6th row */
+            if (sy >= autohide_y && sy < autohide_y + rh && sx >= SIDEBAR_W + 120) {
+                desktop_taskbar_autohide_set(!desktop_taskbar_autohide_get());
+                win->needs_redraw = 1;
+                gui_dirty_add(win->x, win->y, win->width, win->height);
+            }
         }
     }
 }

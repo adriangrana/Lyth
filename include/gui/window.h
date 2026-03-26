@@ -54,6 +54,7 @@ typedef void (*gui_paint_fn)(struct gui_window*);
 typedef void (*gui_close_fn)(struct gui_window*);
 typedef void (*gui_key_fn)(struct gui_window*, int event_type, char key);
 typedef void (*gui_click_fn)(struct gui_window*, int x, int y, int button);
+typedef void (*gui_dblclick_fn)(struct gui_window*, int x, int y);
 
 typedef struct gui_window {
     int id;
@@ -84,6 +85,7 @@ typedef struct gui_window {
     gui_close_fn on_close;
     gui_key_fn   on_key;
     gui_click_fn on_click;
+    gui_dblclick_fn on_dblclick;
 
     int z_order;
     void* app_data;
