@@ -783,6 +783,15 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
             notify_paint(&bb_surf, scr_w);
     }
 
+    /* 5b. OSD indicator bar (centred, lower third) */
+    if (osd_active()) {
+        int osd_x = (scr_w - 200) / 2;
+        int osd_y = scr_h * 3 / 4 - 24;
+        if (!(osd_x + 200 <= dx0 || dx1 <= osd_x ||
+              osd_y + 48 <= dy0 || dy1 <= osd_y))
+            osd_paint(&bb_surf, scr_w, scr_h);
+    }
+
     /* 6. Perf overlay (if enabled) */
     if (perf_overlay) {
         int pox = PERF_OVL_X - 4, poy = PERF_OVL_Y - 4;
@@ -1951,6 +1960,7 @@ void gui_run(void)
                 last_tick_sec = now_sec;
                 desktop_on_tick();
                 notify_tick();
+                osd_tick();
             }
             /* Animation ticks run every frame, not just once/sec */
             desktop_anim_tick();

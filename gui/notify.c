@@ -177,3 +177,70 @@ void notify_paint(void* surface, int screen_w) {
         y += NOTIFY_H + NOTIFY_GAP;
     }
 }
+
+/* ================================================================
+ *  OSD — On-Screen Display (centred indicator bar)
+ * ================================================================ */
+
+#define OSD_W          200
+#define OSD_H           48
+#define OSD_BAR_H       8
+#define OSD_BAR_PAD    12
+#define OSD_DURATION_MS 1500
+
+static int  osd_vis;
+static char osd_icon;
+static char osd_label[32];
+static int  osd_level;             /* 0–100 */
+static unsigned int osd_expire;
+
+void osd_show(char icon, const char *label, int level)
+{
+    osd_icon  = icon;
+    str_copy(osd_label, label ? label : "", sizeof(osd_label));
+    osd_level = level < 0 ? 0 : (level > 100 ? 100 : level);
+    osd_expire = timer_get_uptime_ms() + OSD_DURATION_MS;
+    osd_vis = 1;
+    gui_request_redraw();
+}
+
+void osd_tick(void)
+{
+    if (osd_vis && timer_get_uptime_ms() >= osd_expire) {
+        osd_vis = 0;
+        gui_request_redraw();
+    }
+}
+
+int osd_active(void) { return osd_vis; }
+
+void osd_paint(void *surface, int screen_w, int screen_h)
+{
+    gui_surface_t *s = (gui_surface_t *)surface;
+    int ox, oy, bar_w, fill_w;
+
+    if (!osd_vis || !s || !s->pixels) return;
+
+    ox = (screen_w - OSD_W) / 2;
+    oy = screen_h * 3 / 4 - OSD_H / 2;
+
+    /* Background pill */
+    n_rounded_rect(s, ox, oy, OSD_W, OSD_H, 3, COL_N_BG, 210);
+
+    /* Icon (single char) */
+    gui_surface_draw_char(s, ox + OSD_BAR_PAD, oy + 8,
+                          (unsigned char)osd_icon, THEME_COL_ACCENT, 0, 0);
+
+    /* Label */
+    gui_surface_draw_string(s, ox + OSD_BAR_PAD + GUI_FONT_W + 6, oy + 8,
+                            osd_label, THEME_COL_TEXT, 0, 0);
+
+    /* Level bar */
+    bar_w = OSD_W - 2 * OSD_BAR_PAD;
+    fill_w = bar_w * osd_level / 100;
+    n_alpha_fill(s, ox + OSD_BAR_PAD, oy + 28, bar_w, OSD_BAR_H,
+                 THEME_COL_SURFACE1, 180);
+    if (fill_w > 0)
+        n_alpha_fill(s, ox + OSD_BAR_PAD, oy + 28, fill_w, OSD_BAR_H,
+                     THEME_COL_ACCENT, 200);
+}
