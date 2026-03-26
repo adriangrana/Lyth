@@ -264,5 +264,7 @@ void theme_toggle(void);
 int  theme_get_mode(void);   /* returns THEME_MODE_DARK or THEME_MODE_LIGHT */
 void theme_set_accent(uint32_t colour);
 uint32_t theme_get_accent(void);
+void theme_save(void);       /* persist theme/accent/autohide to /etc/gui.conf */
+void theme_load(void);       /* restore settings from /etc/gui.conf */
 
 #endif /* GUI_THEME_H */

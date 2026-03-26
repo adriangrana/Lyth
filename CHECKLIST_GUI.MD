@@ -321,7 +321,9 @@
       > Context menu minimize/close también animados
       > No interaction durante animación (anim_minimizing check en hit_test)
 - [ ] Transiciones de workspace
-- [ ] Crossfades entre estados
+- [x] Crossfades entre estados
+      > Launcher crossfade: alpha-blended open/close con launch_alpha gradual
+      > Per-pixel blend (src*a + bg*(255-a)) durante transición, memcpy fast-path cuando opaco
 
 ## FASE 4 — Calidad de Interacción
 
@@ -353,9 +355,15 @@
 - [ ] Gestos multitáctiles (futura)
 
 ### 14. Animación con Criterio
-- [ ] Duraciones definidas (microanimación, transición normal, modal, workspace)
-- [ ] Curvas easing coherentes
-- [ ] Animaciones interrumpibles
+- [x] Duraciones definidas (microanimación, transición normal, modal, workspace)
+      > THEME_ANIM_MICRO=80ms, THEME_ANIM_NORMAL=200ms, THEME_ANIM_MODAL=300ms, THEME_ANIM_WORKSPACE=400ms
+      > Definidos en include/gui/theme.h, usados por gui_window_anim_start()
+- [x] Curvas easing coherentes
+      > ease_out_cubic_u8(): 1-(1-t)^3 en fixed-point 0..255
+      > Aplicada uniformemente a open/close/minimize/restore/fade
+- [x] Animaciones interrumpibles
+      > gui_window_anim_start() redirige mid-animation: captura alpha actual como nuevo start
+      > Minimize durante fade-in, restore durante fade-out — todo fluido
 - [ ] Evitar stutter
 - [ ] Animar para comunicar estado, no por decorar
 
@@ -463,9 +471,16 @@
 - [ ] Mismos patrones de interacción
 
 ### 21. Temas
-- [ ] Tema claro
-- [ ] Tema oscuro
-- [ ] Acentos configurables
+- [x] Tema claro
+      > Catppuccin Latte palette: base=0xEFF1F5, text=0x4C4F69, surface0=0xCCD0DA
+      > apply_light() en gui/theme.c, activado con theme_set_light()
+- [x] Tema oscuro
+      > Catppuccin Mocha palette: base=0x1E1E2E, text=0xCDD6F4, surface0=0x313244
+      > apply_dark() en gui/theme.c, theme por defecto al iniciar
+- [x] Acentos configurables
+      > 8 colores: Cyan, Blue, Pink, Green, Yellow, Red, Mauve, Peach
+      > theme_set_accent() API, selección visual en Settings > Apariencia
+      > Swatch grid con borde blanco en seleccionado
 - [ ] Adaptación de wallpaper a accent (opcional)
 - [ ] Contraste garantizado
 - [ ] Sombras/blur consistentes entre temas
@@ -505,8 +520,14 @@
       > notify_paint(), rounded rect, sombra, accent bar, auto-dismiss
 - [x] Configuración
       > Settings app con 8 secciones, widgets, live preview
-- [ ] Apagado/reinicio
-- [ ] Errores del sistema
+- [x] Apagado/reinicio
+      > Power dialog modal con scrim (alpha 120), 3 botones: Cancelar/Reiniciar/Apagar
+      > Click fuera = cancelar, launcher Shutdown/Restart abren diálogo
+      > open_power_dialog(), draw_power_dialog(), power_dialog_handle_click()
+- [x] Errores del sistema
+      > dialog_msgbox(type, title, message) en gui/dialog.c
+      > MSGBOX_INFO (azul), MSGBOX_WARNING (amarillo), MSGBOX_ERROR (rojo)
+      > Word-wrapped text, OK button, Enter/Escape dismiss, animated close
 - [ ] Actualizaciones
 - [x] File picker
       > gui/dialog.c: Open/Save dialog con navegación directorios, filename entry
@@ -558,7 +579,10 @@
 - [x] Contador de frames caídos
       > dropped_frames: incrementa cuando frame_time > 16667µs
       > Mostrado en línea FPS del perf overlay ("d:N")
-- [ ] Invalidaciones por ventana
+- [x] Invalidaciones por ventana
+      > redraw_count per-window (cumulative), windows_redrawn per-frame en gui_metrics_t
+      > "Win:" line en perf overlay F3 muestra ventanas repintadas por frame
+      > compose_frame() phase 1 trackea y contabiliza redraws
 - [x] Visualizador de regiones dirty
       > F4 toggle: bordes coloreados (6 colores, alpha 180) sobre cada dirty rect
 

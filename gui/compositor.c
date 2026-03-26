@@ -1529,6 +1529,7 @@ void gui_init(void)
     cursor_init(scr_w, scr_h);
     cursor_set_pos(mouse_x, mouse_y);
     desktop_init(scr_w, scr_h);
+    theme_load();  /* restore saved theme/accent/autohide from /etc/gui.conf */
 
     /* mark entire screen dirty for first paint */
     gui_dirty_screen();

@@ -879,6 +879,7 @@ static void set_on_click(gui_window_t* win, int lx, int ly, int button) {
             if (sy >= apariencia_theme_y && sy < apariencia_theme_y + ITEM_H
                 && sx >= ox_content + 120 && sx < ox_content + 220) {
                 theme_toggle();
+                theme_save();
                 desktop_invalidate_all();
                 /* Invalidate all open windows so they repaint with new colours */
                 {
@@ -898,6 +899,7 @@ static void set_on_click(gui_window_t* win, int lx, int ly, int button) {
                 int ai = (sx - (ox_content + 120)) / 26;
                 if (ai >= 0 && ai < ACCENT_COUNT) {
                     theme_set_accent(accent_choices[ai]);
+                    theme_save();
                     desktop_invalidate_all();
                     {
                         int wi;
@@ -915,6 +917,7 @@ static void set_on_click(gui_window_t* win, int lx, int ly, int button) {
             if (sy >= apariencia_autohide_y && sy < apariencia_autohide_y + ITEM_H
                 && sx >= ox_content + 120 && sx < ox_content + 220) {
                 desktop_taskbar_autohide_set(!desktop_taskbar_autohide_get());
+                theme_save();
             }
             win->needs_redraw = 1;
             gui_dirty_add(win->x, win->y, win->width, win->height);

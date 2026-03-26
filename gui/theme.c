@@ -3,6 +3,9 @@
  */
 
 #include "theme.h"
+#include "vfs.h"
+#include "string.h"
+#include "desktop.h"
 
 gui_theme_t theme;
 
@@ -103,4 +106,110 @@ void theme_set_accent(uint32_t colour) {
 
 uint32_t theme_get_accent(void) {
     return accent_col;
+}
+
+/* ---- Persistence: /etc/gui.conf ---- */
+
+#define CONF_PATH "/etc/gui.conf"
+
+static int hex_digit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+    if (c >= 'A' && c <= 'F') return 10 + c - 'A';
+    return -1;
+}
+
+static uint32_t parse_hex6(const char *s) {
+    uint32_t v = 0;
+    int i;
+    for (i = 0; i < 6; i++) {
+        int d = hex_digit(s[i]);
+        if (d < 0) return 0x00D4FF; /* fallback = default accent */
+        v = (v << 4) | (uint32_t)d;
+    }
+    return v;
+}
+
+static void hex6_to_str(uint32_t v, char *out) {
+    static const char hx[] = "0123456789ABCDEF";
+    out[0] = hx[(v >> 20) & 0xF];
+    out[1] = hx[(v >> 16) & 0xF];
+    out[2] = hx[(v >> 12) & 0xF];
+    out[3] = hx[(v >>  8) & 0xF];
+    out[4] = hx[(v >>  4) & 0xF];
+    out[5] = hx[ v        & 0xF];
+    out[6] = '\0';
+}
+
+void theme_save(void) {
+    char buf[128];
+    int pos = 0;
+    int fd;
+    char hex[8];
+
+    /* theme=dark\n or theme=light\n */
+    memcpy(buf + pos, "theme=", 6); pos += 6;
+    if (current_mode == THEME_MODE_LIGHT) {
+        memcpy(buf + pos, "light", 5); pos += 5;
+    } else {
+        memcpy(buf + pos, "dark", 4); pos += 4;
+    }
+    buf[pos++] = '\n';
+
+    /* accent=RRGGBB\n */
+    memcpy(buf + pos, "accent=", 7); pos += 7;
+    hex6_to_str(accent_col, hex);
+    memcpy(buf + pos, hex, 6); pos += 6;
+    buf[pos++] = '\n';
+
+    /* autohide=0|1\n */
+    memcpy(buf + pos, "autohide=", 9); pos += 9;
+    buf[pos++] = desktop_taskbar_autohide_get() ? '1' : '0';
+    buf[pos++] = '\n';
+
+    fd = vfs_open_flags(CONF_PATH, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC);
+    if (fd >= 0) {
+        vfs_write(fd, (const unsigned char*)buf, (unsigned int)pos);
+        vfs_close(fd);
+    }
+}
+
+void theme_load(void) {
+    char buf[128];
+    int fd, n;
+
+    fd = vfs_open_flags(CONF_PATH, VFS_O_RDONLY);
+    if (fd < 0) return; /* no saved settings — use defaults */
+
+    n = vfs_read(fd, (unsigned char*)buf, sizeof(buf) - 1);
+    vfs_close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+
+    /* parse line by line */
+    {
+        const char *p = buf;
+        while (*p) {
+            if (str_starts_with(p, "theme=")) {
+                const char *val = p + 6;
+                if (str_starts_with(val, "light"))
+                    current_mode = THEME_MODE_LIGHT;
+                else
+                    current_mode = THEME_MODE_DARK;
+            } else if (str_starts_with(p, "accent=")) {
+                accent_col = parse_hex6(p + 7);
+            } else if (str_starts_with(p, "autohide=")) {
+                desktop_taskbar_autohide_set(p[9] == '1');
+            }
+            /* advance to next line */
+            while (*p && *p != '\n') p++;
+            if (*p == '\n') p++;
+        }
+    }
+
+    /* apply loaded settings */
+    if (current_mode == THEME_MODE_LIGHT)
+        apply_light();
+    else
+        apply_dark();
 }
