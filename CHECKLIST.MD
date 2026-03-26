@@ -145,7 +145,8 @@
 - [x] Capa de dispositivo de bloques
 - [x] Disco
 - [x] USB (xHCI host controller + hubs + HID boot protocol)
-- [ ] Video (aceleración gráfica)
+- [x] Video: renderer abstraction (SW + virtio-GPU backends)
+- [x] Framebuffer WC (Write-Combining via PAT MSR, sfence)
 - [x] Red (E1000)
 - [x] PCI
 - [x] RTC
@@ -202,7 +203,8 @@
 - [x] Widgets básicos (botones, labels)
 - [x] Métricas de rendimiento en tiempo real (FPS, frame time, dirty rects)
 - [x] Arrastre fluido de ventanas (coalescing de mouse, invalidación optimizada)
-- [ ] Aceleración gráfica (GPU)
+- [x] Renderer abstraction (vtable: SW + virtio-GPU backends)
+- [x] Write-Combining framebuffer (PAT MSR, 5-10x faster present en HW real)
 
 ## 16. UX
 - [x] Shell usable

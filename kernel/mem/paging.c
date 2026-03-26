@@ -17,6 +17,7 @@
 #define PG_PRESENT  0x001UL
 #define PG_WRITABLE 0x002UL
 #define PG_USER     0x004UL
+#define PG_PWT      0x008UL   /* Page Write-Through → PAT entry 1 (WC) */
 #define PG_PS       0x080UL   /* 2 MB page */
 #define PG_COW      0x200UL
 #define PG_ADDR_MASK 0x000FFFFFFFFFF000ULL
@@ -131,6 +132,53 @@ void paging_map_region_early(uint64_t phys_start, uint64_t size) {
     }
 
     /* Flush TLB by reloading CR3 */
+    __asm__ volatile(
+        "mov %%cr3, %%rax\n\t"
+        "mov %%rax, %%cr3"
+        : : : "rax", "memory"
+    );
+}
+
+/* Like paging_map_region_early() but sets PWT on each 2 MB page so that
+ * PAT entry 1 (Write-Combining) is selected.  Used for the framebuffer. */
+void paging_map_region_early_wc(uint64_t phys_start, uint64_t size) {
+    uint64_t aligned_start, aligned_end, addr;
+    if (size == 0) return;
+
+    aligned_start = phys_start & ~(PAGE_SIZE_2MB - 1UL);
+    aligned_end   = (phys_start + size + PAGE_SIZE_2MB - 1UL)
+                    & ~(PAGE_SIZE_2MB - 1UL);
+
+    for (addr = aligned_start; addr < aligned_end; addr += PAGE_SIZE_2MB) {
+        unsigned pml4_idx = (unsigned)((addr >> 39) & 0x1FFU);
+        unsigned pdpt_idx = (unsigned)((addr >> 30) & 0x1FFU);
+        unsigned pd_idx   = (unsigned)((addr >> 21) & 0x1FFU);
+        uint64_t *pdpt, *pd;
+
+        if (boot_pml4[pml4_idx] & PG_PRESENT) {
+            pdpt = (uint64_t*)(uintptr_t)(boot_pml4[pml4_idx] & PG_ADDR_MASK);
+        } else {
+            if (early_pdpt_used) return;
+            pdpt = early_extra_pdpt;
+            for (int i = 0; i < (int)ENTRIES_PER_TABLE; i++) pdpt[i] = 0;
+            early_pdpt_used = 1;
+            boot_pml4[pml4_idx] =
+                (uint64_t)(uintptr_t)pdpt | PG_PRESENT | PG_WRITABLE;
+        }
+
+        if (pdpt[pdpt_idx] & PG_PRESENT) {
+            pd = (uint64_t*)(uintptr_t)(pdpt[pdpt_idx] & PG_ADDR_MASK);
+        } else {
+            pd = early_alloc_pd();
+            if (!pd) return;
+            pdpt[pdpt_idx] =
+                (uint64_t)(uintptr_t)pd | PG_PRESENT | PG_WRITABLE;
+        }
+
+        /* Map 2 MB page with WC: PWT selects PAT entry 1 (WC) */
+        pd[pd_idx] = addr | PG_PRESENT | PG_WRITABLE | PG_PS | PG_PWT;
+    }
+
     __asm__ volatile(
         "mov %%cr3, %%rax\n\t"
         "mov %%rax, %%cr3"

@@ -64,7 +64,7 @@ Subsistemas principales y sus archivos:
 3. GRUB sale de EFI Boot Services, conmuta a modo protegido 32-bit y entra en el entry point del kernel — el mismo código que en BIOS.
 
 ### Común (post-GRUB)
-2. `kernel_main()` inicializa en orden: GDT + TSS (64-bit), **IDT temprana** (excepciones + IST1 para double fault), consola (detecta framebuffer 16/24/32 bpp o VGA), mapeo temprano del framebuffer (regiones MMIO >4 GB), video init, memoria física (bitmap Multiboot), heap, VFS (monta ramfs en `/`), ugdb (usuarios/grupos), scheduler.
+2. `kernel_main()` inicializa en orden: GDT + TSS (64-bit), **IDT temprana** (excepciones + IST1 para double fault), consola (detecta framebuffer 16/24/32 bpp o VGA), mapeo temprano del framebuffer con **Write-Combining** (PAT MSR 0x277, regiones MMIO >4 GB), video init, memoria física (bitmap Multiboot), heap, VFS (monta ramfs en `/`), ugdb (usuarios/grupos), scheduler.
 3. `ata_init()` detecta unidades ATA; `ahci_init()` detecta controladores AHCI/SATA vía PCI; `blkdev` escanea MBR/GPT; las particiones FAT16/FAT32 se montan automáticamente.
 4. `acpi_init()` busca el RSDP (EBDA + ROM BIOS), valida el RSDT y parsea la tabla MADT para obtener la dirección del Local APIC, las entradas IOAPIC y los Interrupt Source Overrides. También parsea la FADT para obtener los puertos PM1a/PM1b (shutdown) y el reset register (reboot).
 5. `apic_init()` comprueba CPUID, mapea las regiones MMIO (LAPIC en 0xFEE00000, IOAPIC en 0xFEC00000) con `paging_map_mmio()`, deshabilita el PIC 8259A, inicializa el LAPIC (spurious vector 0xFF, TPR a 0) y el IOAPIC (enmascara todas las líneas).

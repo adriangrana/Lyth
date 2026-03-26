@@ -194,8 +194,8 @@ void kernel_main(unsigned long mbi_ptr) {
         serial_print_uint((unsigned int)mbi->framebuffer_type);
         serial_print("\n");
         if (fb_addr != 0 && fb_size != 0) {
-            paging_map_region_early(fb_addr, fb_size);
-            serial_print("[boot] Framebuffer mapped in page tables\n");
+            paging_map_region_early_wc(fb_addr, fb_size);
+            serial_print("[boot] Framebuffer mapped WC in page tables\n");
         }
     } else {
         serial_print("[boot] WARN: No framebuffer info from bootloader\n");

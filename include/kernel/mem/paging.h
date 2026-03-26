@@ -27,6 +27,10 @@ int paging_is_enabled(void);
  * Intended for the framebuffer which may reside above the initial 4 GB map. */
 void paging_map_region_early(uint64_t phys_start, uint64_t size);
 
+/* Same as paging_map_region_early but maps with Write-Combining (WC) caching
+ * via PAT entry 1.  Use for the framebuffer to get ~5-10x faster writes. */
+void paging_map_region_early_wc(uint64_t phys_start, uint64_t size);
+
 uintptr_t paging_mapped_bytes(void);
 uintptr_t paging_user_base(void);
 uintptr_t paging_user_size(void);

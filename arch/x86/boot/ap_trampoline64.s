@@ -108,6 +108,12 @@ ap_trampoline_lm:
     lretq
 
 .Lreload_cs:
+    /* Program PAT MSR: entry 1 = WC (same as BSP) */
+    mov     $0x277, %ecx
+    mov     $0x00070106, %eax
+    mov     $0x00070106, %edx
+    wrmsr
+
     /* Load per-AP kernel stack */
     mov     (0x8000 + (ap_trampoline_stack - ap_trampoline_start)), %rsp
 

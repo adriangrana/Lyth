@@ -171,6 +171,19 @@ long_mode_entry:
     mov     %ax, %gs
     mov     %ax, %ss
 
+    /* ---- Program PAT MSR for Write-Combining support ----
+     * Default PAT: 0=WB 1=WT 2=UC- 3=UC 4=WB 5=WT 6=UC- 7=UC
+     * We change entry 1 (and 5) from WT to WC so that any page
+     * with PWT=1 gets Write-Combining.  Existing mappings use
+     * PWT=0, so they keep WB (entry 0) and are unaffected.
+     *   EAX = PA3:PA2:PA1:PA0 = 00:07:01:06
+     *   EDX = PA7:PA6:PA5:PA4 = 00:07:01:06
+     * PAT MSR = 0x277 */
+    mov     $0x277, %ecx
+    mov     $0x00070106, %eax
+    mov     $0x00070106, %edx
+    wrmsr
+
     /* Set up 64-bit stack */
     lea     stack_top(%rip), %rsp
 

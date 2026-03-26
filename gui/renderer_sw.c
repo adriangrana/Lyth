@@ -777,6 +777,8 @@ static void sw_present(int x, int y, int w, int h)
                          (uint32_t)sw_backbuffer.height,
                          (uint32_t)sw_backbuffer.stride);
     }
+    /* Flush WC buffers so the display controller sees complete data */
+    __asm__ volatile("sfence" ::: "memory");
 }
 
 static void sw_present_full(void)

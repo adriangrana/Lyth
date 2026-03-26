@@ -261,8 +261,12 @@
 
 ### 10. Render Backend GPU
 - [x] API de renderer diseñada
+      > gpu_ops_t vtable (30+ ops), g_gpu global, renderer.h
 - [x] Backend CPU funcional
+      > renderer_sw.c: fill, blit, shadow, rounded corners, text, DIV255
 - [x] Backend GPU inicial
+      > renderer_virtio.c: virtio-GPU present (DMA transfer+flush)
+      > Graceful fallback: siempre inicia SW primero, virtio override si detectado
 - [x] Surfaces como texturas
 - [ ] Quads por ventana/layer
 - [x] Clipping por nodo
@@ -272,6 +276,11 @@
 - [ ] Render targets intermedios
 - [x] Upload eficiente de surfaces dañadas
 - [x] Sincronización render/present
+- [x] Write-Combining para hardware real
+      > PAT MSR 0x277 programado en boot (BSP + APs): entry 1 = WC
+      > paging_map_region_early_wc(): PG_PWT selects PAT entry 1 (WC)
+      > Framebuffer mapeado WC en kernel.c (5-10x más rápido en Intel iGPU)
+      > sfence tras sw_present() para flush de WC buffers
 
 ### 11. Scene Graph/Layers
 - [ ] Nodos: ventana, sombra, decoración, popup, tooltip, panel, cursor, overlay
