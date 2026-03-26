@@ -318,13 +318,23 @@
       > gui_window_create() arranca con alpha=0 y fade-in a 255
       > gui_window_anim_tick() cada frame, destruye al llegar a alpha=0
       > Sombras se omiten durante fade para rendimiento
-- [ ] Escalado suave
-- [ ] Blur de fondo
-- [ ] Sombras gaussianas
+- [x] Escalado suave
+      > sw_blit_scaled() y sw_blit_icon_scaled(): bilinear interpolation
+      > Fixed-point 16.16 4-sample lerp, applied to alt-tab/overview thumbnails
+- [x] Blur de fondo
+      > box_blur_region() in desktop.c: 2-pass 5x5 kernel
+      > gpu_box_blur()/sw_box_blur() in renderer: configurable passes
+      > Applied to taskbar, dock pill, launcher backgrounds
+- [x] Sombras gaussianas
+      > 3-layer shadow (THEME_SHADOW_LAYERS) with progressive offset/spread/alpha
+      > Approximates gaussian falloff, theme.shadow_alpha_mul scales per-theme
 - [x] Esquinas redondeadas recortadas
       > THEME_WIN_RADIUS=3 en compositor: corner mask per-row (3px, 2px, 1px)
       > Titlebar top corners redondeadas en gui_window_draw_decorations()
-- [ ] Vibrancy/acrylic-like (opcional)
+- [x] Vibrancy/acrylic-like (opcional)
+      > Frosted glass via box_blur_region + alpha blend on taskbar/dock/launcher
+      > Dock pill: blur behind + semi-transparent fill (0x1A1B26, 180)
+      > Taskbar: blur behind + dark overlay (0x0D1117, 190)
 - [x] Dim de fondo para modales
       > Alt-Tab overlay: backdrop semitransparente alpha 220 oscurece fondo
       > Auth prompt: fondo dimmed completo
