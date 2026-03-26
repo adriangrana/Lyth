@@ -43,7 +43,10 @@
 - [ ] Hinting/rasterizado bueno
 - [ ] Soporte de antialiasing correcto
 - [ ] Subpixel rendering
-- [ ] Tamaños tipográficos (caption, body, body strong, title, heading)
+- [x] Tamaños tipográficos (caption, body, body strong, title, heading)
+      > THEME_TYPO_* constants in theme.h: caption(16), body(18/8), subtitle(34/16), title(34/16)
+      > gui_surface_draw_char_2x/draw_string_2x: nearest-neighbor 2x scaling
+      > Applied in About app: title 2x, section headers 2x
 - [ ] Altura de línea consistente
 - [ ] Espaciado de letras ajustado
 - [ ] Fallback fonts
@@ -159,7 +162,10 @@
       > Wallpaper actual, scale mode, formato, instrucciones de cambio
 - [x] sección "Apariencia"
       > Theme, accent, font, titlebar style, dock style, palette swatches
-- [ ] persistencia en archivo de configuración
+- [x] persistencia en archivo de configuración
+      > theme_save()/theme_load() in gui/theme.c
+      > /etc/gui.conf: key=value format (theme, accent, autohide)
+      > Loaded after desktop_init() in gui_init(), saved from Settings app
 - [x] aplicar cambios en caliente
       > Wallpaper thumbnail click in Settings → desktop_set_wallpaper() live preview
       > Apply button still available for confirmation
@@ -422,7 +428,10 @@
       > Menú contextual desktop (dctx_items[], draw_desktop_ctx)
       > wid_dropdown() con popup list, auth_prompt = modal
       > gui/dialog.c = modal file picker
-- [ ] File picker, color picker, date picker
+- [x] File picker, color picker, date picker
+      > File picker: gui/dialog.c Open/Save dialog
+      > Color picker: dialog_color_picker() HSV gradient + hue bar + hex input
+      > Date picker: pending
 - [x] Estados: normal, hover, focus, active, disabled
       > 6 state flags (WID_ENABLED, WID_VISIBLE, WID_FOCUSED, WID_HOVERED, WID_PRESSED, WID_CHECKED)
       > Visual feedback en draw: hover highlight, pressed darken, disabled dim
