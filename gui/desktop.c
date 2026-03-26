@@ -259,6 +259,12 @@ static int dock_hover_idx = -1;  /* -1 = none */
 #define DOCK_SCALE_STEPS 4  /* animation frames (0→DOCK_SCALE_MAX) */
 static int dock_scale = 0;  /* current extra size (0..DOCK_SCALE_MAX) */
 
+/* ---- dock drag-reorder ---- */
+#define DOCK_DRAG_THRESHOLD  8
+static int dock_drag_active;         /* 1 while reordering */
+static int dock_drag_idx;            /* item being dragged */
+static int dock_drag_start_mx;       /* mouse X at press */
+
 /* ---- desktop shortcut icons ---- */
 #define DICON_SZ    48   /* icon render size */
 #define DICON_CELL  80   /* cell size (icon + label + padding) */
@@ -1767,6 +1773,8 @@ void desktop_init(int screen_w, int screen_h) {
 
     /* ---- Populate dock (pinned icons at bottom of screen) ---- */
     dock_item_count = 0;
+    dock_drag_idx = -1;
+    dock_drag_active = 0;
 
     dock_items[dock_item_count].label = "Lyth OS";
     dock_items[dock_item_count].action = toggle_start_menu;
@@ -2307,7 +2315,7 @@ void desktop_anim_tick(void) {
     }
 }
 
-void desktop_update_hover(int mx, int my) {
+void desktop_update_hover(int mx, int my, int buttons) {
     int dock_y = sh - DOCK_H;
     int old_hover = dock_hover_idx;
     dock_hover_idx = -1;
@@ -2340,6 +2348,48 @@ void desktop_update_hover(int mx, int my) {
                 dock_hover_idx = i;
                 break;
             }
+        }
+    }
+
+    /* ---- Dock drag-reorder ---- */
+    if (dock_drag_active && !(buttons & 0x01)) {
+        /* Button released → end drag */
+        dock_drag_active = 0;
+        desk_valid = 0;
+        gui_dirty_add(0, sh - DOCK_H, sw, DOCK_H);
+    }
+    if (dock_drag_active && (buttons & 0x01)) {
+        /* Check if mouse has moved into adjacent item slot */
+        int dx = dock_start_x();
+        int cell = DOCK_ICON_SIZE + DOCK_ICON_PAD;
+        int rel = mx - dx - DOCK_ICON_PAD + cell / 2;
+        int target = rel / cell;
+        if (target < 1) target = 1;  /* don't swap with item 0 (start menu) */
+        if (target >= dock_item_count) target = dock_item_count - 1;
+        if (target != dock_drag_idx) {
+            dock_item_t tmp = dock_items[dock_drag_idx];
+            if (target > dock_drag_idx) {
+                int j;
+                for (j = dock_drag_idx; j < target; j++)
+                    dock_items[j] = dock_items[j + 1];
+            } else {
+                int j;
+                for (j = dock_drag_idx; j > target; j--)
+                    dock_items[j] = dock_items[j - 1];
+            }
+            dock_items[target] = tmp;
+            dock_drag_idx = target;
+            dock_hover_idx = target;
+            desk_valid = 0;
+            gui_dirty_add(0, sh - DOCK_H, sw, DOCK_H);
+        }
+    }
+    if (!dock_drag_active && dock_drag_idx >= 0 && (buttons & 0x01)) {
+        /* Check drag threshold */
+        int dist = mx - dock_drag_start_mx;
+        if (dist < 0) dist = -dist;
+        if (dist >= DOCK_DRAG_THRESHOLD) {
+            dock_drag_active = 1;
         }
     }
 
@@ -2664,16 +2714,30 @@ int desktop_handle_click(int mx, int my, int button) {
         int dx = dock_start_x();
         int dy = dock_y + DOCK_Y_PAD;
         int i;
+
+        /* End any existing dock drag */
+        if (dock_drag_active) {
+            dock_drag_active = 0;
+            dock_drag_idx = -1;
+            return 1;
+        }
+
         for (i = 0; i < dock_item_count; i++) {
             int ix = dx + DOCK_ICON_PAD + i * (DOCK_ICON_SIZE + DOCK_ICON_PAD);
             int iy = dy;
             if (mx >= ix && mx < ix + DOCK_ICON_SIZE &&
                 my >= iy && my < iy + DOCK_ICON_SIZE && button == 1) {
+                if (i > 0) {
+                    /* Start potential drag (item 0 = start menu, skip) */
+                    dock_drag_idx = i;
+                    dock_drag_start_mx = mx;
+                }
                 if (dock_items[i].action)
                     dock_items[i].action();
                 return 1;
             }
         }
+        dock_drag_idx = -1;
         return 1; /* consumed: click was on dock */
     }
 

@@ -1342,7 +1342,7 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
         /* Update dock/taskbar hover state (skip during drag) */
         if (!*dragging_win && !*resizing_win)
         {
-            desktop_update_hover(mouse_x, mouse_y);
+            desktop_update_hover(mouse_x, mouse_y, ev->buttons);
             /* Update widget hover for focused window (skip when overlay open) */
             if (!desktop_is_overlay_open())
             {

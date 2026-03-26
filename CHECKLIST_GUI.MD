@@ -348,7 +348,7 @@
 - [x] Sin input lag visible
       > Fast drag path VBlank-synced, main loop hlt hasta IRQ
       > Sin polling activo, IRQ-driven input
-- [ ] Arrastre subpixel fino
+- [x] Arrastre subpixel fino
 - [x] Hit testing consistente
       > hit_test_window() z-order aware, hit_close/minimize/titlebar/resize_edge
       > Widget hit_wid() point-in-rect sobre array de widgets
@@ -374,8 +374,11 @@
 - [x] Animaciones interrumpibles
       > gui_window_anim_start() redirige mid-animation: captura alpha actual como nuevo start
       > Minimize durante fade-in, restore durante fade-out — todo fluido
-- [ ] Evitar stutter
-- [ ] Animar para comunicar estado, no por decorar
+- [x] Evitar stutter
+      > VBlank-synced drag, coalesced mouse events, deferred position apply, 60fps cap
+- [x] Animar para comunicar estado, no por decorar
+      > Open/close/minimize/restore animations communicate window lifecycle
+      > Fade transitions on launcher, splash, power dialog
 
 ### 15. Latencia y Consistencia
 - [x] Input-to-photon bajo
@@ -482,8 +485,8 @@
       > box_blur_region(): taskbar, dock pill, launcher cache (frosted glass)
 - [x] Esquinas y paddings consistentes
       > THEME_RADIUS_* scale, consistent padding across apps
-- [ ] Estados vacíos bonitos
-- [ ] Placeholders elegantes
+- [x] Estados vacíos bonitos
+- [x] Placeholders elegantes
 - [ ] Skeleton loading (si aplica)
 
 ### 20. Coherencia Absoluta

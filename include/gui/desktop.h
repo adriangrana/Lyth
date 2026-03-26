@@ -19,7 +19,7 @@ void desktop_on_tick(void);
 void desktop_anim_tick(void);
 
 /* Update hover state for dock/taskbar (called on mouse move) */
-void desktop_update_hover(int mx, int my);
+void desktop_update_hover(int mx, int my, int buttons);
 
 /* Input handlers - return 1 if consumed */
 int desktop_handle_click(int mx, int my, int button);
