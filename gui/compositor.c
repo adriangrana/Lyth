@@ -82,6 +82,11 @@ static int bg_valid; /* 1 if bg_buffer contains a valid snapshot */
 static gui_dirty_rect_t dirty_list[GUI_MAX_DIRTY];
 static int dirty_count;
 
+/* shorthand: window is visible AND on current workspace (or sticky) */
+#define WIN_ON_WS(w) (((w)->flags & GUI_WIN_VISIBLE) && \
+                      !((w)->flags & GUI_WIN_MINIMIZED) && \
+                      gui_window_on_current_ws(w))
+
 /* ---- state ---- */
 static volatile int gui_running;
 static int mouse_x, mouse_y;
@@ -392,7 +397,7 @@ static void overview_build(void)
     overview_count = 0;
     for (i = 0; i < count && overview_count < OVERVIEW_MAX; i++) {
         gui_window_t *w = gui_window_get(i);
-        if (w && (w->flags & GUI_WIN_VISIBLE) && !(w->flags & GUI_WIN_MINIMIZED))
+        if (w && WIN_ON_WS(w))
             overview_wins[overview_count++] = w;
     }
     if (overview_count < 1) { overview_active = 0; return; }
@@ -668,7 +673,7 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
     {
         gui_window_t *w = sorted[i];
 
-        if (!(w->flags & GUI_WIN_VISIBLE) || (w->flags & GUI_WIN_MINIMIZED))
+        if (!WIN_ON_WS(w))
             continue;
         if (!w->surface.pixels)
             continue;
@@ -698,7 +703,7 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
         int wx0, wy0, wx1, wy1;
         int sx, sy, dstx, dsty, bw, bh;
 
-        if (!(w->flags & GUI_WIN_VISIBLE) || (w->flags & GUI_WIN_MINIMIZED))
+        if (!WIN_ON_WS(w))
             continue;
         if (!win_intersects_dirty(w, dr))
             continue;
@@ -865,7 +870,8 @@ static void compose_frame(void)
         for (i = 0; i < wcount; i++)
         {
             gui_window_t *w = gui_window_get(i);
-            if (w && w->needs_redraw && (w->flags & GUI_WIN_VISIBLE))
+            if (w && w->needs_redraw && (w->flags & GUI_WIN_VISIBLE) &&
+                gui_window_on_current_ws(w))
             {
                 int j, dominated = 0;
                 for (j = 0; j < dirty_count; j++)
@@ -1015,7 +1021,7 @@ static void rebuild_bg(gui_window_t *skip_win)
 
         if (w == skip_win)
             continue;
-        if (!(w->flags & GUI_WIN_VISIBLE) || (w->flags & GUI_WIN_MINIMIZED))
+        if (!WIN_ON_WS(w))
             continue;
         if (!w->surface.pixels)
             continue;
@@ -1126,7 +1132,7 @@ static gui_window_t *hit_test_window(int mx, int my)
     for (i = 0; i < count; i++)
     {
         gui_window_t *w = gui_window_get(i);
-        if (!w || !(w->flags & GUI_WIN_VISIBLE) || (w->flags & GUI_WIN_MINIMIZED))
+        if (!w || !WIN_ON_WS(w))
             continue;
         if (w->anim_closing || w->anim_minimizing)
             continue;
@@ -1257,6 +1263,21 @@ static void handle_keyboard(input_event_t *ev)
     /* Block keyboard input while overview is active */
     if (overview_active) return;
 
+    /* Ctrl+Alt+1/2/3/4: switch workspace */
+    if (ev->type == INPUT_EVENT_CHAR &&
+        (ev->modifiers & KEY_MOD_CTRL) && (ev->modifiers & KEY_MOD_ALT))
+    {
+        int ws = -1;
+        if (ev->character == '1') ws = 0;
+        else if (ev->character == '2') ws = 1;
+        else if (ev->character == '3') ws = 2;
+        else if (ev->character == '4') ws = 3;
+        if (ws >= 0) {
+            gui_workspace_switch(ws);
+            return;
+        }
+    }
+
     /* Alt+F4: close the focused window */
     if (ev->type == INPUT_EVENT_F4 && (ev->modifiers & KEY_MOD_ALT))
     {
@@ -1283,7 +1304,7 @@ static void handle_keyboard(input_event_t *ev)
             for (i = 0; i < count && alttab_count < ALTTAB_MAX_ITEMS; i++)
             {
                 gui_window_t *w = gui_window_get(i);
-                if (w && (w->flags & GUI_WIN_VISIBLE) && !(w->flags & GUI_WIN_MINIMIZED))
+                if (w && WIN_ON_WS(w))
                     alttab_wins[alttab_count++] = w;
             }
             if (alttab_count < 2) return;
@@ -1411,6 +1432,7 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
                 for (wi = 0; wi < wc; wi++) {
                     gui_window_t *fw = gui_window_get(wi);
                     if (fw && (fw->flags & GUI_WIN_FOCUSED) &&
+                        gui_window_on_current_ws(fw) &&
                         !(fw->flags & GUI_WIN_MINIMIZED)) {
                         int cx = gui_window_content_x(fw);
                         int cy = gui_window_content_y(fw);
@@ -1430,6 +1452,7 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
         for (wi = 0; wi < wc; wi++) {
             gui_window_t *fw = gui_window_get(wi);
             if (fw && (fw->flags & GUI_WIN_FOCUSED) &&
+                gui_window_on_current_ws(fw) &&
                 !(fw->flags & GUI_WIN_MINIMIZED)) {
                 int rx = mouse_x - gui_window_content_x(fw);
                 int ry = mouse_y - gui_window_content_y(fw);

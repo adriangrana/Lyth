@@ -24,6 +24,9 @@
 #define GUI_WIN_MINIMIZED  (1 << 4)
 #define GUI_WIN_RESIZABLE  (1 << 5)
 #define GUI_WIN_NO_DECOR   (1 << 6)
+#define GUI_WIN_STICKY     (1 << 7)  /* visible on all workspaces */
+
+#define GUI_MAX_WORKSPACES 4
 
 /* resize edge identifiers */
 #define GUI_RESIZE_NONE   0
@@ -96,6 +99,7 @@ typedef struct gui_window {
     unsigned int anim_start_ms; /* timestamp when current anim began */
     unsigned int anim_dur_ms;   /* duration of current animation (ms) */
     unsigned int redraw_count;  /* debug: total redraws for this window */
+    int workspace;              /* workspace index (0-based), -1 = sticky */
     void* app_data;
 } gui_window_t;
 
@@ -138,5 +142,10 @@ void gui_surface_draw_char_2x(gui_surface_t* s, int x, int y, unsigned char ch,
                                uint32_t fg, uint32_t bg, int draw_bg);
 void gui_surface_draw_string_2x(gui_surface_t* s, int x, int y, const char* str,
                                  uint32_t fg, uint32_t bg, int draw_bg);
+
+/* ---- workspace API ---- */
+int  gui_workspace_current(void);
+void gui_workspace_switch(int ws);
+int  gui_window_on_current_ws(gui_window_t *w);
 
 #endif

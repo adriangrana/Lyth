@@ -336,6 +336,7 @@ gui_window_t* gui_window_create(const char* title, int x, int y,
             win->anim_dur_ms = THEME_ANIM_NORMAL;
             win->redraw_count = 0;
             win->needs_redraw = 1;
+            win->workspace = gui_workspace_current();
 
             len = strlen(title);
             if (len >= GUI_MAX_TITLE) len = GUI_MAX_TITLE - 1;
@@ -590,4 +591,26 @@ gui_window_t* gui_window_get(int index) {
         }
     }
     return 0;
+}
+
+/* ---- workspace ---- */
+static int current_workspace;
+
+int gui_workspace_current(void) {
+    return current_workspace;
+}
+
+void gui_workspace_switch(int ws) {
+    if (ws < 0 || ws >= GUI_MAX_WORKSPACES) return;
+    if (ws == current_workspace) return;
+    current_workspace = ws;
+    /* invalidate desktop (taskbar workspace pills) and full screen */
+    desktop_invalidate_all();
+    gui_dirty_screen();
+}
+
+int gui_window_on_current_ws(gui_window_t *w) {
+    if (!w) return 0;
+    if (w->flags & GUI_WIN_STICKY) return 1;
+    return w->workspace == current_workspace;
 }

@@ -1065,6 +1065,7 @@ static void rebuild_desktop(void) {
         for (i = 0; i < count; i++) {
             gui_window_t* w = gui_window_get(i);
             if (!w || !(w->flags & GUI_WIN_VISIBLE)) continue;
+            if (!gui_window_on_current_ws(w)) continue;
             /* Skip apps that are pinned in the dock */
             {
                 int pinned = 0, d;
@@ -1130,6 +1131,31 @@ static void rebuild_desktop(void) {
                                  item_w - 8, 2, THEME_COL_ACCENT, 180);
             }
             lx += item_w + 4;
+        }
+    }
+
+    /* == Center: workspace indicators == */
+    {
+        int ws_pill_w = 18, ws_gap = 4;
+        int ws_total = GUI_MAX_WORKSPACES * ws_pill_w + (GUI_MAX_WORKSPACES - 1) * ws_gap;
+        int ws_x = (sw - ws_total) / 2;
+        int ws_y = taskbar_y + (TASKBAR_H - 10) / 2;
+        int wsi;
+        for (wsi = 0; wsi < GUI_MAX_WORKSPACES; wsi++) {
+            int active = (wsi == gui_workspace_current());
+            uint32_t pill_col = active ? THEME_COL_ACCENT : 0x3A3D4A;
+            int pill_alpha = active ? 255 : 120;
+            alpha_blend_fill(&desk_surf, ws_x, ws_y, ws_pill_w, 10,
+                             pill_col, pill_alpha);
+            /* dot or number */
+            if (active) {
+                gui_surface_fill(&desk_surf, ws_x + ws_pill_w / 2 - 1,
+                                 ws_y + 3, 3, 3, 0xFFFFFF);
+            } else {
+                gui_surface_fill(&desk_surf, ws_x + ws_pill_w / 2,
+                                 ws_y + 4, 2, 2, 0x888888);
+            }
+            ws_x += ws_pill_w + ws_gap;
         }
     }
 
@@ -1252,6 +1278,7 @@ static void rebuild_desktop(void) {
                 for (j = 0; j < wcount; j++) {
                     gui_window_t* w = gui_window_get(j);
                     if (w && (w->flags & GUI_WIN_VISIBLE) &&
+                        gui_window_on_current_ws(w) &&
                         str_starts_with(w->title, dock_items[i].label)) {
                         gui_surface_fill(&desk_surf,
                             ix + DOCK_ICON_SIZE / 2 - 3,
@@ -2727,6 +2754,7 @@ int desktop_handle_click(int mx, int my, int button) {
             for (i = 0; i < count; i++) {
                 gui_window_t* w = gui_window_get(i);
                 if (!w || !(w->flags & GUI_WIN_VISIBLE)) continue;
+                if (!gui_window_on_current_ws(w)) continue;
                 /* Skip pinned apps */
                 {
                     int pinned = 0, d;
@@ -2770,6 +2798,25 @@ int desktop_handle_click(int mx, int my, int button) {
                     return 1;
                 }
                 lx += item_w + 4;
+            }
+        }
+
+        /* Center: workspace indicator clicks */
+        {
+            int ws_pill_w = 18, ws_gap = 4;
+            int ws_total = GUI_MAX_WORKSPACES * ws_pill_w + (GUI_MAX_WORKSPACES - 1) * ws_gap;
+            int ws_x = (sw - ws_total) / 2;
+            int ws_y = taskbar_y + (TASKBAR_H - 10) / 2;
+            if (my >= ws_y && my < ws_y + 10) {
+                int wsi;
+                for (wsi = 0; wsi < GUI_MAX_WORKSPACES; wsi++) {
+                    if (mx >= ws_x && mx < ws_x + ws_pill_w) {
+                        gui_workspace_switch(wsi);
+                        desk_valid = 0;
+                        return 1;
+                    }
+                    ws_x += ws_pill_w + ws_gap;
+                }
             }
         }
 
