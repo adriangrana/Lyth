@@ -504,7 +504,8 @@
       > osd_show(icon, label, level) — centred bar auto-dismiss 1.5s
 - [x] OSD limpio
       > Translucent pill + accent bar, painted per-dirty-rect
-- [ ] No abusar de sonidos
+- [x] No abusar de sonidos
+      > Tasteful triggers: SND_STARTUP on session start, SND_NOTIFY on toast, SND_ERROR on error dialogs, SND_CLICK on dock launch, SND_LOGOUT on logout/shutdown/reboot
 
 ## FASE 6 — Pulido Premium
 

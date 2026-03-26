@@ -1799,6 +1799,7 @@ static int power_dialog_handle_click(int mx, int my, int button) {
         /* Reboot */
         if (mx >= bx && mx < bx + PWR_BTN_W) {
             close_power_dialog();
+            audio_play_sound(SND_LOGOUT);
             power_reboot();
             return 1;
         }
@@ -1806,6 +1807,7 @@ static int power_dialog_handle_click(int mx, int my, int button) {
         /* Shutdown */
         if (mx >= bx && mx < bx + PWR_BTN_W) {
             close_power_dialog();
+            audio_play_sound(SND_LOGOUT);
             power_shutdown();
             return 1;
         }
@@ -2968,6 +2970,7 @@ int desktop_handle_click(int mx, int my, int button) {
                 if (my >= by && my < by + 24 && button == 1) {
                     if (mx >= bx && mx < bx + 80) {
                         close_start_menu();
+                        audio_play_sound(SND_LOGOUT);
                         login_manager_request_logout();
                         return 1;
                     }
@@ -3209,8 +3212,10 @@ int desktop_handle_click(int mx, int my, int button) {
                     dock_drag_idx = i;
                     dock_drag_start_mx = mx;
                 }
-                if (dock_items[i].action)
+                if (dock_items[i].action) {
+                    audio_play_sound(SND_CLICK);
                     dock_items[i].action();
+                }
                 return 1;
             }
         }

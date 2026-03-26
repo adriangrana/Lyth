@@ -148,6 +148,7 @@ static void normal_boot_step(void) {
             klog_write(KLOG_LEVEL_INFO, "init", "Audio subsystem ready");
 
         current_boot_state = BOOT_STATE_SESSION;
+        audio_play_sound(SND_STARTUP);
         break;
 
     case BOOT_STATE_SESSION:

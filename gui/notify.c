@@ -10,6 +10,7 @@
 #include "window.h"
 #include "font_psf.h"
 #include "string.h"
+#include "audio.h"
 #include "timer.h"
 #include "theme.h"
 
@@ -66,6 +67,7 @@ void notify_push(const char* title, const char* body) {
     toasts[slot].active = 1;
 
     gui_request_redraw(); /* trigger redraw */
+    audio_play_sound(SND_NOTIFY);
 }
 
 void notify_tick(void) {

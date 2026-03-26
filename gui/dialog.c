@@ -13,6 +13,7 @@
 #include "string.h"
 #include "vfs.h"
 #include "theme.h"
+#include "audio.h"
 
 /* ---- Colours (from theme.h) ---- */
 #define COL_DLG_BG      THEME_COL_BASE
@@ -554,6 +555,9 @@ void dialog_msgbox(int type, const char* title, const char* message) {
 
     mb.win->needs_redraw = 1;
     gui_dirty_add(mb.win->x, mb.win->y, mb.win->width, mb.win->height);
+
+    if (mb.type == MSGBOX_ERROR)
+        audio_play_sound(SND_ERROR);
 }
 
 /* ==================================================================
