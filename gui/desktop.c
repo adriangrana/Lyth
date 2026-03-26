@@ -324,6 +324,8 @@ static png_image_t wallpaper_img;
 static int wallpaper_loaded = 0;
 static int wallpaper_current = -1;  /* which catalogue entry is loaded */
 
+static void wallpaper_extract_accent(void);  /* forward decl */
+
 static void wallpaper_catalogue_init(void) {
     int i;
     if (wp_count > 0) return;
@@ -392,6 +394,90 @@ static void try_load_wallpaper(void) {
         /* Solid or failed decode: no image pixels */
         wallpaper_img.pixels = 0;
     }
+    wallpaper_extract_accent();
+}
+
+/* Extract a dominant saturated colour from the current wallpaper.
+ * Samples a grid of pixels, accumulates into 6 hue buckets (R,Y,G,C,B,M),
+ * weighted by saturation. Returns the colour of the strongest bucket.
+ * Returns 0 if no wallpaper or not enough saturation. */
+static uint32_t wp_suggest_accent;   /* cached result */
+
+static void wallpaper_extract_accent(void)
+{
+    unsigned int buckets[6] = {0,0,0,0,0,0};  /* hue bins */
+    unsigned int bucket_r[6]={0,0,0,0,0,0}, bucket_g[6]={0,0,0,0,0,0}, bucket_b[6]={0,0,0,0,0,0};
+    unsigned int bucket_n[6]={0,0,0,0,0,0};
+    int iw, ih, step_x, step_y, x, y, best;
+    unsigned int best_weight;
+
+    wp_suggest_accent = 0;
+    if (!wallpaper_img.pixels || wallpaper_img.width < 2 || wallpaper_img.height < 2)
+        return;
+
+    iw = wallpaper_img.width;
+    ih = wallpaper_img.height;
+    /* sample ~400 pixels in a grid */
+    step_x = iw / 20; if (step_x < 1) step_x = 1;
+    step_y = ih / 20; if (step_y < 1) step_y = 1;
+
+    for (y = step_y / 2; y < ih; y += step_y) {
+        for (x = step_x / 2; x < iw; x += step_x) {
+            uint32_t px = wallpaper_img.pixels[y * iw + x];
+            int r = (px >> 16) & 0xFF, g = (px >> 8) & 0xFF, b = px & 0xFF;
+            int mx = r; if (g > mx) mx = g; if (b > mx) mx = b;
+            int mn = r; if (g < mn) mn = g; if (b < mn) mn = b;
+            int sat = mx - mn;
+            int hue_bin;
+            if (sat < 30 || mx < 40) continue;  /* skip grey/dark pixels */
+
+            /* Approximate hue bucket (0-5) */
+            if (mx == r) {
+                if (g >= b) hue_bin = 0;      /* red/yellow */
+                else        hue_bin = 5;      /* magenta */
+            } else if (mx == g) {
+                if (r >= b) hue_bin = 1;      /* yellow/green */
+                else        hue_bin = 2;      /* green/cyan */
+            } else {
+                if (g >= r) hue_bin = 3;      /* cyan/blue */
+                else        hue_bin = 4;      /* blue/magenta */
+            }
+            buckets[hue_bin] += (unsigned int)sat;
+            bucket_r[hue_bin] += (unsigned int)r;
+            bucket_g[hue_bin] += (unsigned int)g;
+            bucket_b[hue_bin] += (unsigned int)b;
+            bucket_n[hue_bin]++;
+        }
+    }
+
+    /* Find best bucket */
+    best = 0; best_weight = buckets[0];
+    for (x = 1; x < 6; x++) {
+        if (buckets[x] > best_weight) { best = x; best_weight = buckets[x]; }
+    }
+    if (bucket_n[best] == 0 || best_weight < 500) return;
+
+    /* Average colour of best bucket */
+    {
+        unsigned int n = bucket_n[best];
+        int ar = (int)(bucket_r[best] / n);
+        int ag = (int)(bucket_g[best] / n);
+        int ab = (int)(bucket_b[best] / n);
+        /* Boost saturation to make it a good accent */
+        int max_c = ar; if (ag > max_c) max_c = ag; if (ab > max_c) max_c = ab;
+        if (max_c > 0 && max_c < 200) {
+            int scale = 200 * 256 / max_c;
+            ar = ar * scale / 256; if (ar > 255) ar = 255;
+            ag = ag * scale / 256; if (ag > 255) ag = 255;
+            ab = ab * scale / 256; if (ab > 255) ab = 255;
+        }
+        wp_suggest_accent = ((uint32_t)ar << 16) | ((uint32_t)ag << 8) | (uint32_t)ab;
+    }
+}
+
+uint32_t desktop_get_wp_accent(void)
+{
+    return wp_suggest_accent;
 }
 
 /* Bilinear interpolation for smooth wallpaper scaling (16.16 fixed-point) */

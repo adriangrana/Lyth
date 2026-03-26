@@ -298,6 +298,22 @@ static void page_apariencia(gui_surface_t* s, int ox, int oy, int cw, int rh) {
                     gui_surface_fill(s, bx + 20, oy, 1, 16, 0xFFFFFF);
                 }
             }
+            /* "Auto" swatch — wallpaper-derived accent */
+            {
+                uint32_t wpa = desktop_get_wp_accent();
+                if (wpa) {
+                    bx += 26;
+                    gui_surface_fill(s, bx, oy, 20, 16, wpa);
+                    gui_surface_draw_char(s, bx + 6, oy, 'A',
+                                          theme_contrast_text(wpa), 0, 0);
+                    if (cur_acc == wpa) {
+                        gui_surface_hline(s, bx - 1, oy - 1, 22, 0xFFFFFF);
+                        gui_surface_hline(s, bx - 1, oy + 16, 22, 0xFFFFFF);
+                        gui_surface_fill(s, bx - 1, oy, 1, 16, 0xFFFFFF);
+                        gui_surface_fill(s, bx + 20, oy, 1, 16, 0xFFFFFF);
+                    }
+                }
+            }
         }
     }
     oy += rh;
@@ -952,6 +968,24 @@ static void set_on_click(gui_window_t* win, int lx, int ly, int button) {
                 } else if (ai == ACCENT_COUNT) {
                     /* "+" button: open color picker */
                     dialog_color_picker(theme_get_accent(), settings_color_cb, 0);
+                } else if (ai == ACCENT_COUNT + 1) {
+                    /* "Auto" swatch: wallpaper-derived accent */
+                    uint32_t wpa = desktop_get_wp_accent();
+                    if (wpa) {
+                        theme_set_accent(wpa);
+                        theme_save();
+                        desktop_invalidate_all();
+                        {
+                            int wi;
+                            for (wi = 0; wi < gui_window_count(); wi++) {
+                                gui_window_t *ww = gui_window_get(wi);
+                                if (ww) {
+                                    ww->needs_redraw = 1;
+                                    gui_dirty_add(ww->x, ww->y, ww->width, ww->height);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             /* Auto-hide toggle */

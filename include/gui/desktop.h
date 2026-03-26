@@ -49,6 +49,9 @@ uint32_t    desktop_wallpaper_solid_col(int idx);
 const uint32_t* desktop_wallpaper_pixels(int idx, int *out_w, int *out_h);
 void        desktop_set_wallpaper(int idx);
 
+/* Suggested accent colour extracted from current wallpaper (0 = none) */
+uint32_t    desktop_get_wp_accent(void);
+
 /* Invalidate the desktop cache so the taskbar window list gets redrawn */
 void desktop_invalidate_taskbar(void);
 
