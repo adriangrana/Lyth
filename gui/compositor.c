@@ -135,6 +135,19 @@ static int alttab_sel;               /* selected index into alttab_wins[] */
 static int alttab_count;             /* number of switchable windows */
 static gui_window_t *alttab_wins[ALTTAB_MAX_ITEMS];
 
+/* ---- overview / exposé mode ---- */
+#define OVERVIEW_MAX     16
+#define OVERVIEW_PAD     24
+#define OVERVIEW_TITLE_H 20
+
+static int overview_active;
+static int overview_count;
+static int overview_hover;           /* hovered thumbnail index (-1 = none) */
+static gui_window_t *overview_wins[OVERVIEW_MAX];
+/* computed layout per thumbnail */
+static int overview_tx[OVERVIEW_MAX], overview_ty[OVERVIEW_MAX];
+static int overview_tw[OVERVIEW_MAX], overview_th[OVERVIEW_MAX];
+
 #define PERF_OVL_X 8
 #define PERF_OVL_Y 42
 #define PERF_OVL_W 170
@@ -345,6 +358,140 @@ static void paint_alttab_overlay(gui_surface_t *s)
                                       i == alttab_sel ? THEME_COL_ACCENT : THEME_COL_TEXT,
                                       0, 0);
         }
+    }
+}
+
+/* ---- Exposé / Overview mode ---- */
+
+static void overview_build(void)
+{
+    int i, count = gui_window_count();
+    overview_count = 0;
+    for (i = 0; i < count && overview_count < OVERVIEW_MAX; i++) {
+        gui_window_t *w = gui_window_get(i);
+        if (w && (w->flags & GUI_WIN_VISIBLE) && !(w->flags & GUI_WIN_MINIMIZED))
+            overview_wins[overview_count++] = w;
+    }
+    if (overview_count < 1) { overview_active = 0; return; }
+
+    /* compute grid layout */
+    {
+        int cols, rows, c;
+        int usable_w = scr_w - 2 * OVERVIEW_PAD;
+        int usable_h = scr_h - 2 * OVERVIEW_PAD;
+        int cell_w, cell_h;
+
+        /* pick grid dimensions */
+        for (cols = 1; cols * cols < overview_count; cols++) {}
+        rows = (overview_count + cols - 1) / cols;
+
+        cell_w = usable_w / cols;
+        cell_h = usable_h / rows;
+
+        for (c = 0; c < overview_count; c++) {
+            int col = c % cols;
+            int row = c / cols;
+            gui_window_t *w = overview_wins[c];
+            int max_tw = cell_w - 16;
+            int max_th = cell_h - OVERVIEW_TITLE_H - 16;
+            int tw, th;
+
+            if (max_tw < 40) max_tw = 40;
+            if (max_th < 30) max_th = 30;
+
+            /* aspect-fit */
+            tw = max_tw;
+            th = w->width > 0 ? (tw * w->height / w->width) : max_th;
+            if (th > max_th) {
+                th = max_th;
+                tw = w->height > 0 ? (th * w->width / w->height) : max_tw;
+            }
+            if (tw > max_tw) tw = max_tw;
+
+            overview_tx[c] = OVERVIEW_PAD + col * cell_w + (cell_w - tw) / 2;
+            overview_ty[c] = OVERVIEW_PAD + row * cell_h + (cell_h - th - OVERVIEW_TITLE_H) / 2;
+            overview_tw[c] = tw;
+            overview_th[c] = th;
+        }
+    }
+    overview_hover = -1;
+    overview_active = 1;
+}
+
+static void paint_overview(gui_surface_t *s)
+{
+    int i;
+    if (!overview_active || overview_count < 1) return;
+
+    /* full-screen dim */
+    gpu_set_target(g_gpu.backbuffer);
+    gpu_fill_rect_alpha(0, 0, scr_w, scr_h, 0x000000, 140);
+
+    for (i = 0; i < overview_count; i++) {
+        gui_window_t *w = overview_wins[i];
+        int tx = overview_tx[i];
+        int ty = overview_ty[i];
+        int tw = overview_tw[i];
+        int th = overview_th[i];
+
+        /* hover highlight */
+        if (i == overview_hover) {
+            gpu_set_target(g_gpu.backbuffer);
+            gpu_fill_rect_alpha(tx - 4, ty - 4, tw + 8, th + 8,
+                                THEME_COL_ACCENT, 80);
+        }
+
+        /* thumbnail */
+        if (w && w->surface.pixels && w->surface.width > 0 && w->surface.height > 0) {
+            gpu_texture_t tex;
+            gpu_texture_wrap(&tex, w->surface.pixels,
+                             w->surface.width, w->surface.height,
+                             w->surface.stride);
+            gpu_set_target(g_gpu.backbuffer);
+            gpu_blit_scaled(tx, ty, tw, th, &tex, 0, 0,
+                            w->surface.width, w->surface.height);
+        } else {
+            gpu_set_target(g_gpu.backbuffer);
+            gpu_fill_rect_alpha(tx, ty, tw, th, THEME_COL_SURFACE0, 200);
+        }
+
+        /* 1px border */
+        {
+            int bx, by;
+            for (bx = tx; bx < tx + tw; bx++) {
+                if (ty >= 0 && ty < scr_h && bx >= 0 && bx < scr_w)
+                    s->pixels[ty * s->stride + bx] = THEME_COL_BORDER;
+                if (ty + th - 1 >= 0 && ty + th - 1 < scr_h && bx >= 0 && bx < scr_w)
+                    s->pixels[(ty + th - 1) * s->stride + bx] = THEME_COL_BORDER;
+            }
+            for (by = ty; by < ty + th; by++) {
+                if (by >= 0 && by < scr_h && tx >= 0 && tx < scr_w)
+                    s->pixels[by * s->stride + tx] = THEME_COL_BORDER;
+                if (by >= 0 && by < scr_h && tx + tw - 1 >= 0 && tx + tw - 1 < scr_w)
+                    s->pixels[by * s->stride + (tx + tw - 1)] = THEME_COL_BORDER;
+            }
+        }
+
+        /* title below */
+        if (w) {
+            int tlen = (int)strlen(w->title);
+            int max_chars = tw / THEME_FONT_W;
+            int tw_text = tlen * THEME_FONT_W;
+            int ttx = tx + (tw - tw_text) / 2;
+            if (ttx < tx) ttx = tx;
+            gui_surface_draw_string_n(s, ttx, ty + th + 4,
+                                      w->title, max_chars,
+                                      i == overview_hover ? THEME_COL_ACCENT : THEME_COL_TEXT,
+                                      0, 0);
+        }
+    }
+
+    /* Label */
+    {
+        const char *lbl = "Overview (F5 to close, click to select)";
+        int lw = str_length(lbl) * THEME_FONT_W;
+        gui_surface_draw_string(s, (scr_w - lw) / 2, scr_h - 30, lbl,
+                                THEME_COL_DIM, 0, 0);
     }
 }
 
@@ -648,6 +795,10 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
     /* 7. Alt-Tab switcher overlay */
     if (alttab_active && alttab_count > 0)
         paint_alttab_overlay(&bb_surf);
+
+    /* 8. Exposé / overview overlay */
+    if (overview_active && overview_count > 0)
+        paint_overview(&bb_surf);
 
     /* track pixels copied */
     metrics.pixels_copied += (unsigned int)(dr->w * dr->h);
@@ -1043,6 +1194,28 @@ static void handle_keyboard(input_event_t *ev)
         return;
     }
 
+    /* F5: toggle exposé / overview */
+    if (ev->type == INPUT_EVENT_F5)
+    {
+        if (!overview_active)
+            overview_build();
+        else
+            overview_active = 0;
+        gui_dirty_screen();
+        return;
+    }
+
+    /* Escape: dismiss overview */
+    if (overview_active && ev->type == INPUT_EVENT_CHAR && ev->character == 27)
+    {
+        overview_active = 0;
+        gui_dirty_screen();
+        return;
+    }
+
+    /* Block keyboard input while overview is active */
+    if (overview_active) return;
+
     /* Alt+F4: close the focused window */
     if (ev->type == INPUT_EVENT_F4 && (ev->modifiers & KEY_MOD_ALT))
     {
@@ -1149,6 +1322,22 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
         cursor_invalidate_old();
         cursor_set_pos(mouse_x, mouse_y);
         cursor_invalidate_new();
+
+        /* Overview mode: update hover */
+        if (overview_active) {
+            int old_hover = overview_hover;
+            int oi;
+            overview_hover = -1;
+            for (oi = 0; oi < overview_count; oi++) {
+                if (mouse_x >= overview_tx[oi] && mouse_x < overview_tx[oi] + overview_tw[oi] &&
+                    mouse_y >= overview_ty[oi] && mouse_y < overview_ty[oi] + overview_th[oi]) {
+                    overview_hover = oi;
+                    break;
+                }
+            }
+            if (overview_hover != old_hover)
+                gui_dirty_screen();
+        }
 
         /* Update dock/taskbar hover state (skip during drag) */
         if (!*dragging_win && !*resizing_win)
@@ -1328,6 +1517,23 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
             *resizing_win = 0;
             bg_valid = 0;
         }
+        return;
+    }
+
+    /* Overview mode: click to select window */
+    if (overview_active && (ev->buttons & 0x01))
+    {
+        int oi;
+        for (oi = 0; oi < overview_count; oi++) {
+            if (mouse_x >= overview_tx[oi] && mouse_x < overview_tx[oi] + overview_tw[oi] &&
+                mouse_y >= overview_ty[oi] && mouse_y < overview_ty[oi] + overview_th[oi]) {
+                gui_window_focus(overview_wins[oi]);
+                break;
+            }
+        }
+        overview_active = 0;
+        gui_dirty_screen();
+        desktop_invalidate_taskbar();
         return;
     }
 

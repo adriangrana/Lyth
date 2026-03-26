@@ -296,6 +296,9 @@ static int queue_function_event_set1(unsigned char scancode) {
         case 0x3E:
             queue_event(KEY_EVENT_F4, 0);
             return 1;
+        case 0x3F:
+            queue_event(KEY_EVENT_F5, 0);
+            return 1;
         default:
             return 0;
     }
@@ -314,6 +317,9 @@ static int queue_function_event_set2(unsigned char scancode) {
             return 1;
         case 0x0C:
             queue_event(KEY_EVENT_F4, 0);
+            return 1;
+        case 0x03:
+            queue_event(KEY_EVENT_F5, 0);
             return 1;
         default:
             return 0;

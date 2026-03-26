@@ -30,6 +30,7 @@ typedef enum {
 	KEY_EVENT_F2,
 	KEY_EVENT_F3,
 	KEY_EVENT_F4,
+	KEY_EVENT_F5,
 	KEY_EVENT_CTRL_C,
 	KEY_EVENT_SUPER
 } keyboard_event_type_t;
