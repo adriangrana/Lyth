@@ -1686,6 +1686,18 @@ void desktop_shutdown(void) {
     gui_surface_free(&desk_surf);
 }
 
+void desktop_resize(int new_w, int new_h) {
+    gui_surface_free(&desk_surf);
+    sw = new_w;
+    sh = new_h;
+    tray_net_x = sw - 100;
+    tray_menu_x = sw - 140;
+    gui_surface_alloc(&desk_surf, sw, sh);
+    desk_valid = 0;
+    launcher_cache_valid = 0;
+    rebuild_desktop();  /* pre-render wallpaper at new resolution */
+}
+
 void desktop_paint_region(gui_surface_t* dst, int x0, int y0, int x1, int y1) {
     int row, w;
     if (!desk_surf.pixels || !dst || !dst->pixels) return;
@@ -2182,12 +2194,10 @@ int desktop_handle_click(int mx, int my, int button) {
                 close_context_menu();
                 if (idx >= 0 && idx < CTX_MAX_ITEMS && target) {
                     if (idx == 0) {
-                        gui_dirty_add(target->x - 6, target->y - 6,
-                                      target->width + 12, target->height + 12);
-                        if (target->on_close) target->on_close(target);
-                        else gui_window_destroy(target);
+                        gui_window_close_animated(target);
                     } else if (idx == 1) {
-                        target->flags |= GUI_WIN_MINIMIZED;
+                        target->anim_alpha_target = 0;
+                        target->anim_minimizing = 1;
                         gui_dirty_add(target->x, target->y,
                                       target->width, target->height);
                         desk_valid = 0;
@@ -2361,6 +2371,8 @@ int desktop_handle_click(int mx, int my, int button) {
                     /* Toggle minimize/restore */
                     if (w->flags & GUI_WIN_MINIMIZED) {
                         w->flags &= ~GUI_WIN_MINIMIZED;
+                        w->alpha = 0;
+                        w->anim_alpha_target = 255;
                         gui_window_focus(w);
                         w->needs_redraw = 1;
                     } else {

@@ -51,6 +51,14 @@ void cursor_init(int sw, int sh) {
     cursor_drawn = 0;
 }
 
+void cursor_resize(int new_w, int new_h) {
+    scr_w = new_w;
+    scr_h = new_h;
+    if (cur_x >= scr_w) cur_x = scr_w - 1;
+    if (cur_y >= scr_h) cur_y = scr_h - 1;
+    cursor_drawn = 0;
+}
+
 void cursor_set_pos(int x, int y) {
     prev_x = cur_x;
     prev_y = cur_y;

@@ -18,7 +18,8 @@ static mouse_event_t event_queue[MOUSE_QUEUE_SIZE];
 static int event_head = 0;
 static int event_tail = 0;
 static int mouse_enabled = 0;
-static unsigned char packet[3];
+static int mouse_has_wheel = 0;      /* 1 if Intellimouse (4-byte packets) */
+static unsigned char packet[4];
 static int packet_index = 0;
 static mouse_state_t mouse_state = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
@@ -121,7 +122,7 @@ static int mouse_expect_ack(unsigned char command, const char* failure_message) 
     return 0;
 }
 
-static void queue_mouse_event(int delta_x, int delta_y, unsigned char buttons) {
+static void queue_mouse_event(int delta_x, int delta_y, int scroll, unsigned char buttons) {
     int next_head = (event_head + 1) % MOUSE_QUEUE_SIZE;
 
     if (next_head == event_tail) {
@@ -131,6 +132,7 @@ static void queue_mouse_event(int delta_x, int delta_y, unsigned char buttons) {
 
     event_queue[event_head].delta_x = delta_x;
     event_queue[event_head].delta_y = delta_y;
+    event_queue[event_head].scroll = scroll;
     event_queue[event_head].buttons = buttons;
     event_head = next_head;
 }
@@ -192,6 +194,26 @@ void mouse_init(void) {
         mouse_expect_ack(200, "El raton no acepto sample rate 200");
     }
 
+    /* Try to enable Intellimouse (4-byte packets with scroll wheel).
+     * Magic knock sequence: set sample rate 200, 100, 80, then read ID.
+     * If the mouse returns ID 3, scroll wheel is active. */
+    {
+        int ok = 1;
+        if (ok) ok = mouse_expect_ack(0xF3, 0) && mouse_expect_ack(200, 0);
+        if (ok) ok = mouse_expect_ack(0xF3, 0) && mouse_expect_ack(100, 0);
+        if (ok) ok = mouse_expect_ack(0xF3, 0) && mouse_expect_ack(80, 0);
+        if (ok && mouse_expect_ack(0xF2, 0)) {
+            unsigned char id = mouse_read();
+            if (id == 3) {
+                mouse_has_wheel = 1;
+                klog_write(KLOG_LEVEL_INFO, "mouse", "Intellimouse wheel detectado");
+            }
+        }
+        /* Restore sample rate to 200 Hz regardless */
+        if (mouse_expect_ack(0xF3, 0))
+            mouse_expect_ack(200, 0);
+    }
+
     if (!mouse_expect_ack(0xF4, "El raton no entro en streaming")) {
         return;
     }
@@ -232,8 +254,12 @@ void mouse_handle_interrupt(void) {
     }
 
     packet[packet_index++] = data;
-    if (packet_index < 3) {
-        return;
+
+    /* 3-byte standard or 4-byte Intellimouse */
+    {
+        int pkt_len = mouse_has_wheel ? 4 : 3;
+        if (packet_index < pkt_len)
+            return;
     }
 
     packet_index = 0;
@@ -252,12 +278,20 @@ void mouse_handle_interrupt(void) {
     delta_y = (packet[0] & MOUSE_PACKET_Y_SIGN) ? (int)packet[2] - 256 : (int)packet[2];
     delta_y = -delta_y;
 
-    mouse_state.x += delta_x;
-    mouse_state.y += delta_y;
-    mouse_state.buttons = packet[0] & (MOUSE_BUTTON_LEFT | MOUSE_BUTTON_RIGHT | MOUSE_BUTTON_MIDDLE);
-    mouse_state.packets_received++;
+    {
+        int scroll = 0;
+        if (mouse_has_wheel) {
+            signed char sz = (signed char)packet[3];
+            scroll = -(int)sz;  /* PS/2: positive = scroll down, we invert */
+        }
 
-    queue_mouse_event(delta_x, delta_y, mouse_state.buttons);
+        mouse_state.x += delta_x;
+        mouse_state.y += delta_y;
+        mouse_state.buttons = packet[0] & (MOUSE_BUTTON_LEFT | MOUSE_BUTTON_RIGHT | MOUSE_BUTTON_MIDDLE);
+        mouse_state.packets_received++;
+
+        queue_mouse_event(delta_x, delta_y, scroll, mouse_state.buttons);
+    }
 }
 
 int mouse_poll_event(mouse_event_t* event) {
@@ -283,5 +317,5 @@ void mouse_inject_event(int dx, int dy, unsigned char buttons) {
     mouse_state.y += dy;
     mouse_state.buttons = buttons;
     mouse_state.packets_received++;
-    queue_mouse_event(dx, dy, buttons);
+    queue_mouse_event(dx, dy, 0, buttons);
 }

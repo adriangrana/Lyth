@@ -4,6 +4,7 @@
 typedef struct {
     int delta_x;
     int delta_y;
+    int scroll;           /* vertical scroll: +1 up, -1 down */
     unsigned char buttons;
 } mouse_event_t;
 

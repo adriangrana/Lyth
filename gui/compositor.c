@@ -115,6 +115,233 @@ static unsigned int frame_time_acc;
 static unsigned int frame_time_samples;
 static unsigned int frame_time_max_this_sec;
 
+/* ---- perf overlay ---- */
+static int perf_overlay;  /* 1 = show FPS/frametime overlay (toggle with F3) */
+static int dirty_debug;   /* 1 = flash dirty rect borders (toggle with F4) */
+
+/* frame time history for graph */
+#define FT_HIST_LEN 60
+static unsigned int ft_hist[FT_HIST_LEN];
+static int ft_hist_idx;
+
+/* ---- alt-tab switcher overlay ---- */
+#define ALTTAB_THUMB_W    120
+#define ALTTAB_THUMB_H     80
+#define ALTTAB_PAD         12
+#define ALTTAB_MAX_ITEMS   12
+
+static int alttab_active;            /* 1 = switcher visible */
+static int alttab_sel;               /* selected index into alttab_wins[] */
+static int alttab_count;             /* number of switchable windows */
+static gui_window_t *alttab_wins[ALTTAB_MAX_ITEMS];
+
+#define PERF_OVL_X 8
+#define PERF_OVL_Y 42
+#define PERF_OVL_W 170
+#define PERF_OVL_LINE (THEME_FONT_H + 2)
+#define PERF_OVL_GRAPH_H 40
+#define PERF_OVL_LINES 9  /* FPS, Avg, Max, P95, Dirty, Render, Compose, Present, Resolution */
+#define PERF_OVL_TOTAL_H (PERF_OVL_LINE * PERF_OVL_LINES + 8 + PERF_OVL_GRAPH_H + 4)
+
+static unsigned int dropped_frames;  /* frames exceeding 16.7ms budget */
+
+static void paint_perf_overlay(gui_surface_t *s)
+{
+    char buf[48];
+    int y = PERF_OVL_Y;
+    uint32_t fg = 0x00FF88;   /* green text */
+    uint32_t bg = 0x000000;
+    uint32_t dim = 0x66AA88;  /* dimmer green for phase lines */
+
+    if (!perf_overlay) return;
+
+    /* semi-transparent black background */
+    gpu_set_target(g_gpu.backbuffer);
+    gpu_fill_rect_alpha(PERF_OVL_X - 4, y - 4, PERF_OVL_W, PERF_OVL_TOTAL_H, bg, 180);
+
+    /* FPS + dropped */
+    buf[0] = 'F'; buf[1] = 'P'; buf[2] = 'S'; buf[3] = ':'; buf[4] = ' ';
+    uint_to_str(metrics.fps, buf + 5, 10);
+    { int l = (int)strlen(buf); buf[l] = ' '; buf[l+1] = 'd'; buf[l+2] = ':';
+      uint_to_str(dropped_frames, buf + l + 3, 10); }
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, fg, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* Frame time avg (us) */
+    buf[0] = 'A'; buf[1] = 'v'; buf[2] = 'g'; buf[3] = ':'; buf[4] = ' ';
+    uint_to_str(metrics.frame_time_avg, buf + 5, 10);
+    { int l = (int)strlen(buf); buf[l] = 'u'; buf[l+1] = 's'; buf[l+2] = 0; }
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, fg, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* Frame time max (us) */
+    buf[0] = 'M'; buf[1] = 'a'; buf[2] = 'x'; buf[3] = ':'; buf[4] = ' ';
+    uint_to_str(metrics.frame_time_max, buf + 5, 10);
+    { int l = (int)strlen(buf); buf[l] = 'u'; buf[l+1] = 's'; buf[l+2] = 0; }
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, fg, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* P95 frametime from history */
+    {
+        unsigned int sorted[FT_HIST_LEN];
+        int cnt = 0, i, j;
+        unsigned int p95_val = 0;
+        for (i = 0; i < FT_HIST_LEN; i++)
+            if (ft_hist[i] > 0) sorted[cnt++] = ft_hist[i];
+        /* simple insertion sort — only 60 elements */
+        for (i = 1; i < cnt; i++) {
+            unsigned int key = sorted[i];
+            j = i - 1;
+            while (j >= 0 && sorted[j] > key) {
+                sorted[j + 1] = sorted[j];
+                j--;
+            }
+            sorted[j + 1] = key;
+        }
+        if (cnt > 0) p95_val = sorted[(cnt * 95) / 100];
+        buf[0] = 'P'; buf[1] = '9'; buf[2] = '5'; buf[3] = ':'; buf[4] = ' ';
+        uint_to_str(p95_val, buf + 5, 10);
+        { int l = (int)strlen(buf); buf[l] = 'u'; buf[l+1] = 's'; buf[l+2] = 0; }
+        gui_surface_draw_string(s, PERF_OVL_X, y, buf, fg, 0, 0);
+    }
+    y += PERF_OVL_LINE;
+
+    /* Dirty rects */
+    buf[0] = 'D'; buf[1] = 'i'; buf[2] = 'r'; buf[3] = 't'; buf[4] = 'y';
+    buf[5] = ':'; buf[6] = ' ';
+    uint_to_str(metrics.dirty_count, buf + 7, 10);
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, fg, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* Phase: Render */
+    buf[0] = 'R'; buf[1] = 'n'; buf[2] = 'd'; buf[3] = ':'; buf[4] = ' ';
+    uint_to_str(metrics.render_us, buf + 5, 10);
+    { int l = (int)strlen(buf); buf[l] = 'u'; buf[l+1] = 's'; buf[l+2] = 0; }
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, dim, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* Phase: Compose */
+    buf[0] = 'C'; buf[1] = 'm'; buf[2] = 'p'; buf[3] = ':'; buf[4] = ' ';
+    uint_to_str(metrics.compose_us, buf + 5, 10);
+    { int l = (int)strlen(buf); buf[l] = 'u'; buf[l+1] = 's'; buf[l+2] = 0; }
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, dim, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* Phase: Present */
+    buf[0] = 'P'; buf[1] = 'r'; buf[2] = 's'; buf[3] = ':'; buf[4] = ' ';
+    uint_to_str(metrics.present_us, buf + 5, 10);
+    { int l = (int)strlen(buf); buf[l] = 'u'; buf[l+1] = 's'; buf[l+2] = 0; }
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, dim, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* Resolution */
+    uint_to_str((unsigned int)scr_w, buf, 10);
+    { int l = (int)strlen(buf); buf[l] = 'x'; uint_to_str((unsigned int)scr_h, buf + l + 1, 10); }
+    gui_surface_draw_string(s, PERF_OVL_X, y, buf, 0x88AACC, 0, 0);
+    y += PERF_OVL_LINE;
+
+    /* Frame time bar graph */
+    {
+        int gx = PERF_OVL_X;
+        int gy = y + 2;
+        int bar_w = (PERF_OVL_W - 8) / FT_HIST_LEN;
+        int gi;
+        unsigned int max_ft = 16667; /* 60fps baseline = ~16.7ms */
+        if (bar_w < 1) bar_w = 1;
+
+        /* find graph max for scaling (at least 16.7ms) */
+        for (gi = 0; gi < FT_HIST_LEN; gi++) {
+            if (ft_hist[gi] > max_ft) max_ft = ft_hist[gi];
+        }
+
+        /* 16.7ms reference line (green dashed) */
+        {
+            int ref_y = gy + PERF_OVL_GRAPH_H -
+                        (int)((16667UL * (unsigned int)PERF_OVL_GRAPH_H) / max_ft);
+            if (ref_y >= gy && ref_y < gy + PERF_OVL_GRAPH_H)
+                gpu_fill_rect_alpha(gx, ref_y, FT_HIST_LEN * bar_w, 1, 0x00FF88, 80);
+        }
+
+        for (gi = 0; gi < FT_HIST_LEN; gi++) {
+            int idx = (ft_hist_idx + gi) % FT_HIST_LEN;
+            unsigned int ft_val = ft_hist[idx];
+            int bar_h;
+            uint32_t bar_col;
+
+            if (ft_val == 0) continue;
+            bar_h = (int)((ft_val * (unsigned int)PERF_OVL_GRAPH_H) / max_ft);
+            if (bar_h < 1) bar_h = 1;
+            if (bar_h > PERF_OVL_GRAPH_H) bar_h = PERF_OVL_GRAPH_H;
+
+            /* green if under 16.7ms, yellow 16.7-33ms, red over 33ms */
+            if (ft_val <= 16667) bar_col = 0x00FF88;
+            else if (ft_val <= 33333) bar_col = 0xFFDD44;
+            else bar_col = 0xFF4444;
+
+            gpu_fill_rect_alpha(gx + gi * bar_w,
+                                gy + PERF_OVL_GRAPH_H - bar_h,
+                                bar_w > 1 ? bar_w - 1 : 1, bar_h,
+                                bar_col, 200);
+        }
+    }
+}
+
+/* paint alt-tab switcher overlay centered on screen */
+static void paint_alttab_overlay(gui_surface_t *s)
+{
+    int total_w, total_h, ox, oy, i;
+    if (!alttab_active || alttab_count < 1) return;
+
+    total_w = alttab_count * (ALTTAB_THUMB_W + ALTTAB_PAD) + ALTTAB_PAD;
+    total_h = ALTTAB_THUMB_H + ALTTAB_PAD * 2 + THEME_FONT_H + 8;
+    ox = (scr_w - total_w) / 2;
+    oy = (scr_h - total_h) / 2;
+
+    /* dark semi-transparent backdrop */
+    gpu_set_target(g_gpu.backbuffer);
+    gpu_fill_rect_alpha(ox, oy, total_w, total_h, 0x181825, 220);
+
+    for (i = 0; i < alttab_count; i++) {
+        gui_window_t *w = alttab_wins[i];
+        int tx = ox + ALTTAB_PAD + i * (ALTTAB_THUMB_W + ALTTAB_PAD);
+        int ty = oy + ALTTAB_PAD;
+
+        /* selection highlight */
+        if (i == alttab_sel) {
+            gpu_fill_rect_alpha(tx - 3, ty - 3,
+                                ALTTAB_THUMB_W + 6, ALTTAB_THUMB_H + 6,
+                                THEME_COL_ACCENT, 120);
+        }
+
+        /* thumbnail: scale window surface into the slot */
+        if (w && w->surface.pixels && w->surface.width > 0 && w->surface.height > 0) {
+            gpu_texture_t thumb_tex;
+            gpu_texture_wrap(&thumb_tex, w->surface.pixels,
+                             w->surface.width, w->surface.height,
+                             w->surface.stride);
+            gpu_set_target(g_gpu.backbuffer);
+            gpu_blit_scaled(tx, ty, ALTTAB_THUMB_W, ALTTAB_THUMB_H,
+                            &thumb_tex, 0, 0,
+                            w->surface.width, w->surface.height);
+        } else {
+            /* no surface: grey placeholder */
+            gpu_set_target(g_gpu.backbuffer);
+            gpu_fill_rect_alpha(tx, ty, ALTTAB_THUMB_W, ALTTAB_THUMB_H, 0x45475A, 200);
+        }
+
+        /* title below thumbnail */
+        if (w) {
+            int tw = (int)strlen(w->title) * THEME_FONT_W;
+            int ttx = tx + (ALTTAB_THUMB_W - tw) / 2;
+            if (ttx < tx) ttx = tx;
+            gui_surface_draw_string_n(s, ttx, ty + ALTTAB_THUMB_H + 4,
+                                      w->title, ALTTAB_THUMB_W / THEME_FONT_W,
+                                      i == alttab_sel ? THEME_COL_ACCENT : THEME_COL_TEXT,
+                                      0, 0);
+        }
+    }
+}
+
 /* ---- frame pacing ---- */
 #define FRAME_INTERVAL_MS 16U /* ~60 fps */
 
@@ -270,8 +497,8 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
         if (!w->surface.pixels)
             continue;
 
-        /* Draw multi-layer soft drop shadow (3 concentric rings) */
-        {
+        /* Draw multi-layer soft drop shadow (skip during fade) */
+        if (w->alpha == 255) {
             static const int sh_off[]    = { THEME_SHADOW_OFF0,    THEME_SHADOW_OFF1,    THEME_SHADOW_OFF2 };
             static const int sh_spread[] = { THEME_SHADOW_SPREAD0, THEME_SHADOW_SPREAD1, THEME_SHADOW_SPREAD2 };
             static const int sh_alpha[]  = { THEME_SHADOW_ALPHA0,  THEME_SHADOW_ALPHA1,  THEME_SHADOW_ALPHA2 };
@@ -402,6 +629,19 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
               nry + nrh <= dy0 || dy1 <= nry))
             notify_paint(&bb_surf, scr_w);
     }
+
+    /* 6. Perf overlay (if enabled) */
+    if (perf_overlay) {
+        int pox = PERF_OVL_X - 4, poy = PERF_OVL_Y - 4;
+        int poh = PERF_OVL_LINE * 5 + 8;
+        if (!(pox + PERF_OVL_W <= dx0 || dx1 <= pox ||
+              poy + poh <= dy0 || dy1 <= poy))
+            paint_perf_overlay(&bb_surf);
+    }
+
+    /* 7. Alt-Tab switcher overlay */
+    if (alttab_active && alttab_count > 0)
+        paint_alttab_overlay(&bb_surf);
 
     /* track pixels copied */
     metrics.pixels_copied += (unsigned int)(dr->w * dr->h);
@@ -620,29 +860,52 @@ static void rebuild_bg(gui_window_t *skip_win)
 static void present_dirty(void)
 {
     unsigned int t0, t1;
+    int i;
 
     t0 = timer_get_monotonic_us();
 
-    if (dirty_count == 1) {
-        gpu_present(dirty_list[0].x, dirty_list[0].y,
-                    dirty_list[0].w, dirty_list[0].h);
-    } else if (dirty_count > 1) {
-        /* Union all dirty rects into one to avoid multiple virtio
-         * round-trips (each costs ~1-5 ms of synchronous polling). */
-        int ux = dirty_list[0].x;
-        int uy = dirty_list[0].y;
-        int ur = ux + dirty_list[0].w;
-        int ub = uy + dirty_list[0].h;
-        int i;
-        for (i = 1; i < dirty_count; i++) {
-            int rx = dirty_list[i].x;
-            int ry = dirty_list[i].y;
-            if (rx < ux) ux = rx;
-            if (ry < uy) uy = ry;
-            if (rx + dirty_list[i].w > ur) ur = rx + dirty_list[i].w;
-            if (ry + dirty_list[i].h > ub) ub = ry + dirty_list[i].h;
+    /* For virtio-GPU, each present involves a synchronous round-trip.
+     * However, unioning far-apart dirty rects wastes bandwidth by
+     * transferring many unchanged pixels.  Strategy: union only when
+     * the bounding box area is within 3× the sum of individual areas;
+     * otherwise present each rect individually.
+     * For the SW backend, presents are cheap memcpy — always individual. */
+    if (dirty_count <= 1) {
+        if (dirty_count == 1)
+            gpu_present(dirty_list[0].x, dirty_list[0].y,
+                        dirty_list[0].w, dirty_list[0].h);
+    } else if (g_gpu.ops && g_gpu.ops->name && g_gpu.ops->name[0] == 'v') {
+        /* virtio path: union only if efficient */
+        int ux = dirty_list[0].x, uy = dirty_list[0].y;
+        int ur = ux + dirty_list[0].w, ub = uy + dirty_list[0].h;
+        unsigned int sum_area = 0;
+        for (i = 0; i < dirty_count; i++) {
+            sum_area += (unsigned int)(dirty_list[i].w * dirty_list[i].h);
+            if (dirty_list[i].x < ux) ux = dirty_list[i].x;
+            if (dirty_list[i].y < uy) uy = dirty_list[i].y;
+            if (dirty_list[i].x + dirty_list[i].w > ur)
+                ur = dirty_list[i].x + dirty_list[i].w;
+            if (dirty_list[i].y + dirty_list[i].h > ub)
+                ub = dirty_list[i].y + dirty_list[i].h;
         }
-        gpu_present(ux, uy, ur - ux, ub - uy);
+        {
+            unsigned int union_area = (unsigned int)(ur - ux) * (unsigned int)(ub - uy);
+            if (union_area <= sum_area * 3) {
+                /* union is efficient, single present */
+                gpu_present(ux, uy, ur - ux, ub - uy);
+            } else {
+                /* union would waste >3× bandwidth, present individually */
+                for (i = 0; i < dirty_count; i++)
+                    gpu_present(dirty_list[i].x, dirty_list[i].y,
+                                dirty_list[i].w, dirty_list[i].h);
+            }
+        }
+    } else {
+        /* SW path: present each dirty rect individually */
+        for (i = 0; i < dirty_count; i++) {
+            gpu_present(dirty_list[i].x, dirty_list[i].y,
+                        dirty_list[i].w, dirty_list[i].h);
+        }
     }
 
     t1 = timer_get_monotonic_us();
@@ -662,6 +925,8 @@ static gui_window_t *hit_test_window(int mx, int my)
     {
         gui_window_t *w = gui_window_get(i);
         if (!w || !(w->flags & GUI_WIN_VISIBLE) || (w->flags & GUI_WIN_MINIMIZED))
+            continue;
+        if (w->anim_closing || w->anim_minimizing)
             continue;
         if (mx >= w->x && mx < w->x + w->width &&
             my >= w->y && my < w->y + w->height)
@@ -752,6 +1017,22 @@ static void handle_keyboard(input_event_t *ev)
 {
     int i, count;
 
+    /* F3: toggle perf overlay */
+    if (ev->type == INPUT_EVENT_F3)
+    {
+        perf_overlay = !perf_overlay;
+        gui_dirty_add(PERF_OVL_X - 4, PERF_OVL_Y - 4,
+                      PERF_OVL_W, PERF_OVL_TOTAL_H);
+        return;
+    }
+
+    /* F4 (no Alt): toggle dirty rect debug overlay */
+    if (ev->type == INPUT_EVENT_F4 && !(ev->modifiers & KEY_MOD_ALT))
+    {
+        dirty_debug = !dirty_debug;
+        return;
+    }
+
     /* Alt+F4: close the focused window */
     if (ev->type == INPUT_EVENT_F4 && (ev->modifiers & KEY_MOD_ALT))
     {
@@ -761,53 +1042,53 @@ static void handle_keyboard(input_event_t *ev)
             gui_window_t *w = gui_window_get(i);
             if (w && (w->flags & GUI_WIN_FOCUSED) && (w->flags & GUI_WIN_CLOSEABLE))
             {
-                gui_dirty_add(w->x - 6, w->y - 6, w->width + 12, w->height + 12);
-                if (w->on_close)
-                    w->on_close(w);
-                else
-                    gui_window_destroy(w);
+                gui_window_close_animated(w);
                 return;
             }
         }
         return;
     }
 
-    /* Alt+Tab: cycle focus to next visible window */
+    /* Alt+Tab: visual window switcher */
     if (ev->type == INPUT_EVENT_TAB && (ev->modifiers & KEY_MOD_ALT))
     {
-        count = gui_window_count();
-        if (count < 2) return;
-        int focused_idx = -1;
-        for (i = 0; i < count; i++)
-        {
-            gui_window_t *w = gui_window_get(i);
-            if (w && (w->flags & GUI_WIN_FOCUSED))
+        if (!alttab_active) {
+            /* build list of switchable windows */
+            alttab_count = 0;
+            count = gui_window_count();
+            for (i = 0; i < count && alttab_count < ALTTAB_MAX_ITEMS; i++)
             {
-                focused_idx = i;
-                break;
+                gui_window_t *w = gui_window_get(i);
+                if (w && (w->flags & GUI_WIN_VISIBLE) && !(w->flags & GUI_WIN_MINIMIZED))
+                    alttab_wins[alttab_count++] = w;
             }
-        }
-        /* Find next visible window after the focused one */
-        for (i = 1; i < count; i++)
-        {
-            int idx = (focused_idx + i) % count;
-            gui_window_t *w = gui_window_get(idx);
-            if (w && (w->flags & GUI_WIN_VISIBLE) &&
-                !(w->flags & GUI_WIN_MINIMIZED))
-            {
-                gui_window_focus(w);
-                gui_dirty_add(w->x, w->y, w->width, w->height);
-                /* Also dirty the previously focused window */
-                if (focused_idx >= 0)
-                {
-                    gui_window_t *prev = gui_window_get(focused_idx);
-                    if (prev)
-                        gui_dirty_add(prev->x, prev->y, prev->width, prev->height);
+            if (alttab_count < 2) return;
+            /* find currently focused window in list */
+            alttab_sel = 0;
+            for (i = 0; i < alttab_count; i++) {
+                if (alttab_wins[i]->flags & GUI_WIN_FOCUSED) {
+                    alttab_sel = i;
+                    break;
                 }
-                desktop_invalidate_taskbar();
-                return;
             }
+            alttab_active = 1;
         }
+        /* cycle to next */
+        alttab_sel = (alttab_sel + 1) % alttab_count;
+        gui_dirty_screen();
+        return;
+    }
+
+    /* Escape dismisses alt-tab without switching */
+    if (alttab_active && ev->type == INPUT_EVENT_ENTER)
+    {
+        /* confirm selection */
+        if (alttab_sel >= 0 && alttab_sel < alttab_count) {
+            gui_window_focus(alttab_wins[alttab_sel]);
+        }
+        alttab_active = 0;
+        gui_dirty_screen();
+        desktop_invalidate_taskbar();
         return;
     }
 
@@ -878,6 +1159,26 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
                         break;
                     }
                 }
+            }
+        }
+    }
+
+    /* scroll wheel — dispatch to widget under cursor in focused window */
+    if (ev->scroll && !*dragging_win && !*resizing_win)
+    {
+        int wc = gui_window_count();
+        int wi;
+        for (wi = 0; wi < wc; wi++) {
+            gui_window_t *fw = gui_window_get(wi);
+            if (fw && (fw->flags & GUI_WIN_FOCUSED) &&
+                !(fw->flags & GUI_WIN_MINIMIZED)) {
+                int rx = mouse_x - gui_window_content_x(fw);
+                int ry = mouse_y - gui_window_content_y(fw);
+                if (wid_handle_scroll(fw, rx, ry, ev->scroll)) {
+                    fw->needs_redraw = 1;
+                    gui_dirty_add(fw->x, fw->y, fw->width, fw->height);
+                }
+                break;
             }
         }
     }
@@ -1050,9 +1351,9 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
                 /* If snapped, restore original size on drag start */
                 if (w->snapped) {
                     int old_w = w->width, old_h = w->height;
-                    gui_dirty_add(w->x, w->y,
-                                  old_w + THEME_SHADOW_EXTENT,
-                                  old_h + THEME_SHADOW_EXTENT);
+                    gui_dirty_add(w->x - THEME_SHADOW_EXTENT, w->y - THEME_SHADOW_EXTENT,
+                                  old_w + 2 * THEME_SHADOW_EXTENT,
+                                  old_h + 2 * THEME_SHADOW_EXTENT);
                     gui_window_resize(w, w->snap_restore_w, w->snap_restore_h);
                     /* reposition so cursor stays proportional on titlebar */
                     w->x = mouse_x - w->snap_restore_w / 2;
@@ -1087,8 +1388,9 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
                 if (edge != GUI_RESIZE_NONE)
                 {
                     gui_window_focus(w);
-                    gui_dirty_add(w->x, w->y, w->width + THEME_SHADOW_EXTENT,
-                                  w->height + THEME_SHADOW_EXTENT);
+                    gui_dirty_add(w->x - THEME_SHADOW_EXTENT, w->y - THEME_SHADOW_EXTENT,
+                                  w->width + 2 * THEME_SHADOW_EXTENT,
+                                  w->height + 2 * THEME_SHADOW_EXTENT);
 
                     w->resizing = edge;
                     w->resize_orig_w = w->width;
@@ -1106,21 +1408,14 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
 
             if (hit_close_button(w, mouse_x, mouse_y))
             {
-                gui_dirty_add(w->x - 6, w->y - 6, w->width + 12, w->height + 12);
-                if (w->on_close)
-                    w->on_close(w);
-                else
-                    gui_window_destroy(w);
+                gui_window_close_animated(w);
                 return;
             }
 
             if (hit_minimize_button(w, mouse_x, mouse_y))
             {
-                w->flags |= GUI_WIN_MINIMIZED;
-                gui_dirty_add(w->x, w->y,
-                              w->width + THEME_SHADOW_EXTENT,
-                              w->height + THEME_SHADOW_EXTENT);
-                desktop_invalidate_taskbar();
+                w->anim_alpha_target = 0;
+                w->anim_minimizing = 1;
                 return;
             }
 
@@ -1258,6 +1553,74 @@ gui_surface_t *gui_get_backbuffer(void)
     return &bb_surf;
 }
 
+int gui_resize_screen(int new_w, int new_h)
+{
+    if (new_w <= 0 || new_h <= 0) return -1;
+    if (new_w == scr_w && new_h == scr_h) return 0;
+
+    /* 1. Ask the renderer to reallocate the backbuffer */
+    if (!g_gpu.ops->resize || g_gpu.ops->resize(new_w, new_h) != 0)
+        return -1;
+
+    /* 2. Free the old bg_buffer */
+    if (bg_buffer_phys)
+        physmem_free_region(bg_buffer_phys, backbuffer_size);
+
+    /* 3. Update compositor screen dimensions */
+    scr_w = new_w;
+    scr_h = new_h;
+    scr_pitch = (uint32_t)new_w * 4;
+
+    /* 4. Refresh backbuffer aliases */
+    backbuffer      = g_gpu.backbuffer->pixels;
+    backbuffer_phys = g_gpu.backbuffer->alloc_phys;
+    backbuffer_size = g_gpu.backbuffer->alloc_size;
+    bb_surf.pixels  = backbuffer;
+    bb_surf.width   = scr_w;
+    bb_surf.height  = scr_h;
+    bb_surf.stride  = scr_w;
+
+    /* 5. Reallocate bg_buffer for drag cache */
+    bg_buffer_phys = physmem_alloc_region(backbuffer_size, 4096);
+    if (bg_buffer_phys) {
+        bg_buffer = (uint32_t *)(uintptr_t)bg_buffer_phys;
+        memset(bg_buffer, 0, backbuffer_size);
+    } else {
+        bg_buffer = 0;
+    }
+    bg_valid = 0;
+
+    /* 6. Resize subsystems */
+    cursor_resize(new_w, new_h);
+    desktop_resize(new_w, new_h);
+
+    /* 7. Clamp mouse position */
+    if (mouse_x >= scr_w) mouse_x = scr_w - 1;
+    if (mouse_y >= scr_h) mouse_y = scr_h - 1;
+    cursor_set_pos(mouse_x, mouse_y);
+
+    /* 8. Clamp windows that would fall off-screen */
+    {
+        int i, count = gui_window_count();
+        for (i = 0; i < count; i++) {
+            gui_window_t *win = gui_window_get(i);
+            if (!win) continue;
+            if (win->x + win->width > scr_w)
+                win->x = scr_w - win->width;
+            if (win->y + win->height > scr_h)
+                win->y = scr_h - win->height;
+            if (win->x < 0) win->x = 0;
+            if (win->y < 0) win->y = 0;
+            win->needs_redraw = 1;
+        }
+    }
+
+    /* 9. Full repaint */
+    gui_dirty_screen();
+    need_compose = 1;
+    return 0;
+}
+
 void gui_run(void)
 {
     input_event_t ev;
@@ -1279,6 +1642,7 @@ void gui_run(void)
     {
         int mouse_dx = 0, mouse_dy = 0;
         int mouse_btn = 0, had_mouse = 0;
+        int mouse_scroll = 0;
         unsigned int coalesced = 0;
 
         usb_hid_poll();
@@ -1297,6 +1661,7 @@ void gui_run(void)
             {
                 mouse_dx += ev.delta_x;
                 mouse_dy += ev.delta_y;
+                mouse_scroll += ev.scroll;
                 mouse_btn = ev.buttons;
                 had_mouse = 1;
                 coalesced++;
@@ -1312,11 +1677,22 @@ void gui_run(void)
             coalesced_ev.device_type = INPUT_DEVICE_MOUSE;
             coalesced_ev.delta_x = mouse_dx;
             coalesced_ev.delta_y = mouse_dy;
+            coalesced_ev.scroll = mouse_scroll;
             coalesced_ev.buttons = mouse_btn;
             coalesced_ev.type = 0;
             coalesced_ev.character = 0;
             handle_mouse(&coalesced_ev, &dragging_win, &resizing_win);
             metrics.coalesced_moves = coalesced > 1 ? coalesced - 1 : 0;
+        }
+
+        /* detect Alt release to confirm alt-tab selection */
+        if (alttab_active && !(keyboard_get_modifiers() & KEY_MOD_ALT))
+        {
+            if (alttab_sel >= 0 && alttab_sel < alttab_count)
+                gui_window_focus(alttab_wins[alttab_sel]);
+            alttab_active = 0;
+            gui_dirty_screen();
+            desktop_invalidate_taskbar();
         }
 
         /* track drag state in metrics */
@@ -1341,6 +1717,7 @@ void gui_run(void)
             }
             /* Animation ticks run every frame, not just once/sec */
             desktop_anim_tick();
+            gui_window_anim_tick();
         }
 
         /* ====================== FAST DRAG PATH (VBlank-synced) ====================== */
@@ -1367,11 +1744,15 @@ void gui_run(void)
                 dragging_win->x = new_x;
                 dragging_win->y = new_y;
 
+                /* During drag use a single light shadow for speed;
+                 * extent = OFF0 + SPREAD0 (typically 4 instead of 14). */
+                #define DRAG_SHADOW_EXT (THEME_SHADOW_OFF0 + THEME_SHADOW_SPREAD0)
+
                 /* Compute union rect (old + new), clipped to screen */
-                ux = old_x < new_x ? old_x : new_x;
-                uy = old_y < new_y ? old_y : new_y;
-                uw = (old_x > new_x ? old_x : new_x) + drag_win_w + THEME_SHADOW_EXTENT - ux;
-                uh = (old_y > new_y ? old_y : new_y) + drag_win_h + THEME_SHADOW_EXTENT - uy;
+                ux = (old_x < new_x ? old_x : new_x) - DRAG_SHADOW_EXT;
+                uy = (old_y < new_y ? old_y : new_y) - DRAG_SHADOW_EXT;
+                uw = (old_x > new_x ? old_x : new_x) + drag_win_w + DRAG_SHADOW_EXT - ux;
+                uh = (old_y > new_y ? old_y : new_y) + drag_win_h + DRAG_SHADOW_EXT - uy;
                 if (ux < 0) { uw += ux; ux = 0; }
                 if (uy < 0) { uh += uy; uy = 0; }
                 if (ux + uw > scr_w) uw = scr_w - ux;
@@ -1383,18 +1764,11 @@ void gui_run(void)
                            &bg_buffer[row * scr_w + ux],
                            (size_t)uw * 4);
 
-                /* 2a. Draw shadow at new position */
-                {
-                    static const int sh_off[]    = { THEME_SHADOW_OFF0,    THEME_SHADOW_OFF1,    THEME_SHADOW_OFF2 };
-                    static const int sh_spread[] = { THEME_SHADOW_SPREAD0, THEME_SHADOW_SPREAD1, THEME_SHADOW_SPREAD2 };
-                    static const int sh_alpha[]  = { THEME_SHADOW_ALPHA0,  THEME_SHADOW_ALPHA1,  THEME_SHADOW_ALPHA2 };
-                    int layer;
-                    gpu_set_target(g_gpu.backbuffer);
-                    for (layer = THEME_SHADOW_LAYERS - 1; layer >= 0; layer--) {
-                        gpu_shadow(new_x, new_y, drag_win_w, drag_win_h,
-                                   sh_off[layer], sh_spread[layer], sh_alpha[layer]);
-                    }
-                }
+                /* 2a. Draw single light shadow at new position (fast) */
+                gpu_set_target(g_gpu.backbuffer);
+                gpu_shadow(new_x, new_y, drag_win_w, drag_win_h,
+                           THEME_SHADOW_OFF0, THEME_SHADOW_SPREAD0,
+                           THEME_SHADOW_ALPHA0);
 
                 /* 2b. Blit window at new position */
                 sx = new_x < 0 ? -new_x : 0;
@@ -1494,12 +1868,41 @@ void gui_run(void)
                 /* draw cursor on top */
                 cursor_draw(&bb_surf);
 
+                /* dirty rect debug overlay: flash colored borders */
+                if (dirty_debug) {
+                    int di;
+                    gpu_set_target(g_gpu.backbuffer);
+                    for (di = 0; di < dirty_count; di++) {
+                        gui_dirty_rect_t *dr = &dirty_list[di];
+                        /* Cycle through distinct colours per rect */
+                        uint32_t dcols[] = {0xFF0000, 0x00FF00, 0x0000FF,
+                                            0xFFFF00, 0xFF00FF, 0x00FFFF};
+                        uint32_t dc = dcols[di % 6];
+                        int da = 180;
+                        /* top */
+                        gpu_fill_rect_alpha(dr->x, dr->y, dr->w, 2, dc, da);
+                        /* bottom */
+                        gpu_fill_rect_alpha(dr->x, dr->y + dr->h - 2, dr->w, 2, dc, da);
+                        /* left */
+                        gpu_fill_rect_alpha(dr->x, dr->y, 2, dr->h, dc, da);
+                        /* right */
+                        gpu_fill_rect_alpha(dr->x + dr->w - 2, dr->y, 2, dr->h, dc, da);
+                    }
+                }
+
                 /* present dirty regions to framebuffer */
                 present_dirty();
 
                 frame_end = timer_get_monotonic_us();
                 ft = frame_end - frame_start;
                 metrics.frame_time_us = ft;
+
+                /* record into frame time history ring buffer */
+                ft_hist[ft_hist_idx] = ft;
+                ft_hist_idx = (ft_hist_idx + 1) % FT_HIST_LEN;
+
+                /* count dropped frames (exceeding 60fps budget) */
+                if (ft > 16667) dropped_frames++;
 
                 /* accumulate for rolling average and max */
                 frame_time_acc += ft;
@@ -1534,6 +1937,11 @@ void gui_run(void)
                 frame_time_max_this_sec = 0;
                 metrics.drag_move_count = 0;
                 metrics.drag_pending_count = 0;
+
+                /* refresh perf overlay each second */
+                if (perf_overlay)
+                    gui_dirty_add(PERF_OVL_X - 4, PERF_OVL_Y - 4,
+                                  PERF_OVL_W, PERF_OVL_TOTAL_H);
             }
         }
 

@@ -481,7 +481,6 @@ static void draw_dropdown(gui_surface_t *s, wid_t *w, int ox, int oy)
 {
     int bx = ox + w->x, by = oy + w->y;
     int bw = w->width, bh = THEME_BTN_H;
-    int open = (w->state & WID_FOCUSED) ? 1 : 0;
     uint32_t bg_col, border_col, fg;
 
     if (!(w->state & WID_ENABLED)) {
@@ -520,25 +519,28 @@ static void draw_dropdown(gui_surface_t *s, wid_t *w, int ox, int oy)
         gui_surface_putpixel(s, ax + 5, ay + 2, fg);
         gui_surface_putpixel(s, ax + 6, ay + 1, fg);
     }
+}
 
-    /* popup items (if open) */
-    if (open && w->item_count > 0) {
-        int py = by + bh + 2;
-        int popup_h = w->item_count * DROP_ITEM_H + 4;
-        int i;
+/* Draw ONLY the popup portion of an open dropdown (used in z-order pass) */
+static void draw_dropdown_popup(gui_surface_t *s, wid_t *w, int ox, int oy)
+{
+    int bx = ox + w->x, by = oy + w->y;
+    int bw = w->width, bh = THEME_BTN_H;
+    int py = by + bh + 2;
+    int popup_h = w->item_count * DROP_ITEM_H + 4;
+    int i;
 
-        sf_rrect(s, bx, py, bw, popup_h, THEME_COL_MANTLE);
-        sf_rrect_outline(s, bx, py, bw, popup_h, THEME_COL_BORDER);
+    sf_rrect(s, bx, py, bw, popup_h, THEME_COL_MANTLE);
+    sf_rrect_outline(s, bx, py, bw, popup_h, THEME_COL_BORDER);
 
-        for (i = 0; i < w->item_count; i++) {
-            int iy = py + 2 + i * DROP_ITEM_H;
-            if (i == w->sel) {
-                sf_fill(s, bx + 2, iy, bw - 4, DROP_ITEM_H, THEME_COL_SURFACE1);
-            }
-            gui_surface_draw_string(s, bx + 8,
-                                    iy + (DROP_ITEM_H - THEME_FONT_H) / 2,
-                                    w->items[i], THEME_COL_TEXT, 0, 0);
+    for (i = 0; i < w->item_count; i++) {
+        int iy = py + 2 + i * DROP_ITEM_H;
+        if (i == w->sel) {
+            sf_fill(s, bx + 2, iy, bw - 4, DROP_ITEM_H, THEME_COL_SURFACE1);
         }
+        gui_surface_draw_string(s, bx + 8,
+                                iy + (DROP_ITEM_H - THEME_FONT_H) / 2,
+                                w->items[i], THEME_COL_TEXT, 0, 0);
     }
 }
 
@@ -586,6 +588,35 @@ static void draw_listview(gui_surface_t *s, wid_t *w, int ox, int oy)
         sf_fill(s, sb_x, by + 2, LV_SCROLL_W, sb_h, THEME_COL_SURFACE0);
         sf_rrect(s, sb_x, thumb_y, LV_SCROLL_W, thumb_h, THEME_COL_OVERLAY1);
     }
+}
+
+#define SB_WIDTH      14   /* scrollbar track width */
+#define SB_MIN_THUMB  16   /* minimum thumb height */
+
+static void draw_scrollbar(gui_surface_t *s, wid_t *w, int ox, int oy)
+{
+    int bx = ox + w->x, by = oy + w->y;
+    int bw = w->width, bh = w->height;
+    int range = w->max_val - w->min_val;
+    int thumb_h, thumb_y;
+    uint32_t thumb_col;
+
+    /* track background */
+    sf_rrect(s, bx, by, bw, bh, THEME_COL_SURFACE0);
+
+    if (range <= 0) return;
+
+    /* compute thumb size and position */
+    thumb_h = bh / 4;
+    if (thumb_h < SB_MIN_THUMB) thumb_h = SB_MIN_THUMB;
+    if (thumb_h > bh) thumb_h = bh;
+
+    thumb_y = by + ((w->value - w->min_val) * (bh - thumb_h)) / range;
+
+    /* thumb colour: accent when hovered/pressed, subtle otherwise */
+    thumb_col = (w->state & (WID_HOVERED | WID_PRESSED))
+                ? THEME_COL_ACCENT : THEME_COL_OVERLAY1;
+    sf_rrect(s, bx + 2, thumb_y, bw - 4, thumb_h, thumb_col);
 }
 
 /* ==================================================================
@@ -782,6 +813,23 @@ wid_t* wid_listview(gui_window_t *win, int x, int y, int lw,
     return w;
 }
 
+wid_t* wid_scrollbar(gui_window_t *win, int x, int y, int h,
+                     int min_val, int max_val, int cur_val,
+                     wid_change_fn on_change)
+{
+    wid_t *w = wid_alloc(win);
+    if (!w) return 0;
+    w->type = WID_SCROLLBAR;
+    w->x = (int16_t)x; w->y = (int16_t)y;
+    w->width = (int16_t)SB_WIDTH;
+    w->height = (int16_t)h;
+    w->min_val = min_val;
+    w->max_val = max_val;
+    w->value = cur_val;
+    w->on_change = on_change;
+    return w;
+}
+
 int wid_add_item(wid_t *w, const char *item)
 {
     int len;
@@ -841,7 +889,16 @@ void wid_draw_all(gui_window_t *win)
         case WID_TABS:      draw_tabs(s, w, ox, oy);      break;
         case WID_DROPDOWN:  draw_dropdown(s, w, ox, oy);  break;
         case WID_LISTVIEW:  draw_listview(s, w, ox, oy);  break;
+        case WID_SCROLLBAR: draw_scrollbar(s, w, ox, oy); break;
         }
+    }
+
+    /* Second pass: draw open dropdown popups on top of all other widgets */
+    for (i = 0; i < win->widget_count; i++) {
+        wid_t *w = &win->widgets[i];
+        if (!(w->state & WID_VISIBLE)) continue;
+        if (w->type == WID_DROPDOWN && (w->state & WID_FOCUSED) && w->item_count > 0)
+            draw_dropdown_popup(s, w, ox, oy);
     }
 }
 
@@ -1013,9 +1070,80 @@ int wid_handle_click(gui_window_t *win, int rx, int ry, int button)
         return 1;
     }
 
+    case WID_SCROLLBAR: {
+        int local_y = ry - w->y;
+        int range = w->max_val - w->min_val;
+        int new_val;
+        if (range <= 0) return 1;
+        if (local_y < 0) local_y = 0;
+        if (local_y >= w->height) local_y = w->height - 1;
+        new_val = w->min_val + (local_y * range) / w->height;
+        if (new_val != w->value) {
+            w->value = new_val;
+            if (w->on_change) w->on_change(w, new_val);
+            win->needs_redraw = 1;
+        }
+        return 1;
+    }
+
     default:
         break;
     }
+    return 0;
+}
+
+/* ==================================================================
+ *  Scroll handling
+ * ================================================================== */
+
+int wid_handle_scroll(gui_window_t *win, int rx, int ry, int delta)
+{
+    wid_t *w;
+    if (!win) return 0;
+    w = hit_wid(win, rx, ry);
+    if (!w) return 0;
+
+    if (w->type == WID_LISTVIEW && w->item_count > w->vis_rows) {
+        int new_off = w->scroll_off - delta;
+        int max_off = w->item_count - w->vis_rows;
+        if (new_off < 0) new_off = 0;
+        if (new_off > max_off) new_off = max_off;
+        if (new_off != w->scroll_off) {
+            w->scroll_off = new_off;
+            return 1;
+        }
+    }
+
+    if (w->type == WID_SLIDER) {
+        int range = w->max_val - w->min_val;
+        int step = range / 20;
+        int new_val;
+        if (step < 1) step = 1;
+        new_val = w->value + delta * step;
+        if (new_val < w->min_val) new_val = w->min_val;
+        if (new_val > w->max_val) new_val = w->max_val;
+        if (new_val != w->value) {
+            w->value = new_val;
+            if (w->on_change) w->on_change(w, new_val);
+            return 1;
+        }
+    }
+
+    if (w->type == WID_SCROLLBAR) {
+        int range = w->max_val - w->min_val;
+        int step = range / 20;
+        int new_val;
+        if (step < 1) step = 1;
+        new_val = w->value - delta * step;
+        if (new_val < w->min_val) new_val = w->min_val;
+        if (new_val > w->max_val) new_val = w->max_val;
+        if (new_val != w->value) {
+            w->value = new_val;
+            if (w->on_change) w->on_change(w, new_val);
+            return 1;
+        }
+    }
+
     return 0;
 }
 

@@ -117,6 +117,33 @@ static void sw_shutdown(void)
     }
 }
 
+static int sw_resize(int new_w, int new_h)
+{
+    uint32_t new_sz = (uint32_t)(new_w * new_h) * 4;
+    uint32_t new_phys = physmem_alloc_region(new_sz, 4096);
+    if (!new_phys) return -1;
+
+    /* free old backbuffer */
+    if (sw_backbuffer.alloc_phys)
+        physmem_free_region(sw_backbuffer.alloc_phys, sw_backbuffer.alloc_size);
+
+    sw_backbuffer.width      = new_w;
+    sw_backbuffer.height     = new_h;
+    sw_backbuffer.stride     = new_w;
+    sw_backbuffer.pixels     = (uint32_t *)(uintptr_t)new_phys;
+    sw_backbuffer.alloc_phys = new_phys;
+    sw_backbuffer.alloc_size = new_sz;
+    memset(sw_backbuffer.pixels, 0, new_sz);
+
+    sw_target = &sw_backbuffer;
+    sw_clip.active = 0;
+
+    g_gpu.width  = new_w;
+    g_gpu.height = new_h;
+
+    return 0;
+}
+
 /* ================================================================== */
 /*  Texture management                                                 */
 /* ================================================================== */
@@ -889,6 +916,7 @@ const gpu_ops_t sw_ops = {
     .present            = sw_present,
     .present_full       = sw_present_full,
     .vsync_wait         = sw_vsync_wait,
+    .resize             = sw_resize,
 };
 
 /* The single global renderer instance */

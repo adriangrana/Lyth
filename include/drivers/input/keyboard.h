@@ -50,4 +50,7 @@ const char* keyboard_layout_name(keyboard_layout_t layout);
 /* Inject an event from external sources (e.g. USB HID keyboard) */
 void keyboard_inject_event(keyboard_event_type_t type, char character, unsigned char modifiers);
 
+/* Return current modifier bitmask (KEY_MOD_SHIFT/CTRL/ALT) */
+unsigned char keyboard_get_modifiers(void);
+
 #endif

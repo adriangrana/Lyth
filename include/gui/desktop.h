@@ -6,6 +6,7 @@
 /* Initialise desktop (gradient, taskbar, start menu state) */
 void desktop_init(int scr_w, int scr_h);
 void desktop_shutdown(void);
+void desktop_resize(int new_w, int new_h);
 
 /* Paint a region of the desktop background into a surface.
  * Called by compositor for each dirty rect before overlaying windows. */

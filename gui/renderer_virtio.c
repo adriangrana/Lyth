@@ -56,6 +56,52 @@ static void vgpu_shutdown(void)
     }
 }
 
+static int vgpu_resize(int new_w, int new_h)
+{
+    if (!vgpu_active) {
+        /* virtio not active — just delegate to SW resize */
+        return sw_ops.resize ? sw_ops.resize(new_w, new_h) : -1;
+    }
+
+    /* 1. Release old virtio resource (detaches backing + frees host-side) */
+    virtio_gpu_unref_resource(&vgpu, vgpu_res_id);
+    vgpu_res_id = 0;
+
+    /* 2. Resize the underlying SW backbuffer */
+    if (sw_ops.resize(new_w, new_h) != 0) {
+        serial_print("[renderer] vgpu_resize: sw_resize failed\n");
+        return -1;
+    }
+
+    /* 3. Create new 2D resource at new dimensions */
+    vgpu_res_id = virtio_gpu_create_resource(
+        &vgpu, (uint32_t)new_w, (uint32_t)new_h,
+        VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM);
+    vgpu.res_w = (uint32_t)new_w;
+    if (vgpu_res_id == 0) {
+        serial_print("[renderer] vgpu_resize: resource create failed\n");
+        return -1;
+    }
+
+    /* 4. Attach the new backbuffer as backing store */
+    if (virtio_gpu_attach_backing(&vgpu, vgpu_res_id,
+                                   g_gpu.backbuffer->alloc_phys,
+                                   g_gpu.backbuffer->alloc_size) != 0) {
+        serial_print("[renderer] vgpu_resize: attach_backing failed\n");
+        return -1;
+    }
+
+    /* 5. Set scanout to new dimensions */
+    if (virtio_gpu_set_scanout(&vgpu, vgpu_res_id,
+                                (uint32_t)new_w, (uint32_t)new_h) != 0) {
+        serial_print("[renderer] vgpu_resize: set_scanout failed\n");
+        return -1;
+    }
+
+    serial_print("[renderer] vgpu_resize: OK\n");
+    return 0;
+}
+
 /* ================================================================== */
 /*  Init: probe device, set up scanout, override present ops           */
 /* ================================================================== */
@@ -114,6 +160,7 @@ int gpu_init_virtio(int w, int h, int bpp)
     virtio_ops.present_full = vgpu_present_full;
     virtio_ops.vsync_wait   = vgpu_vsync_wait;
     virtio_ops.shutdown     = vgpu_shutdown;
+    virtio_ops.resize       = vgpu_resize;
 
     /* Switch the global renderer to our backend */
     g_gpu.ops = &virtio_ops;

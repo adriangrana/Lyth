@@ -21,6 +21,7 @@ int input_poll_event(input_event_t* event) {
         event->modifiers = 0;
         event->delta_x = mouse_event.delta_x;
         event->delta_y = mouse_event.delta_y;
+        event->scroll = mouse_event.scroll;
         event->buttons = mouse_event.buttons;
         return 1;
     }
@@ -31,6 +32,7 @@ int input_poll_event(input_event_t* event) {
     event->modifiers = keyboard_event.modifiers;
     event->delta_x = 0;
     event->delta_y = 0;
+    event->scroll = 0;
     event->buttons = 0;
     return 1;
 }

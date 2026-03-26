@@ -284,7 +284,9 @@ gui_window_t* gui_window_create(const char* title, int x, int y,
             win->height = h;
             win->flags = flags;
             win->z_order = i;
-            win->alpha = 255;  /* fully opaque by default */
+            win->alpha = 0;    /* start invisible, fade in */
+            win->anim_alpha_target = 255;
+            win->anim_closing = 0;
             win->needs_redraw = 1;
 
             len = strlen(title);
@@ -324,6 +326,57 @@ void gui_window_destroy(gui_window_t* win) {
             gui_surface_free(&win->surface);
             window_used[i] = 0;
             break;
+        }
+    }
+}
+
+void gui_window_close_animated(gui_window_t* win) {
+    if (!win) return;
+    if (win->anim_closing) return;  /* already fading out */
+    win->anim_alpha_target = 0;
+    win->anim_closing = 1;
+}
+
+/* Step alpha 51 per tick (~5 frames @ 60fps for full fade) */
+#define ANIM_ALPHA_STEP 51
+
+void gui_window_anim_tick(void) {
+    int i;
+    for (i = 0; i < GUI_MAX_WINDOWS; i++) {
+        gui_window_t *w;
+        if (!window_used[i]) continue;
+        w = &windows[i];
+        if (w->alpha == w->anim_alpha_target) continue;
+
+        if (w->alpha < w->anim_alpha_target) {
+            if ((int)w->anim_alpha_target - (int)w->alpha <= ANIM_ALPHA_STEP)
+                w->alpha = w->anim_alpha_target;
+            else
+                w->alpha += ANIM_ALPHA_STEP;
+        } else {
+            if ((int)w->alpha - (int)w->anim_alpha_target <= ANIM_ALPHA_STEP)
+                w->alpha = w->anim_alpha_target;
+            else
+                w->alpha -= ANIM_ALPHA_STEP;
+        }
+
+        gui_dirty_add(w->x - 14, w->y - 14,
+                       w->width + 28, w->height + 28);
+
+        /* if closing fade finished, destroy the window */
+        if (w->anim_closing && w->alpha == 0) {
+            if (w->on_close) w->on_close(w);
+            gui_window_destroy(w);
+            continue;
+        }
+
+        /* if minimize fade finished, set minimized flag */
+        if (w->anim_minimizing && w->alpha == 0) {
+            w->flags |= GUI_WIN_MINIMIZED;
+            w->anim_minimizing = 0;
+            w->alpha = 255;             /* restore alpha for when un-minimized */
+            w->anim_alpha_target = 255;
+            desktop_invalidate_taskbar();
         }
     }
 }

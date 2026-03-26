@@ -29,7 +29,8 @@ typedef enum {
     WID_SWITCH,
     WID_TABS,
     WID_DROPDOWN,
-    WID_LISTVIEW
+    WID_LISTVIEW,
+    WID_SCROLLBAR
 } wid_type_t;
 
 /* ---- Widget state flags ---- */
@@ -130,6 +131,11 @@ wid_t* wid_listview(struct gui_window *win, int x, int y, int w,
                     int vis_rows, const char *items, int selected,
                     wid_change_fn on_change);
 
+/* Scrollbar: vertical scroll bar. value = scroll position [min..max]. */
+wid_t* wid_scrollbar(struct gui_window *win, int x, int y, int h,
+                     int min_val, int max_val, int cur_val,
+                     wid_change_fn on_change);
+
 /* Add an item dynamically to a listview/dropdown. Returns 0 on success. */
 int wid_add_item(wid_t *w, const char *item);
 
@@ -148,6 +154,9 @@ int wid_handle_click(struct gui_window *win, int rx, int ry, int button);
 
 /* Handle key event for focused widget. Returns 1 if consumed. */
 int wid_handle_key(struct gui_window *win, int event_type, char key);
+
+/* Handle scroll wheel at (rx, ry) in content coords. Returns 1 if consumed. */
+int wid_handle_scroll(struct gui_window *win, int rx, int ry, int delta);
 
 /* Update hover state from mouse coords (content-relative). */
 void wid_update_hover(struct gui_window *win, int rx, int ry);

@@ -89,6 +89,9 @@ typedef struct gui_window {
 
     int z_order;
     uint8_t alpha;     /* per-window opacity: 255=opaque, 0=invisible */
+    uint8_t anim_alpha_target;  /* fade target: 255=fade in, 0=fade out */
+    uint8_t anim_closing;       /* 1 = window is fading out before destroy */
+    uint8_t anim_minimizing;    /* 1 = window is fading out before minimize */
     void* app_data;
 } gui_window_t;
 
@@ -96,6 +99,8 @@ typedef struct gui_window {
 gui_window_t* gui_window_create(const char* title, int x, int y,
                                 int w, int h, uint32_t flags);
 void gui_window_destroy(gui_window_t* win);
+void gui_window_close_animated(gui_window_t* win);
+void gui_window_anim_tick(void);
 void gui_window_focus(gui_window_t* win);
 void gui_window_move(gui_window_t* win, int x, int y);
 void gui_window_resize(gui_window_t* win, int new_w, int new_h);

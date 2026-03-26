@@ -14,6 +14,9 @@ int gui_screen_width(void);
 int gui_screen_height(void);
 gui_surface_t* gui_get_backbuffer(void);
 
+/* hot resolution change */
+int gui_resize_screen(int new_w, int new_h);
+
 /* dirty rect management */
 #define GUI_MAX_DIRTY 64
 

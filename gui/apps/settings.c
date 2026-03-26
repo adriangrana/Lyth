@@ -19,6 +19,7 @@
 #include "video.h"
 #include "session.h"
 #include "desktop.h"
+#include "renderer.h"
 
 /* ---- colours ---- */
 #define COL_BG          THEME_COL_BASE
@@ -74,6 +75,27 @@ static const char* scale_labels[] = { "Cubrir", "Ajustar", "Estirar" };
 #define WID_BLUR_SW      101
 #define WID_APPLY_BTN    102
 #define WID_RESET_BTN    103
+
+/* Widget IDs for Pantalla page */
+#define WID_RES_DROP     200
+#define WID_RES_APPLY    201
+
+/* Resolution table */
+typedef struct { int w, h; } res_entry_t;
+static const res_entry_t res_table[] = {
+    {  640,  480 },
+    {  800,  600 },
+    { 1024,  768 },
+    { 1280,  720 },
+    { 1280,  800 },
+    { 1280, 1024 },
+    { 1366,  768 },
+    { 1440,  900 },
+    { 1600,  900 },
+    { 1920, 1080 },
+};
+#define RES_COUNT ((int)(sizeof(res_table) / sizeof(res_table[0])))
+static int res_sel = -1;  /* -1 = current (no change pending) */
 
 /* Thumbnail layout constants (content-relative coordinates) */
 #define THUMB_W     62
@@ -380,22 +402,25 @@ static void page_fondo(gui_surface_t* s, int ox, int oy, int cw, int rh) {
 /* ---- page: Pantalla ---- */
 static void page_pantalla(gui_surface_t* s, int ox, int oy, int cw, int rh) {
     char buf[64];
+    int cur_w = gui_screen_width();
+    int cur_h = gui_screen_height();
 
     gui_surface_draw_string(s, ox, oy, "Pantalla", COL_TEXT, 0, 0);
     oy += rh;
     gui_surface_draw_string(s, ox, oy,
-        "Informacion de la pantalla actual.", COL_DIM, 0, 0);
+        "Cambiar la resolucion de pantalla.", COL_DIM, 0, 0);
     oy += rh + 10;
 
-    /* Resolution */
+    /* Current resolution */
     {
         int pos = 0;
-        int_to_str(fb_width(), buf, sizeof(buf)); pos = (int)strlen(buf);
+        int_to_str((unsigned int)cur_w, buf, sizeof(buf));
+        pos = (int)strlen(buf);
         buf[pos++] = ' '; buf[pos++] = 'x'; buf[pos++] = ' ';
-        int_to_str(fb_height(), buf + pos, sizeof(buf) - pos);
+        int_to_str((unsigned int)cur_h, buf + pos, sizeof(buf) - pos);
     }
-    gui_surface_draw_string(s, ox, oy, "Resolucion:", COL_LABEL, 0, 0);
-    gui_surface_draw_string(s, ox + 140, oy, buf, COL_TEXT, 0, 0);
+    gui_surface_draw_string(s, ox, oy, "Actual:", COL_LABEL, 0, 0);
+    gui_surface_draw_string(s, ox + 140, oy, buf, COL_ACCENT, 0, 0);
     oy += rh;
 
     /* BPP */
@@ -407,14 +432,8 @@ static void page_pantalla(gui_surface_t* s, int ox, int oy, int cw, int rh) {
 
     /* Backend */
     gui_surface_draw_string(s, ox, oy, "Backend:", COL_LABEL, 0, 0);
-    gui_surface_draw_string(s, ox + 140, oy, video_backend_name(), COL_TEXT, 0, 0);
-    oy += rh;
-
-    /* Pitch */
-    int_to_str(fb_pitch(), buf, sizeof(buf));
-    { int p = (int)strlen(buf); memcpy(buf + p, " B/fila", 8); }
-    gui_surface_draw_string(s, ox, oy, "Pitch:", COL_LABEL, 0, 0);
-    gui_surface_draw_string(s, ox + 140, oy, buf, COL_TEXT, 0, 0);
+    gui_surface_draw_string(s, ox + 140, oy,
+        g_gpu.ops ? g_gpu.ops->name : video_backend_name(), COL_TEXT, 0, 0);
     oy += rh;
 
     /* Refresh */
@@ -422,11 +441,11 @@ static void page_pantalla(gui_surface_t* s, int ox, int oy, int cw, int rh) {
     gui_surface_draw_string(s, ox + 140, oy, "60 Hz (vsync)", COL_TEXT, 0, 0);
     oy += rh + 12;
 
-    gui_surface_draw_string(s, ox, oy,
-        "Cambio de resolucion no disponible en", COL_DIM, 0, 0);
+    /* Resolution selector label */
+    gui_surface_draw_string(s, ox, oy, "Resolucion:", COL_LABEL, 0, 0);
     oy += rh;
-    gui_surface_draw_string(s, ox, oy,
-        "el backend multiboot actual.", COL_DIM, 0, 0);
+
+    /* (dropdown + apply button are positioned by settings_app_open) */
 }
 
 /* ---- page: Sonido ---- */
@@ -661,6 +680,38 @@ static void on_reset_click(wid_t *w) {
     (void)w;
 }
 
+static void on_res_change(wid_t *w, int val) {
+    res_sel = val;
+    if (set_window) {
+        set_window->needs_redraw = 1;
+        gui_dirty_add(set_window->x, set_window->y,
+                      set_window->width, set_window->height);
+    }
+    (void)w;
+}
+
+static void on_res_apply(wid_t *w) {
+    if (res_sel >= 0 && res_sel < RES_COUNT) {
+        int nw = res_table[res_sel].w;
+        int nh = res_table[res_sel].h;
+        if (nw != gui_screen_width() || nh != gui_screen_height()) {
+            gui_resize_screen(nw, nh);
+            /* reposition the settings window if needed */
+            if (set_window) {
+                if (set_window->x + set_window->width > nw)
+                    set_window->x = nw - set_window->width;
+                if (set_window->y + set_window->height > nh)
+                    set_window->y = nh - set_window->height;
+                if (set_window->x < 0) set_window->x = 0;
+                if (set_window->y < 0) set_window->y = 0;
+                set_window->needs_redraw = 1;
+            }
+        }
+    }
+    res_sel = -1;
+    (void)w;
+}
+
 static void update_fondo_widgets(int visible) {
     wid_t *w;
     uint16_t mask = visible ? WID_VISIBLE : 0;
@@ -676,6 +727,18 @@ static void update_fondo_widgets(int visible) {
     if (w) { w->state = (w->state & (uint16_t)~WID_VISIBLE) | mask; }
 
     w = wid_find(set_window, WID_RESET_BTN);
+    if (w) { w->state = (w->state & (uint16_t)~WID_VISIBLE) | mask; }
+}
+
+static void update_pantalla_widgets(int visible) {
+    wid_t *w;
+    uint16_t mask = visible ? WID_VISIBLE : 0;
+    if (!set_window) return;
+
+    w = wid_find(set_window, WID_RES_DROP);
+    if (w) { w->state = (w->state & (uint16_t)~WID_VISIBLE) | mask; }
+
+    w = wid_find(set_window, WID_RES_APPLY);
     if (w) { w->state = (w->state & (uint16_t)~WID_VISIBLE) | mask; }
 }
 
@@ -715,6 +778,7 @@ static void set_on_key(gui_window_t* win, int event_type, char key) {
     if (key >= '1' && key <= '0' + SEC_COUNT) {
         set_section = key - '1';
         update_fondo_widgets(set_section == SEC_FONDO);
+        update_pantalla_widgets(set_section == SEC_PANTALLA);
         win->needs_redraw = 1;
         gui_dirty_add(win->x, win->y, win->width, win->height);
     }
@@ -760,6 +824,7 @@ static void set_on_click(gui_window_t* win, int lx, int ly, int button) {
         if (idx >= 0 && idx < SEC_COUNT) {
             set_section = idx;
             update_fondo_widgets(set_section == SEC_FONDO);
+            update_pantalla_widgets(set_section == SEC_PANTALLA);
             win->needs_redraw = 1;
             gui_dirty_add(win->x, win->y, win->width, win->height);
             return;
@@ -833,6 +898,45 @@ void settings_app_open(void) {
         w = wid_button(set_window, 271, 435, 140, 28, "Predeterminado",
                        on_reset_click);
         if (w) { w->id = WID_RESET_BTN; w->bg = COL_BTN_SEC; }
+    }
+
+    /* ---- Create Pantalla page widgets (hidden initially) ---- */
+    {
+        wid_t *w;
+        /* Build dropdown labels: "640x480|800x600|..." */
+        static char res_labels[256];
+        int pos = 0, i;
+        int cur_sel = 0;
+        for (i = 0; i < RES_COUNT; i++) {
+            char num[12];
+            int n;
+            if (i > 0 && pos < (int)sizeof(res_labels) - 1)
+                res_labels[pos++] = '|';
+            int_to_str((unsigned int)res_table[i].w, num, sizeof(num));
+            for (n = 0; num[n] && pos < (int)sizeof(res_labels) - 1; n++)
+                res_labels[pos++] = num[n];
+            if (pos < (int)sizeof(res_labels) - 1)
+                res_labels[pos++] = 'x';
+            int_to_str((unsigned int)res_table[i].h, num, sizeof(num));
+            for (n = 0; num[n] && pos < (int)sizeof(res_labels) - 1; n++)
+                res_labels[pos++] = num[n];
+            if (res_table[i].w == gui_screen_width() &&
+                res_table[i].h == gui_screen_height())
+                cur_sel = i;
+        }
+        res_labels[pos] = '\0';
+        res_sel = cur_sel;
+
+        /* Resolution dropdown at surface (160, 224) */
+        w = wid_dropdown(set_window, 160, 224, 160,
+                         res_labels, cur_sel, on_res_change);
+        if (w) { w->id = WID_RES_DROP; w->state &= (uint16_t)~WID_VISIBLE; }
+
+        /* Apply button at surface (160, 260) */
+        w = wid_button(set_window, 160, 260, 120, 28, "Aplicar",
+                       on_res_apply);
+        if (w) { w->id = WID_RES_APPLY; w->bg = COL_BTN; w->fg = 0x000000;
+                 w->state &= (uint16_t)~WID_VISIBLE; }
     }
 
     set_open = 1;

@@ -893,3 +893,11 @@ void keyboard_inject_event(keyboard_event_type_t type, char character, unsigned 
     event_queue[event_head].modifiers = modifiers;
     event_head = next_head;
 }
+
+unsigned char keyboard_get_modifiers(void) {
+    unsigned char m = 0;
+    if (shift_pressed) m |= KEY_MOD_SHIFT;
+    if (ctrl_pressed)  m |= KEY_MOD_CTRL;
+    if (alt_pressed)   m |= KEY_MOD_ALT;
+    return m;
+}

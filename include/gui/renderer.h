@@ -129,6 +129,9 @@ typedef struct gpu_ops {
     void  (*present_full)(void);
     void  (*vsync_wait)(void);
 
+    /* --- resize backbuffer (hot resolution change) --- */
+    int   (*resize)(int new_w, int new_h);
+
 } gpu_ops_t;
 
 /* ---- Global renderer ---- */

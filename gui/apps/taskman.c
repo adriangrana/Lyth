@@ -223,9 +223,7 @@ static void tm_close_window_selected(void) {
         gui_window_t* w = gui_window_get(i);
         if (!w) continue;
         if (str_equals(w->title, name) || str_starts_with(w->title, name)) {
-            gui_dirty_add(w->x - 6, w->y - 6, w->width + 12, w->height + 12);
-            if (w->on_close) w->on_close(w);
-            else gui_window_destroy(w);
+            gui_window_close_animated(w);
             tm_set_status("Window closed.");
             return;
         }

@@ -40,6 +40,7 @@ typedef struct {
     unsigned char modifiers;
     int delta_x;
     int delta_y;
+    int scroll;           /* vertical scroll: +1 up, -1 down */
     unsigned char buttons;
 } input_event_t;
 
