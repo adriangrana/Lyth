@@ -823,7 +823,7 @@ static void set_paint(gui_window_t* win) {
     int ox = SIDEBAR_W + 20;
     int oy = GUI_TITLEBAR_HEIGHT + 16;
     int cw = win->width - SIDEBAR_W - 32;
-    int rh = FONT_PSF_HEIGHT + 6;
+    int rh = THEME_LH_NORMAL;
 
     if (!s->pixels) return;
 

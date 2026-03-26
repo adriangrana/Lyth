@@ -45,7 +45,7 @@
 #define FIELD_MAX        16  /* "255.255.255.255" + NUL */
 #define NUM_FIELDS       4   /* IP, Mask, GW, DNS */
 #define FIELD_W          140
-#define FIELD_H          (FONT_PSF_HEIGHT + 6)
+#define FIELD_H          THEME_LH_NORMAL
 
 #define MODE_DHCP        0
 #define MODE_MANUAL      1
@@ -215,7 +215,7 @@ static void net_paint(gui_window_t* win) {
     gui_surface_t* s = &win->surface;
     int ox = GUI_BORDER_WIDTH + 12;
     int oy = GUI_TITLEBAR_HEIGHT + 10;
-    int row_h = FONT_PSF_HEIGHT + 6;
+    int row_h = THEME_LH_NORMAL;
     int label_w = 48;
     int field_x = ox + label_w + 4;
     char buf[64];

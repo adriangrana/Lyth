@@ -41,7 +41,7 @@ static void si_paint(gui_window_t* win) {
     gui_surface_t* s = &win->surface;
     int ox = GUI_BORDER_WIDTH + 12;
     int oy = GUI_TITLEBAR_HEIGHT + 12;
-    int row_h = FONT_PSF_HEIGHT + 8;
+    int row_h = THEME_LH_LOOSE;
     char buf[64];
 
     if (!s->pixels) return;

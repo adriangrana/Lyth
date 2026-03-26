@@ -68,7 +68,7 @@ static void tm_paint(gui_window_t* win) {
     int count, i;
     int ox = GUI_BORDER_WIDTH + 8;
     int oy = GUI_TITLEBAR_HEIGHT + 4;
-    int row_h = FONT_PSF_HEIGHT + 4;
+    int row_h = THEME_LH_TIGHT;
     char buf[16];
     int btn_y;
 

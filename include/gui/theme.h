@@ -253,6 +253,11 @@ static inline app_icon_def_t app_icon_get(int id) {
 #define THEME_TYPO_TITLE_H     34   /* title line height */
 #define THEME_TYPO_TITLE_W     16   /* title character width */
 
+/* Line height convenience (font height + leading) */
+#define THEME_LH_TIGHT   (THEME_FONT_H + 4)   /* 20px — compact lists, rows */
+#define THEME_LH_NORMAL  (THEME_FONT_H + 6)    /* 22px — body text, fields */
+#define THEME_LH_LOOSE   (THEME_FONT_H + 8)    /* 24px — spacious sections */
+
 #define THEME_DOCK_ICON_SZ   28   /* dock icon size */
 #define THEME_DOCK_ICON_PAD   8   /* dock inter-icon padding */
 
