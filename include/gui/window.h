@@ -92,6 +92,9 @@ typedef struct gui_window {
     uint8_t anim_alpha_target;  /* fade target: 255=fade in, 0=fade out */
     uint8_t anim_closing;       /* 1 = window is fading out before destroy */
     uint8_t anim_minimizing;    /* 1 = window is fading out before minimize */
+    uint8_t anim_alpha_start;   /* alpha when animation started */
+    unsigned int anim_start_ms; /* timestamp when current anim began */
+    unsigned int anim_dur_ms;   /* duration of current animation (ms) */
     void* app_data;
 } gui_window_t;
 
@@ -100,6 +103,7 @@ gui_window_t* gui_window_create(const char* title, int x, int y,
                                 int w, int h, uint32_t flags);
 void gui_window_destroy(gui_window_t* win);
 void gui_window_close_animated(gui_window_t* win);
+void gui_window_anim_start(gui_window_t* win, uint8_t target, unsigned int dur_ms);
 void gui_window_anim_tick(void);
 void gui_window_focus(gui_window_t* win);
 void gui_window_move(gui_window_t* win, int x, int y);

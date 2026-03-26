@@ -5,6 +5,7 @@
 #include "theme.h"
 #include "string.h"
 #include "physmem.h"
+#include "timer.h"
 
 static gui_window_t windows[GUI_MAX_WINDOWS];
 static int window_used[GUI_MAX_WINDOWS];
@@ -287,6 +288,10 @@ gui_window_t* gui_window_create(const char* title, int x, int y,
             win->alpha = 0;    /* start invisible, fade in */
             win->anim_alpha_target = 255;
             win->anim_closing = 0;
+            win->anim_minimizing = 0;
+            win->anim_alpha_start = 0;
+            win->anim_start_ms = timer_get_uptime_ms();
+            win->anim_dur_ms = THEME_ANIM_NORMAL;
             win->needs_redraw = 1;
 
             len = strlen(title);
@@ -333,31 +338,72 @@ void gui_window_destroy(gui_window_t* win) {
 void gui_window_close_animated(gui_window_t* win) {
     if (!win) return;
     if (win->anim_closing) return;  /* already fading out */
+    win->anim_alpha_start = win->alpha;
     win->anim_alpha_target = 0;
     win->anim_closing = 1;
+    win->anim_start_ms = timer_get_uptime_ms();
+    win->anim_dur_ms = THEME_ANIM_NORMAL;
 }
 
-/* Step alpha 51 per tick (~5 frames @ 60fps for full fade) */
-#define ANIM_ALPHA_STEP 51
+/*
+ * Ease-out cubic: f(t) = 1 - (1-t)^3
+ * Input/output in 0..255 fixed-point (t_fp = progress 0..255).
+ * Returns interpolated value 0..255.
+ */
+static uint8_t ease_out_cubic_u8(int t_fp) {
+    int inv, inv2, inv3, result;
+    if (t_fp <= 0) return 0;
+    if (t_fp >= 255) return 255;
+    inv = 255 - t_fp;               /* (1 - t) in 0..255 */
+    inv2 = (inv * inv) >> 8;        /* (1 - t)^2 */
+    inv3 = (inv2 * inv) >> 8;       /* (1 - t)^3 */
+    result = 255 - inv3;
+    return (uint8_t)(result < 0 ? 0 : (result > 255 ? 255 : result));
+}
+
+/*
+ * Start or redirect an animation. Records current alpha as start,
+ * sets target and duration, resets the clock.
+ */
+void gui_window_anim_start(gui_window_t *w, uint8_t target, unsigned int dur_ms) {
+    if (!w) return;
+    w->anim_alpha_start = w->alpha;
+    w->anim_alpha_target = target;
+    w->anim_start_ms = timer_get_uptime_ms();
+    w->anim_dur_ms = dur_ms ? dur_ms : THEME_ANIM_NORMAL;
+}
 
 void gui_window_anim_tick(void) {
     int i;
+    unsigned int now = timer_get_uptime_ms();
     for (i = 0; i < GUI_MAX_WINDOWS; i++) {
         gui_window_t *w;
+        unsigned int elapsed, dur;
+        int t_fp, a_start, a_target, new_alpha;
+
         if (!window_used[i]) continue;
         w = &windows[i];
         if (w->alpha == w->anim_alpha_target) continue;
 
-        if (w->alpha < w->anim_alpha_target) {
-            if ((int)w->anim_alpha_target - (int)w->alpha <= ANIM_ALPHA_STEP)
-                w->alpha = w->anim_alpha_target;
-            else
-                w->alpha += ANIM_ALPHA_STEP;
+        dur = w->anim_dur_ms;
+        if (dur == 0) dur = THEME_ANIM_NORMAL;
+
+        elapsed = now - w->anim_start_ms;
+        if (elapsed >= dur) {
+            /* animation complete */
+            w->alpha = w->anim_alpha_target;
         } else {
-            if ((int)w->alpha - (int)w->anim_alpha_target <= ANIM_ALPHA_STEP)
-                w->alpha = w->anim_alpha_target;
-            else
-                w->alpha -= ANIM_ALPHA_STEP;
+            /* progress 0..255 fixed-point */
+            t_fp = (int)(elapsed * 255 / dur);
+            /* ease-out cubic */
+            t_fp = ease_out_cubic_u8(t_fp);
+            /* interpolate alpha */
+            a_start = (int)w->anim_alpha_start;
+            a_target = (int)w->anim_alpha_target;
+            new_alpha = a_start + ((a_target - a_start) * t_fp) / 255;
+            if (new_alpha < 0) new_alpha = 0;
+            if (new_alpha > 255) new_alpha = 255;
+            w->alpha = (uint8_t)new_alpha;
         }
 
         gui_dirty_add(w->x - 14, w->y - 14,

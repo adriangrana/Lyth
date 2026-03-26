@@ -1414,8 +1414,8 @@ static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
 
             if (hit_minimize_button(w, mouse_x, mouse_y))
             {
-                w->anim_alpha_target = 0;
                 w->anim_minimizing = 1;
+                gui_window_anim_start(w, 0, THEME_ANIM_NORMAL);
                 return;
             }
 

@@ -2196,8 +2196,8 @@ int desktop_handle_click(int mx, int my, int button) {
                     if (idx == 0) {
                         gui_window_close_animated(target);
                     } else if (idx == 1) {
-                        target->anim_alpha_target = 0;
                         target->anim_minimizing = 1;
+                        gui_window_anim_start(target, 0, THEME_ANIM_NORMAL);
                         gui_dirty_add(target->x, target->y,
                                       target->width, target->height);
                         desk_valid = 0;
@@ -2372,7 +2372,7 @@ int desktop_handle_click(int mx, int my, int button) {
                     if (w->flags & GUI_WIN_MINIMIZED) {
                         w->flags &= ~GUI_WIN_MINIMIZED;
                         w->alpha = 0;
-                        w->anim_alpha_target = 255;
+                        gui_window_anim_start(w, 255, THEME_ANIM_NORMAL);
                         gui_window_focus(w);
                         w->needs_redraw = 1;
                     } else {
