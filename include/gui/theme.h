@@ -191,6 +191,20 @@
 #define THEME_FONT_W          8   /* current font glyph width */
 #define THEME_FONT_H         16   /* current font glyph height */
 
+/* ---- Typographic scale ---- */
+/* Caption:     normal font (8x16), tighter line height  */
+/* Body:        normal font (8x16), standard line height */
+/* Body Strong: normal font (8x16), bold emulated        */
+/* Subtitle:    2x scaled (16x32)                        */
+/* Title:       2x scaled (16x32)                        */
+#define THEME_TYPO_CAPTION_H   16   /* caption line height */
+#define THEME_TYPO_BODY_H      18   /* body line height (16 + 2 leading) */
+#define THEME_TYPO_BODY_W       8   /* body character width */
+#define THEME_TYPO_SUBTITLE_H  34   /* subtitle line height (32 + 2) */
+#define THEME_TYPO_SUBTITLE_W  16   /* subtitle character width */
+#define THEME_TYPO_TITLE_H     34   /* title line height */
+#define THEME_TYPO_TITLE_W     16   /* title character width */
+
 #define THEME_DOCK_ICON_SZ   28   /* dock icon size */
 #define THEME_DOCK_ICON_PAD   8   /* dock inter-icon padding */
 

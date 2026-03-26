@@ -133,4 +133,10 @@ void gui_surface_draw_string(gui_surface_t* s, int x, int y, const char* str,
 void gui_surface_draw_string_n(gui_surface_t* s, int x, int y, const char* str,
                                int max_chars, uint32_t fg, uint32_t bg, int draw_bg);
 
+/* Scaled text (2x nearest-neighbor) for headings/titles */
+void gui_surface_draw_char_2x(gui_surface_t* s, int x, int y, unsigned char ch,
+                               uint32_t fg, uint32_t bg, int draw_bg);
+void gui_surface_draw_string_2x(gui_surface_t* s, int x, int y, const char* str,
+                                 uint32_t fg, uint32_t bg, int draw_bg);
+
 #endif

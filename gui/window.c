@@ -132,6 +132,48 @@ void gui_surface_draw_string_n(gui_surface_t* s, int x, int y, const char* str,
     }
 }
 
+void gui_surface_draw_char_2x(gui_surface_t* s, int x, int y, unsigned char ch,
+                               uint32_t fg, uint32_t bg, int draw_bg) {
+    int row, col;
+    uint8_t bits;
+    if (!s || !s->pixels) return;
+    if (ch >= FONT_PSF_GLYPH_COUNT) ch = '?';
+    if (x + FONT_PSF_WIDTH * 2 <= 0 || x >= s->width ||
+        y + FONT_PSF_HEIGHT * 2 <= 0 || y >= s->height) return;
+    for (row = 0; row < FONT_PSF_HEIGHT; row++) {
+        bits = font_psf_data[ch][row];
+        for (col = 0; col < FONT_PSF_WIDTH; col++) {
+            int px = x + col * 2;
+            int py = y + row * 2;
+            if (bits & (0x80u >> col)) {
+                if (px >= 0 && px + 1 < s->width && py >= 0 && py + 1 < s->height) {
+                    s->pixels[py * s->stride + px] = fg;
+                    s->pixels[py * s->stride + px + 1] = fg;
+                    s->pixels[(py + 1) * s->stride + px] = fg;
+                    s->pixels[(py + 1) * s->stride + px + 1] = fg;
+                }
+            } else if (draw_bg) {
+                if (px >= 0 && px + 1 < s->width && py >= 0 && py + 1 < s->height) {
+                    s->pixels[py * s->stride + px] = bg;
+                    s->pixels[py * s->stride + px + 1] = bg;
+                    s->pixels[(py + 1) * s->stride + px] = bg;
+                    s->pixels[(py + 1) * s->stride + px + 1] = bg;
+                }
+            }
+        }
+    }
+}
+
+void gui_surface_draw_string_2x(gui_surface_t* s, int x, int y, const char* str,
+                                 uint32_t fg, uint32_t bg, int draw_bg) {
+    if (!str) return;
+    while (*str) {
+        gui_surface_draw_char_2x(s, x, y, (unsigned char)*str, fg, bg, draw_bg);
+        x += FONT_PSF_WIDTH * 2;
+        str++;
+    }
+}
+
 void gui_surface_blit(gui_surface_t* dst, int dx, int dy,
                       const gui_surface_t* src, int sx, int sy, int w, int h) {
     int row;
