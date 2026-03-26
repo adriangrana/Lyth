@@ -237,6 +237,13 @@ static char date_str[32]  = "";
 static int net_popup_open;
 static int net_last_up;
 
+/* ---- power dialog ---- */
+#define PWR_DLG_W  320
+#define PWR_DLG_H  160
+#define PWR_BTN_W  90
+#define PWR_BTN_H  28
+static int power_dlg_open;
+static int power_dlg_x, power_dlg_y;
 /* ---- launcher search ---- */
 static char launcher_search[32];
 static int launcher_search_len;
@@ -1426,6 +1433,110 @@ static void close_net_popup(void) {
     net_popup_open = 0;
 }
 
+/* ---- Power dialog (Shutdown / Reboot / Cancel) ---- */
+static void open_power_dialog(void) {
+    if (power_dlg_open) return;
+    power_dlg_x = (sw - PWR_DLG_W) / 2;
+    power_dlg_y = (sh - PWR_DLG_H) / 2;
+    power_dlg_open = 1;
+    gui_dirty_add(power_dlg_x - 4, power_dlg_y - 4,
+                  PWR_DLG_W + 8, PWR_DLG_H + 8);
+}
+
+static void close_power_dialog(void) {
+    if (!power_dlg_open) return;
+    gui_dirty_add(power_dlg_x - 4, power_dlg_y - 4,
+                  PWR_DLG_W + 8, PWR_DLG_H + 8);
+    power_dlg_open = 0;
+}
+
+static void draw_power_dialog(gui_surface_t* dst) {
+    int dx = power_dlg_x, dy = power_dlg_y;
+    int brow_y, bx;
+
+    /* Scrim (dim screen) */
+    alpha_blend_fill(dst, 0, 0, sw, sh, 0x000000, 120);
+
+    /* Dialog body */
+    draw_rounded_rect_alpha(dst, dx, dy, PWR_DLG_W, PWR_DLG_H, 3,
+                            theme.mantle, 240);
+    /* Border */
+    alpha_blend_fill(dst, dx, dy, PWR_DLG_W, 1, theme.border, 180);
+    alpha_blend_fill(dst, dx, dy + PWR_DLG_H - 1, PWR_DLG_W, 1, theme.border, 180);
+    alpha_blend_fill(dst, dx, dy, 1, PWR_DLG_H, theme.border, 180);
+    alpha_blend_fill(dst, dx + PWR_DLG_W - 1, dy, 1, PWR_DLG_H, theme.border, 180);
+
+    /* Title */
+    gui_surface_draw_string(dst, dx + (PWR_DLG_W - 18 * FONT_PSF_WIDTH) / 2,
+                            dy + 20, "Que deseas hacer?", theme.text, 0, 0);
+
+    /* Subtitle */
+    gui_surface_draw_string(dst, dx + (PWR_DLG_W - 30 * FONT_PSF_WIDTH) / 2,
+                            dy + 44, "Los cambios no guardados se", theme.dim, 0, 0);
+    gui_surface_draw_string(dst, dx + (PWR_DLG_W - 10 * FONT_PSF_WIDTH) / 2,
+                            dy + 62, "perderan.", theme.dim, 0, 0);
+
+    /* Buttons row */
+    brow_y = dy + PWR_DLG_H - 48;
+    bx = dx + (PWR_DLG_W - 3 * PWR_BTN_W - 20) / 2;
+
+    /* Cancel */
+    draw_rounded_rect(dst, bx, brow_y, PWR_BTN_W, PWR_BTN_H, 2, theme.surface0);
+    gui_surface_draw_string(dst, bx + (PWR_BTN_W - 7 * FONT_PSF_WIDTH) / 2,
+                            brow_y + 6, "Cancelar", theme.text, 0, 0);
+    bx += PWR_BTN_W + 10;
+
+    /* Reboot */
+    draw_rounded_rect(dst, bx, brow_y, PWR_BTN_W, PWR_BTN_H, 2, THEME_COL_WARNING);
+    gui_surface_draw_string(dst, bx + (PWR_BTN_W - 8 * FONT_PSF_WIDTH) / 2,
+                            brow_y + 6, "Reiniciar", 0x000000, 0, 0);
+    bx += PWR_BTN_W + 10;
+
+    /* Shutdown */
+    draw_rounded_rect(dst, bx, brow_y, PWR_BTN_W, PWR_BTN_H, 2, THEME_COL_ERROR);
+    gui_surface_draw_string(dst, bx + (PWR_BTN_W - 6 * FONT_PSF_WIDTH) / 2,
+                            brow_y + 6, "Apagar", 0xFFFFFF, 0, 0);
+}
+
+static int power_dialog_handle_click(int mx, int my, int button) {
+    int brow_y, bx;
+    if (!power_dlg_open || button != 1) return 0;
+
+    brow_y = power_dlg_y + PWR_DLG_H - 48;
+    bx = power_dlg_x + (PWR_DLG_W - 3 * PWR_BTN_W - 20) / 2;
+
+    if (my >= brow_y && my < brow_y + PWR_BTN_H) {
+        /* Cancel */
+        if (mx >= bx && mx < bx + PWR_BTN_W) {
+            close_power_dialog();
+            return 1;
+        }
+        bx += PWR_BTN_W + 10;
+        /* Reboot */
+        if (mx >= bx && mx < bx + PWR_BTN_W) {
+            close_power_dialog();
+            power_reboot();
+            return 1;
+        }
+        bx += PWR_BTN_W + 10;
+        /* Shutdown */
+        if (mx >= bx && mx < bx + PWR_BTN_W) {
+            close_power_dialog();
+            power_shutdown();
+            return 1;
+        }
+    }
+
+    /* Click outside dialog = cancel */
+    if (mx < power_dlg_x || mx >= power_dlg_x + PWR_DLG_W ||
+        my < power_dlg_y || my >= power_dlg_y + PWR_DLG_H) {
+        close_power_dialog();
+        return 1;
+    }
+
+    return 1; /* consume click */
+}
+
 static void close_desktop_ctx(void) {
     if (!dctx_menu_open) return;
     int total_h = dctx_item_count * DCTX_ITEM_H + 8;
@@ -1891,10 +2002,15 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
     }
 skip_launcher:
     (void)0;
+
+    /* ---- Power dialog (modal) ---- */
+    if (power_dlg_open) {
+        draw_power_dialog(dst);
+    }
 }
 
 int desktop_is_overlay_open(void) {
-    return start_menu_open || launcher_anim != 0;
+    return start_menu_open || launcher_anim != 0 || power_dlg_open;
 }
 
 void desktop_close_overlays(void) {
@@ -2140,6 +2256,10 @@ int desktop_handle_click(int mx, int my, int button) {
         tb_off = TASKBAR_H * (TB_AUTOHIDE_STEPS - tb_anim_step) / TB_AUTOHIDE_STEPS;
     taskbar_y = -tb_off;
 
+    /* Power dialog is modal — consumes all clicks */
+    if (power_dlg_open)
+        return power_dialog_handle_click(mx, my, button);
+
     /* handle net popup clicks */
     if (net_popup_open) {
         int px = sw - NET_POPUP_W - 8;
@@ -2242,13 +2362,13 @@ int desktop_handle_click(int mx, int my, int button) {
                     bx += 90;
                     if (mx >= bx && mx < bx + 80) {
                         close_start_menu();
-                        power_reboot();
+                        open_power_dialog();
                         return 1;
                     }
                     bx += 90;
                     if (mx >= bx && mx < bx + 90) {
                         close_start_menu();
-                        power_shutdown();
+                        open_power_dialog();
                         return 1;
                     }
                 }
