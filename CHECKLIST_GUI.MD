@@ -517,7 +517,9 @@
       > theme_set_accent() API, selección visual en Settings > Apariencia
       > Swatch grid con borde blanco en seleccionado
 - [ ] Adaptación de wallpaper a accent (opcional)
-- [ ] Contraste garantizado
+- [x] Contraste garantizado
+      > theme_contrast_text() auto-selects white/dark text on any bg
+      > Applied to launcher, power dialog, context menus, popups, message boxes
 - [ ] Sombras/blur consistentes entre temas
 
 ## FASE 7 — Apps del Sistema

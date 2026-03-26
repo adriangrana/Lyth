@@ -1300,13 +1300,32 @@ static void handle_keyboard(input_event_t *ev)
     }
 }
 
+/* Mouse sensitivity: scale delta so crossing the screen takes roughly
+ * the same physical mouse movement regardless of resolution.  At 640px
+ * wide the multiplier is ~1×; at 1920 it's ~3×.  Non-linear: adds a
+ * small acceleration for fast flicks. */
+static void mouse_scale(int raw_dx, int raw_dy, int *out_dx, int *out_dy)
+{
+    /* base multiplier: scr_w / 640  (integer, at least 1) */
+    int mul = scr_w > 640 ? scr_w / 640 : 1;
+    /* small non-linear boost for speed > 4 */
+    int ax = raw_dx < 0 ? -raw_dx : raw_dx;
+    int ay = raw_dy < 0 ? -raw_dy : raw_dy;
+    if (ax > 4) raw_dx += (raw_dx > 0 ? (ax - 4) / 2 : -(ax - 4) / 2);
+    if (ay > 4) raw_dy += (raw_dy > 0 ? (ay - 4) / 2 : -(ay - 4) / 2);
+    *out_dx = raw_dx * mul;
+    *out_dy = raw_dy * mul;
+}
+
 static void handle_mouse(input_event_t *ev, gui_window_t **dragging_win,
                          gui_window_t **resizing_win)
 {
     int old_mx = mouse_x, old_my = mouse_y;
+    int dx, dy;
 
-    mouse_x += ev->delta_x;
-    mouse_y += ev->delta_y;
+    mouse_scale(ev->delta_x, ev->delta_y, &dx, &dy);
+    mouse_x += dx;
+    mouse_y += dy;
     if (mouse_x < 0)
         mouse_x = 0;
     if (mouse_y < 0)

@@ -1999,12 +1999,15 @@ void desktop_paint_region(gui_surface_t* dst, int x0, int y0, int x1, int y1) {
 /* Paint overlays that must appear on top of all windows (launcher). */
 void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) {
     /* ---- Dock hover scale animation (painted over baked dock) ---- */
-    if (dock_hover_idx >= 0 || dock_scale > 0) {
+    /* Skip entirely when launcher is open — it covers the dock area */
+    if ((dock_hover_idx >= 0 || dock_scale > 0) && !start_menu_open) {
         int hover_i = dock_hover_idx >= 0 ? dock_hover_idx : -1;
         int dock_y = sh - DOCK_H;
         int dx = dock_start_x();
         int dy = dock_y + DOCK_Y_PAD;
-        /* Restore baked dock area first (covers any previous hover + tooltip) */
+        /* Restore baked dock area first (covers any previous hover + tooltip)
+         * Clipped to the dirty region (x0,y0,x1,y1) to avoid writing outside
+         * the compose rect and corrupting other overlays. */
         {
             int ax0 = dx - DOCK_SCALE_MAX;
             int ay0 = dock_y - DOCK_SCALE_MAX - FONT_PSF_HEIGHT - 16;
@@ -2013,7 +2016,10 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
             int ar;
             if (ax0 < 0) ax0 = 0; if (ay0 < 0) ay0 = 0;
             if (ax1 > sw) ax1 = sw; if (ay1 > sh) ay1 = sh;
-            if (desk_surf.pixels)
+            /* Clip to dirty region */
+            if (ax0 < x0) ax0 = x0; if (ay0 < y0) ay0 = y0;
+            if (ax1 > x1) ax1 = x1; if (ay1 > y1) ay1 = y1;
+            if (desk_surf.pixels && ax0 < ax1 && ay0 < ay1)
                 for (ar = ay0; ar < ay1; ar++)
                     memcpy(&dst->pixels[ar * dst->stride + ax0],
                            &desk_surf.pixels[ar * sw + ax0],
