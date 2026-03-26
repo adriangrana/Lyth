@@ -259,6 +259,25 @@ static int dock_hover_idx = -1;  /* -1 = none */
 #define DOCK_SCALE_STEPS 4  /* animation frames (0→DOCK_SCALE_MAX) */
 static int dock_scale = 0;  /* current extra size (0..DOCK_SCALE_MAX) */
 
+/* ---- desktop shortcut icons ---- */
+#define DICON_SZ    48   /* icon render size */
+#define DICON_CELL  80   /* cell size (icon + label + padding) */
+#define DICON_PAD   20   /* margin from screen edge */
+#define DICON_MAX    8
+
+typedef struct {
+    const char* label;
+    void (*action)(void);
+    const uint32_t *icon_pixels;   /* 32x32 source ARGB */
+    const uint32_t *icon_pixels_64; /* 64x64 source ARGB (preferred) */
+    uint32_t icon_color;
+    char icon_letter;
+} dicon_item_t;
+
+static dicon_item_t dicon_items[DICON_MAX];
+static int dicon_count;
+static int dicon_hover_idx = -1;
+
 /* ---- launcher animation ---- */
 #define LAUNCHER_ANIM_STEPS  6   /* frames for slide-up/down */
 static int launcher_anim = 0;   /* 0=idle, >0=opening, <0=closing */
@@ -880,6 +899,52 @@ static void rebuild_desktop(void) {
         int wm_x = (sw - wm_w) / 2;
         int wm_y = TASKBAR_H + (sh - TASKBAR_H - DOCK_H) * 2 / 5;
         draw_string_alpha(&desk_surf, wm_x, wm_y, wm, THEME_COL_TEXT, 25);
+    }
+
+    /* ---- Desktop shortcut icons (upper-right grid, top-to-bottom) ---- */
+    {
+        int di;
+        int base_x = sw - DICON_PAD - DICON_CELL;
+        int base_y = TASKBAR_H + DICON_PAD;
+        for (di = 0; di < dicon_count; di++) {
+            int col = di / ((sh - TASKBAR_H - DOCK_H - 2 * DICON_PAD) / DICON_CELL);
+            int row = di % ((sh - TASKBAR_H - DOCK_H - 2 * DICON_PAD) / DICON_CELL);
+            int cx = base_x - col * DICON_CELL;
+            int cy = base_y + row * DICON_CELL;
+            int icon_x = cx + (DICON_CELL - DICON_SZ) / 2;
+            int icon_y = cy;
+
+            /* Draw icon */
+            if (dicon_items[di].icon_pixels_64) {
+                blit_icon_scaled(&desk_surf, icon_x, icon_y,
+                                 dicon_items[di].icon_pixels_64, 64, 64,
+                                 DICON_SZ, DICON_SZ);
+            } else if (dicon_items[di].icon_pixels) {
+                blit_icon_scaled(&desk_surf, icon_x, icon_y,
+                                 dicon_items[di].icon_pixels, 32, 32,
+                                 DICON_SZ, DICON_SZ);
+            } else {
+                /* Fallback: colored square + letter */
+                alpha_blend_fill(&desk_surf, icon_x, icon_y,
+                                 DICON_SZ, DICON_SZ,
+                                 dicon_items[di].icon_color, 200);
+                draw_char_alpha(&desk_surf,
+                    icon_x + (DICON_SZ - FONT_PSF_WIDTH) / 2,
+                    icon_y + (DICON_SZ - FONT_PSF_HEIGHT) / 2,
+                    (unsigned char)dicon_items[di].icon_letter,
+                    0xFFFFFF, 220);
+            }
+
+            /* Label centered below icon */
+            {
+                const char *lbl = dicon_items[di].label;
+                int llen = str_length(lbl);
+                int lw = llen * FONT_PSF_WIDTH;
+                int lx = cx + (DICON_CELL - lw) / 2;
+                int ly = icon_y + DICON_SZ + 4;
+                draw_string_alpha(&desk_surf, lx, ly, lbl, THEME_COL_TEXT, 180);
+            }
+        }
     }
 
     /* ---- Top Taskbar (running apps + tray) ---- */
@@ -1757,6 +1822,37 @@ void desktop_init(int screen_w, int screen_h) {
     dock_items[dock_item_count].icon_pixels_64 = icon_notes_64_pixels;
     dock_item_count++;
 
+    /* ---- Populate desktop shortcut icons ---- */
+    dicon_count = 0;
+    dicon_items[dicon_count].label    = "Terminal";
+    dicon_items[dicon_count].action   = terminal_app_open;
+    dicon_items[dicon_count].icon_pixels    = icon_terminal_pixels;
+    dicon_items[dicon_count].icon_pixels_64 = icon_terminal_64_pixels;
+    dicon_items[dicon_count].icon_color  = COL_ICON_TERMINAL;
+    dicon_items[dicon_count].icon_letter = '>';
+    dicon_count++;
+    dicon_items[dicon_count].label    = "Files";
+    dicon_items[dicon_count].action   = filemanager_app_open;
+    dicon_items[dicon_count].icon_pixels    = icon_nexus_pixels;
+    dicon_items[dicon_count].icon_pixels_64 = icon_nexus_64_pixels;
+    dicon_items[dicon_count].icon_color  = COL_ICON_FILES;
+    dicon_items[dicon_count].icon_letter = 'F';
+    dicon_count++;
+    dicon_items[dicon_count].label    = "Notes";
+    dicon_items[dicon_count].action   = editor_app_open;
+    dicon_items[dicon_count].icon_pixels    = icon_notes_pixels;
+    dicon_items[dicon_count].icon_pixels_64 = icon_notes_64_pixels;
+    dicon_items[dicon_count].icon_color  = COL_ICON_EDITOR;
+    dicon_items[dicon_count].icon_letter = 'N';
+    dicon_count++;
+    dicon_items[dicon_count].label    = "Settings";
+    dicon_items[dicon_count].action   = settings_app_open;
+    dicon_items[dicon_count].icon_pixels    = icon_settings_pixels;
+    dicon_items[dicon_count].icon_pixels_64 = icon_settings_64_pixels;
+    dicon_items[dicon_count].icon_color  = COL_ICON_SETTINGS;
+    dicon_items[dicon_count].icon_letter = 'S';
+    dicon_count++;
+
     /* ---- Populate launcher (full app list shown in grid) ---- */
     launcher_item_count = 0;
     recent_count = 0;
@@ -2579,6 +2675,27 @@ int desktop_handle_click(int mx, int my, int button) {
             }
         }
         return 1; /* consumed: click was on dock */
+    }
+
+    /* ---- Desktop shortcut icon click ---- */
+    if (button == 1 && my > TASKBAR_H && my < dock_y && dicon_count > 0) {
+        int di;
+        int base_x = sw - DICON_PAD - DICON_CELL;
+        int base_y = TASKBAR_H + DICON_PAD;
+        int rows_max = (sh - TASKBAR_H - DOCK_H - 2 * DICON_PAD) / DICON_CELL;
+        if (rows_max < 1) rows_max = 1;
+        for (di = 0; di < dicon_count; di++) {
+            int col = di / rows_max;
+            int row = di % rows_max;
+            int cx = base_x - col * DICON_CELL;
+            int cy = base_y + row * DICON_CELL;
+            if (mx >= cx && mx < cx + DICON_CELL &&
+                my >= cy && my < cy + DICON_CELL) {
+                if (dicon_items[di].action)
+                    dicon_items[di].action();
+                return 1;
+            }
+        }
     }
 
     /* ---- Desktop background: right-click opens desktop context menu ---- */
