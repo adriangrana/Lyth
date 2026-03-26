@@ -31,6 +31,7 @@
 #include "e1000.h"
 #include "notify.h"
 #include "widgets.h"
+#include "renderer.h"
 
 /* ---- VGA port I/O for VBlank detection ---- */
 static inline uint8_t compositor_inb(uint16_t port)
@@ -82,9 +83,9 @@ static gui_dirty_rect_t dirty_list[GUI_MAX_DIRTY];
 static int dirty_count;
 
 /* ---- state ---- */
-static int gui_running;
+static volatile int gui_running;
 static int mouse_x, mouse_y;
-static int need_compose;
+static volatile int need_compose;
 
 /* ---- double-click detection ---- */
 #define DBLCLICK_MS   400  /* max interval between clicks */
@@ -257,12 +258,12 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
     /* 1. Paint desktop background into this region of backbuffer */
     desktop_paint_region(&bb_surf, dx0, dy0, dx1, dy1);
 
-    /* 2. Draw window shadows, then blit windows on top */
+    /* 2. Draw window shadows via renderer */
+    gpu_set_target(g_gpu.backbuffer);
+    gpu_set_clip(dx0, dy0, dx1 - dx0, dy1 - dy0);
     for (i = 0; i < wcount; i++)
     {
         gui_window_t *w = sorted[i];
-        int wx0, wy0, wx1, wy1;
-        int sx, sy, dstx, dsty, bw, bh;
 
         if (!(w->flags & GUI_WIN_VISIBLE) || (w->flags & GUI_WIN_MINIMIZED))
             continue;
@@ -276,35 +277,16 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
             static const int sh_alpha[]  = { THEME_SHADOW_ALPHA0,  THEME_SHADOW_ALPHA1,  THEME_SHADOW_ALPHA2 };
             int layer;
             for (layer = THEME_SHADOW_LAYERS - 1; layer >= 0; layer--) {
-                int off = sh_off[layer], spread = sh_spread[layer], alpha = sh_alpha[layer];
-                int ia = 255 - alpha;
-                int shx = w->x + off, shy = w->y + off;
-                int shw = w->width + spread, shh = w->height + spread;
-                int s0x = shx > dx0 ? shx : dx0;
-                int s0y = shy > dy0 ? shy : dy0;
-                int s1x = (shx + shw) < dx1 ? (shx + shw) : dx1;
-                int s1y = (shy + shh) < dy1 ? (shy + shh) : dy1;
-                if (s0x >= s1x || s0y >= s1y) continue;
-                for (row = s0y; row < s1y; row++) {
-                    uint32_t *p = &backbuffer[row * scr_w + s0x];
-                    int cx;
-                    for (cx = 0; cx < s1x - s0x; cx++) {
-                        int px = s0x + cx, py = row;
-                        if (px >= w->x && px < w->x + w->width &&
-                            py >= w->y && py < w->y + w->height)
-                            continue;
-                        uint32_t bg = p[cx];
-                        uint32_t r = ((bg >> 16) & 0xFF) * (uint32_t)ia / 255;
-                        uint32_t g = ((bg >> 8) & 0xFF) * (uint32_t)ia / 255;
-                        uint32_t b = (bg & 0xFF) * (uint32_t)ia / 255;
-                        p[cx] = (r << 16) | (g << 8) | b;
-                    }
-                }
+                gpu_shadow(w->x, w->y, w->width, w->height,
+                           sh_off[layer], sh_spread[layer], sh_alpha[layer]);
             }
         }
     }
+    gpu_clear_clip();
 
-    /* 3. Blit each window that overlaps this dirty rect */
+    /* 3. Blit each window that overlaps this dirty rect (via renderer) */
+    gpu_set_target(g_gpu.backbuffer);
+    gpu_set_clip(dx0, dy0, dx1 - dx0, dy1 - dy0);
     for (i = 0; i < wcount; i++)
     {
         gui_window_t *w = sorted[i];
@@ -333,64 +315,80 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
         bw = wx1 - wx0;
         bh = wy1 - wy0;
 
-        /* blit from window surface to backbuffer (with rounded corner mask) */
+        /* wrap window surface as renderer texture */
         {
+            gpu_texture_t win_tex;
             int cr = (w->flags & GUI_WIN_NO_DECOR) ? 0 : THEME_WIN_RADIUS;
-            for (row = 0; row < bh; row++)
-            {
-                int src_row = sy + row;
-                int dst_row = dsty + row;
-                int left_inset = 0, right_inset = 0;
-                if (src_row < 0 || src_row >= w->surface.height)
-                    continue;
-                if (dst_row < 0 || dst_row >= scr_h)
-                    continue;
+            gpu_texture_wrap(&win_tex, w->surface.pixels,
+                             w->surface.width, w->surface.height,
+                             w->surface.stride);
 
-                /* compute per-row corner insets */
-                if (cr > 0) {
-                    /* top corners */
-                    if (src_row == 0)      { left_inset = 3; right_inset = 3; }
-                    else if (src_row == 1) { left_inset = 2; right_inset = 2; }
-                    else if (src_row == 2) { left_inset = 1; right_inset = 1; }
-                    /* bottom corners */
-                    if (src_row == w->surface.height - 1)      { left_inset = 3; right_inset = 3; }
-                    else if (src_row == w->surface.height - 2) { left_inset = 2; right_inset = 2; }
-                    else if (src_row == w->surface.height - 3) { left_inset = 1; right_inset = 1; }
-                }
+            if (cr == 0) {
+                /* no corners — single blit through renderer */
+                if (w->alpha < 255)
+                    gpu_blit_alpha(dstx, dsty, &win_tex, sx, sy, bw, bh, w->alpha);
+                else
+                    gpu_blit(dstx, dsty, &win_tex, sx, sy, bw, bh);
+            } else {
+                /* rounded corners: single full blit, then patch corner pixels
+                 * from desktop background.  Much faster than per-row blits.  */
+                if (w->alpha < 255)
+                    gpu_blit_alpha(dstx, dsty, &win_tex, sx, sy, bw, bh, w->alpha);
+                else
+                    gpu_blit(dstx, dsty, &win_tex, sx, sy, bw, bh);
 
-                if (left_inset == 0 && right_inset == 0) {
-                    memcpy(&backbuffer[dst_row * scr_w + dstx],
-                           &w->surface.pixels[src_row * w->surface.stride + sx],
-                           (size_t)bw * 4);
-                } else {
-                    /* adjust for the case the blit region doesn't start at column 0 */
-                    int row_sx = sx;          /* first source column in this blit */
-                    int row_bw = bw;
-                    int row_dstx = dstx;
+                /* Corner inset table: row 0→3px, row 1→2px, row 2→1px
+                 * applied at top-left, top-right, bottom-left, bottom-right */
+                {
+                    static const int insets[] = { 3, 2, 1 };
+                    int ci;
+                    for (ci = 0; ci < 3; ci++) {
+                        int ins = insets[ci];
+                        int top_src = ci;                     /* row in window */
+                        int bot_src = w->surface.height - 1 - ci;
 
-                    /* left inset: skip pixels at start of window row */
-                    if (row_sx < left_inset) {
-                        int skip = left_inset - row_sx;
-                        if (skip > row_bw) skip = row_bw;
-                        row_sx += skip;
-                        row_dstx += skip;
-                        row_bw -= skip;
-                    }
-                    /* right inset: skip pixels at end of window row */
-                    if (row_sx + row_bw > w->width - right_inset) {
-                        int over = (row_sx + row_bw) - (w->width - right_inset);
-                        if (over > row_bw) over = row_bw;
-                        row_bw -= over;
-                    }
-                    if (row_bw > 0) {
-                        memcpy(&backbuffer[dst_row * scr_w + row_dstx],
-                               &w->surface.pixels[src_row * w->surface.stride + row_sx],
-                               (size_t)row_bw * 4);
+                        /* top-left corner */
+                        if (top_src >= sy && top_src < sy + bh && sx < ins) {
+                            int py = dsty + (top_src - sy);
+                            int pw = ins - sx;
+                            if (pw > bw) pw = bw;
+                            if (py >= 0 && py < scr_h && dstx >= 0 && pw > 0)
+                                desktop_paint_region(&bb_surf, dstx, py, dstx + pw, py + 1);
+                        }
+                        /* top-right corner */
+                        if (top_src >= sy && top_src < sy + bh && sx + bw > w->width - ins) {
+                            int py = dsty + (top_src - sy);
+                            int rx = w->width - ins;
+                            int lx = rx > sx ? rx - sx : 0;
+                            int px = dstx + lx;
+                            int pw = bw - lx;
+                            if (pw > 0 && py >= 0 && py < scr_h && px < scr_w)
+                                desktop_paint_region(&bb_surf, px, py, px + pw, py + 1);
+                        }
+                        /* bottom-left corner */
+                        if (bot_src >= sy && bot_src < sy + bh && sx < ins) {
+                            int py = dsty + (bot_src - sy);
+                            int pw = ins - sx;
+                            if (pw > bw) pw = bw;
+                            if (py >= 0 && py < scr_h && dstx >= 0 && pw > 0)
+                                desktop_paint_region(&bb_surf, dstx, py, dstx + pw, py + 1);
+                        }
+                        /* bottom-right corner */
+                        if (bot_src >= sy && bot_src < sy + bh && sx + bw > w->width - ins) {
+                            int py = dsty + (bot_src - sy);
+                            int rx = w->width - ins;
+                            int lx = rx > sx ? rx - sx : 0;
+                            int px = dstx + lx;
+                            int pw = bw - lx;
+                            if (pw > 0 && py >= 0 && py < scr_h && px < scr_w)
+                                desktop_paint_region(&bb_surf, px, py, px + pw, py + 1);
+                        }
                     }
                 }
             }
         }
     }
+    gpu_clear_clip();
 
     /* 4. Paint overlays on top of everything (launcher / start menu) */
     desktop_paint_overlays(&bb_surf, dx0, dy0, dx1, dy1);
@@ -621,35 +619,30 @@ static void rebuild_bg(gui_window_t *skip_win)
 
 static void present_dirty(void)
 {
-    uint8_t *fb;
-    int i;
     unsigned int t0, t1;
-
-    fb = (uint8_t *)fb_get_buffer();
-    if (!fb)
-        return;
 
     t0 = timer_get_monotonic_us();
 
-    if (fb_bpp() == 32)
-    {
-        /* fast path: direct memcpy per dirty rect scanlines */
-        for (i = 0; i < dirty_count; i++)
-        {
-            gui_dirty_rect_t *dr = &dirty_list[i];
-            int y;
-            for (y = dr->y; y < dr->y + dr->h && y < scr_h; y++)
-            {
-                memcpy(fb + y * scr_pitch + dr->x * 4,
-                       &backbuffer[y * scr_w + dr->x],
-                       (size_t)dr->w * 4);
-            }
+    if (dirty_count == 1) {
+        gpu_present(dirty_list[0].x, dirty_list[0].y,
+                    dirty_list[0].w, dirty_list[0].h);
+    } else if (dirty_count > 1) {
+        /* Union all dirty rects into one to avoid multiple virtio
+         * round-trips (each costs ~1-5 ms of synchronous polling). */
+        int ux = dirty_list[0].x;
+        int uy = dirty_list[0].y;
+        int ur = ux + dirty_list[0].w;
+        int ub = uy + dirty_list[0].h;
+        int i;
+        for (i = 1; i < dirty_count; i++) {
+            int rx = dirty_list[i].x;
+            int ry = dirty_list[i].y;
+            if (rx < ux) ux = rx;
+            if (ry < uy) uy = ry;
+            if (rx + dirty_list[i].w > ur) ur = rx + dirty_list[i].w;
+            if (ry + dirty_list[i].h > ub) ub = ry + dirty_list[i].h;
         }
-    }
-    else
-    {
-        /* slow path for non-32bpp: full frame present */
-        fb_present_rgb32(backbuffer, (uint32_t)scr_w, (uint32_t)scr_h, (uint32_t)scr_w);
+        gpu_present(ux, uy, ur - ux, ub - uy);
     }
 
     t1 = timer_get_monotonic_us();
@@ -1195,19 +1188,18 @@ void gui_init(void)
     scr_h = (int)fb_height();
     scr_pitch = fb_pitch();
 
-    /* allocate backbuffer */
-    backbuffer_size = (uint32_t)(scr_w * scr_h * 4);
-    backbuffer_phys = physmem_alloc_region(backbuffer_size, 4096);
-    if (!backbuffer_phys)
+    /* initialise renderer: try virtio-gpu, falls back to SW internally */
+    if (gpu_init_virtio(scr_w, scr_h, (int)fb_bpp()) != 0)
         return;
-    backbuffer = (uint32_t *)(uintptr_t)backbuffer_phys;
-    memset(backbuffer, 0, backbuffer_size);
 
-    /* set up backbuffer as surface for compositing into */
-    bb_surf.pixels = backbuffer;
-    bb_surf.width = scr_w;
-    bb_surf.height = scr_h;
-    bb_surf.stride = scr_w;
+    /* keep backbuffer / bb_surf aliases for existing compositor code */
+    backbuffer = g_gpu.backbuffer->pixels;
+    backbuffer_phys = g_gpu.backbuffer->alloc_phys;
+    backbuffer_size = g_gpu.backbuffer->alloc_size;
+    bb_surf.pixels     = backbuffer;
+    bb_surf.width      = scr_w;
+    bb_surf.height     = scr_h;
+    bb_surf.stride     = scr_w;
     bb_surf.alloc_phys = 0;
     bb_surf.alloc_size = 0;
 
@@ -1360,7 +1352,6 @@ void gui_run(void)
                 int old_x, old_y, new_x, new_y;
                 int ux, uy, uw, uh;
                 int sx, sy, bw, bh, row;
-                uint8_t *fb;
 
                 drag_t0 = timer_get_monotonic_us();
 
@@ -1398,32 +1389,10 @@ void gui_run(void)
                     static const int sh_spread[] = { THEME_SHADOW_SPREAD0, THEME_SHADOW_SPREAD1, THEME_SHADOW_SPREAD2 };
                     static const int sh_alpha[]  = { THEME_SHADOW_ALPHA0,  THEME_SHADOW_ALPHA1,  THEME_SHADOW_ALPHA2 };
                     int layer;
+                    gpu_set_target(g_gpu.backbuffer);
                     for (layer = THEME_SHADOW_LAYERS - 1; layer >= 0; layer--) {
-                        int off = sh_off[layer], spread = sh_spread[layer], alpha = sh_alpha[layer];
-                        int ia = 255 - alpha;
-                        int shx = new_x + off, shy = new_y + off;
-                        int shw = drag_win_w + spread, shh = drag_win_h + spread;
-                        int s0x = shx < 0 ? 0 : shx;
-                        int s0y = shy < 0 ? 0 : shy;
-                        int s1x = shx + shw > scr_w ? scr_w : shx + shw;
-                        int s1y = shy + shh > scr_h ? scr_h : shy + shh;
-                        int sr;
-                        if (s0x >= s1x || s0y >= s1y) continue;
-                        for (sr = s0y; sr < s1y; sr++) {
-                            uint32_t *p = &backbuffer[sr * scr_w + s0x];
-                            int cx;
-                            for (cx = 0; cx < s1x - s0x; cx++) {
-                                int px = s0x + cx, py = sr;
-                                if (px >= new_x && px < new_x + drag_win_w &&
-                                    py >= new_y && py < new_y + drag_win_h)
-                                    continue;
-                                uint32_t bg = p[cx];
-                                uint32_t rr = ((bg >> 16) & 0xFF) * (uint32_t)ia / 255;
-                                uint32_t gg = ((bg >> 8) & 0xFF) * (uint32_t)ia / 255;
-                                uint32_t bb = (bg & 0xFF) * (uint32_t)ia / 255;
-                                p[cx] = (rr << 16) | (gg << 8) | bb;
-                            }
-                        }
+                        gpu_shadow(new_x, new_y, drag_win_w, drag_win_h,
+                                   sh_off[layer], sh_spread[layer], sh_alpha[layer]);
                     }
                 }
 
@@ -1435,10 +1404,13 @@ void gui_run(void)
                 if (new_x + sx + bw > scr_w) bw = scr_w - (new_x + sx);
                 if (new_y + sy + bh > scr_h) bh = scr_h - (new_y + sy);
                 if (bw > 0 && bh > 0) {
-                    for (row = 0; row < bh; row++)
-                        memcpy(&backbuffer[(new_y + sy + row) * scr_w + (new_x + sx)],
-                               &dragging_win->surface.pixels[(sy + row) * dragging_win->surface.stride + sx],
-                               (size_t)bw * 4);
+                    gpu_texture_t drag_tex;
+                    gpu_texture_wrap(&drag_tex, dragging_win->surface.pixels,
+                                     dragging_win->surface.width,
+                                     dragging_win->surface.height,
+                                     dragging_win->surface.stride);
+                    gpu_set_target(g_gpu.backbuffer);
+                    gpu_blit(new_x + sx, new_y + sy, &drag_tex, sx, sy, bw, bh);
                 }
 
                 /* 2c. Draw snap preview overlay if active */
@@ -1449,69 +1421,28 @@ void gui_run(void)
                     int snap_area_h = desktop_h - snap_top;
                     uint32_t scol = THEME_SNAP_PREVIEW_COL;
                     int salpha = THEME_SNAP_PREVIEW_ALPHA;
-                    int sia = 255 - salpha;
-                    uint32_t sfr = (scol >> 16) & 0xFF;
-                    uint32_t sfg = (scol >> 8) & 0xFF;
-                    uint32_t sfb = scol & 0xFF;
 
                     if (snap_zone == SNAP_LEFT)       { sx0 = 4; sy0 = snap_top + 4; sw0 = scr_w/2 - 8;  sh0 = snap_area_h - 8; }
                     else if (snap_zone == SNAP_RIGHT)  { sx0 = scr_w/2 + 4; sy0 = snap_top + 4; sw0 = scr_w/2 - 8;  sh0 = snap_area_h - 8; }
                     else /* SNAP_FULL */               { sx0 = 4; sy0 = snap_top + 4; sw0 = scr_w - 8; sh0 = snap_area_h - 8; }
 
-                    /* clip to screen */
-                    if (sx0 < 0) { sw0 += sx0; sx0 = 0; }
-                    if (sy0 < 0) { sh0 += sy0; sy0 = 0; }
-                    if (sx0 + sw0 > scr_w) sw0 = scr_w - sx0;
-                    if (sy0 + sh0 > scr_h) sh0 = scr_h - sy0;
-                    if (sw0 > 0 && sh0 > 0) {
-                        int sr;
-                        for (sr = sy0; sr < sy0 + sh0; sr++) {
-                            uint32_t *p = &backbuffer[sr * scr_w + sx0];
-                            int sc;
-                            /* only draw border (4px edges) for subtle preview */
-                            if (sr < sy0 + 3 || sr >= sy0 + sh0 - 3) {
-                                for (sc = 0; sc < sw0; sc++) {
-                                    uint32_t bg = p[sc];
-                                    uint32_t rr = (sfr * (uint32_t)salpha + ((bg >> 16) & 0xFF) * (uint32_t)sia) / 255;
-                                    uint32_t gg = (sfg * (uint32_t)salpha + ((bg >> 8) & 0xFF) * (uint32_t)sia) / 255;
-                                    uint32_t bb = (sfb * (uint32_t)salpha + (bg & 0xFF) * (uint32_t)sia) / 255;
-                                    p[sc] = (rr << 16) | (gg << 8) | bb;
-                                }
-                            } else {
-                                /* left and right edges only */
-                                for (sc = 0; sc < 3 && sc < sw0; sc++) {
-                                    uint32_t bg = p[sc];
-                                    uint32_t rr = (sfr * (uint32_t)salpha + ((bg >> 16) & 0xFF) * (uint32_t)sia) / 255;
-                                    uint32_t gg = (sfg * (uint32_t)salpha + ((bg >> 8) & 0xFF) * (uint32_t)sia) / 255;
-                                    uint32_t bb = (sfb * (uint32_t)salpha + (bg & 0xFF) * (uint32_t)sia) / 255;
-                                    p[sc] = (rr << 16) | (gg << 8) | bb;
-                                }
-                                for (sc = sw0 - 3; sc < sw0; sc++) {
-                                    if (sc < 0) continue;
-                                    uint32_t bg = p[sc];
-                                    uint32_t rr = (sfr * (uint32_t)salpha + ((bg >> 16) & 0xFF) * (uint32_t)sia) / 255;
-                                    uint32_t gg = (sfg * (uint32_t)salpha + ((bg >> 8) & 0xFF) * (uint32_t)sia) / 255;
-                                    uint32_t bb = (sfb * (uint32_t)salpha + (bg & 0xFF) * (uint32_t)sia) / 255;
-                                    p[sc] = (rr << 16) | (gg << 8) | bb;
-                                }
-                            }
-                        }
-                    }
+                    gpu_set_target(g_gpu.backbuffer);
+                    /* top border */
+                    gpu_fill_rect_alpha(sx0, sy0, sw0, 3, scol, salpha);
+                    /* bottom border */
+                    gpu_fill_rect_alpha(sx0, sy0 + sh0 - 3, sw0, 3, scol, salpha);
+                    /* left border */
+                    gpu_fill_rect_alpha(sx0, sy0 + 3, 3, sh0 - 6, scol, salpha);
+                    /* right border */
+                    gpu_fill_rect_alpha(sx0 + sw0 - 3, sy0 + 3, 3, sh0 - 6, scol, salpha);
                 }
 
                 /* 3. Draw cursor on top */
                 cursor_draw(&bb_surf);
 
                 /* 4. Wait for VBlank, then present to real framebuffer */
-                vblank_wait();
-
-                fb = (uint8_t *)fb_get_buffer();
-                if (fb && fb_bpp() == 32) {
-                    for (row = uy; row < uy + uh; row++)
-                        memcpy(fb + row * scr_pitch + ux * 4,
-                               &backbuffer[row * scr_w + ux],
-                               (size_t)uw * 4);
-                }
+                gpu_vsync_wait();
+                gpu_present(ux, uy, uw, uh);
 
                 /* 5. Clean cursor from backbuffer */
                 cursor_erase(&bb_surf);

@@ -9,6 +9,7 @@
 #include "desktop.h"
 #include "compositor.h"
 #include "window.h"
+#include "renderer.h"
 #include "theme.h"
 #include "font_psf.h"
 #include "input.h"

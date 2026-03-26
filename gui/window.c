@@ -284,6 +284,7 @@ gui_window_t* gui_window_create(const char* title, int x, int y,
             win->height = h;
             win->flags = flags;
             win->z_order = i;
+            win->alpha = 255;  /* fully opaque by default */
             win->needs_redraw = 1;
 
             len = strlen(title);

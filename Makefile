@@ -22,7 +22,8 @@ FB_MOUSE_CURSOR ?= 0
 AUTOTEST ?= 0
 QEMU_NET = -netdev user,id=net0 -device e1000,netdev=net0
 QEMU_USB = -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0
-QEMU_FLAGS = -boot d -cdrom $(ISO_IMAGE) -m 256 -no-reboot -no-shutdown -vga std -display $(QEMU_DISPLAY) $(QEMU_NET) $(QEMU_USB)
+QEMU_GPU =
+QEMU_FLAGS = -boot d -cdrom $(ISO_IMAGE) -m 256 -no-reboot -no-shutdown -vga virtio -display $(QEMU_DISPLAY) $(QEMU_NET) $(QEMU_USB) $(QEMU_GPU)
 DISK_IMG  ?= disk.img
 AUTOTEST_ISO_IMAGE = $(DIST_DIR)/lyth-autotest.iso
 EFI_BOOT  = arch/x86/boot/efi/bootx64.efi
@@ -125,9 +126,14 @@ NOTIFY_OBJ         = $(BUILD_DIR)/gui_notify.o
 DIALOG_OBJ         = $(BUILD_DIR)/gui_dialog.o
 AUTH_PROMPT_OBJ    = $(BUILD_DIR)/gui_auth_prompt.o
 WIDGETS_OBJ        = $(BUILD_DIR)/gui_widgets.o
+RENDERER_SW_OBJ    = $(BUILD_DIR)/gui_renderer_sw.o
+RENDERER_VIRTIO_OBJ = $(BUILD_DIR)/gui_renderer_virtio.o
+VIRTIO_OBJ         = $(BUILD_DIR)/drivers_virtio.o
+VIRTIO_GPU_OBJ     = $(BUILD_DIR)/drivers_virtio_gpu.o
 
-CFLAGS = -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx -mno-sse2 \
+CFLAGS = -O2 -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx -mno-sse2 \
 	-ffreestanding -fno-pie -fno-pic -fno-stack-protector -fno-omit-frame-pointer -fno-optimize-sibling-calls \
+	-fno-strict-aliasing \
 	-ffile-prefix-map=$(CURDIR)=. \
 	-DFB_MOUSE_CURSOR_ENABLED=$(FB_MOUSE_CURSOR) \
 	-DLYTH_AUTOTEST_ENABLED=$(AUTOTEST) \
@@ -150,7 +156,8 @@ CFLAGS = -m64 -mcmodel=kernel -mno-red-zone -mno-sse -mno-mmx -mno-sse2 \
 	-Iinclude/drivers/hpet \
 	-Iinclude/gui \
 	-Iinclude/gui/apps \
-	-Iinclude/drivers/usb
+	-Iinclude/drivers/usb \
+	-Iinclude/drivers/virtio
 LDFLAGS = -m elf_x86_64 -T arch/x86/linker.ld --build-id=none
 
 FONT_PSF = assets/font.psf
@@ -170,7 +177,7 @@ ICON_HEADERS    = $(ICON_LYTH_H) $(ICON_TERMINAL_H) $(ICON_NEXUS_H) $(ICON_CALC_
 
 PNG_OBJ        = $(BUILD_DIR)/png.o
 
-OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(VIDEO_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(SESSION_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ) $(PCI_OBJ) $(E1000_OBJ) $(NETBUF_OBJ) $(NETIF_OBJ) $(ETHERNET_OBJ) $(ARP_OBJ) $(IPV4_OBJ) $(ICMP_OBJ) $(UDP_NET_OBJ) $(TCP_NET_OBJ) $(SOCKET_OBJ) $(DHCP_OBJ) $(DNS_OBJ) $(WINDOW_OBJ) $(COMPOSITOR_OBJ) $(CURSOR_OBJ) $(DESKTOP_OBJ) $(SPLASH_OBJ) $(LOGIN_OBJ) $(APP_TERMINAL_OBJ) $(APP_TASKMAN_OBJ) $(APP_SYSINFO_OBJ) $(APP_NETCFG_OBJ) $(APP_SETTINGS_OBJ) $(HPET_OBJ) $(SLAB_OBJ) $(MMAP_OBJ) $(AHCI_OBJ) $(XHCI_OBJ) $(USB_HID_OBJ) $(APP_FILEMANAGER_OBJ) $(APP_EDITOR_OBJ) $(APP_CALCULATOR_OBJ) $(APP_ABOUT_OBJ) $(APP_VIEWER_OBJ) $(NOTIFY_OBJ) $(DIALOG_OBJ) $(AUTH_PROMPT_OBJ) $(WIDGETS_OBJ) $(PNG_OBJ)
+OBJS = $(BOOT_OBJ) $(GDT_ASM_OBJ) $(KERNEL_OBJ) $(GDT_OBJ) $(TERMINAL_OBJ) $(CONSOLE_BACKEND_OBJ) $(KEYBOARD_OBJ) $(INPUT_OBJ) $(MOUSE_OBJ) $(SHELL_INPUT_OBJ) $(SHELL_OBJ) $(PARSER_OBJ) $(TASK_OBJ) $(STRING_OBJ) $(UTF8_OBJ) $(IDT_OBJ) $(INTERRUPTS_OBJ) $(KLOG_OBJ) $(PANIC_OBJ) $(UGDB_OBJ) $(INTERRUPTS_ASM_OBJ) $(TIMER_OBJ) $(HEAP_OBJ) $(PHYSMEM_OBJ) $(PAGING_OBJ) $(SHM_OBJ) $(MQUEUE_OBJ) $(FS_OBJ) $(VFS_OBJ) $(RAMFS_OBJ) $(DEVFS_OBJ) $(PIPE_OBJ) $(SYSCALL_OBJ) $(FBCONSOLE_OBJ) $(VIDEO_OBJ) $(ELF_OBJ) $(USERMODE_OBJ) $(INIT_OBJ) $(SESSION_OBJ) $(ATA_OBJ) $(BLKDEV_OBJ) $(FAT16_OBJ) $(FAT32_OBJ) $(FAT_FSCK_OBJ) $(TTY_VFS_OBJ) $(SERIAL_OBJ) $(KTEST_OBJ) $(BOOT_TESTS_OBJ) $(RTC_OBJ) $(ACPI_OBJ) $(APIC_OBJ) $(SMP_OBJ) $(AP_TRAMP_OBJ) $(PCI_OBJ) $(E1000_OBJ) $(NETBUF_OBJ) $(NETIF_OBJ) $(ETHERNET_OBJ) $(ARP_OBJ) $(IPV4_OBJ) $(ICMP_OBJ) $(UDP_NET_OBJ) $(TCP_NET_OBJ) $(SOCKET_OBJ) $(DHCP_OBJ) $(DNS_OBJ) $(WINDOW_OBJ) $(COMPOSITOR_OBJ) $(CURSOR_OBJ) $(DESKTOP_OBJ) $(SPLASH_OBJ) $(LOGIN_OBJ) $(APP_TERMINAL_OBJ) $(APP_TASKMAN_OBJ) $(APP_SYSINFO_OBJ) $(APP_NETCFG_OBJ) $(APP_SETTINGS_OBJ) $(HPET_OBJ) $(SLAB_OBJ) $(MMAP_OBJ) $(AHCI_OBJ) $(XHCI_OBJ) $(USB_HID_OBJ) $(APP_FILEMANAGER_OBJ) $(APP_EDITOR_OBJ) $(APP_CALCULATOR_OBJ) $(APP_ABOUT_OBJ) $(APP_VIEWER_OBJ) $(NOTIFY_OBJ) $(DIALOG_OBJ) $(AUTH_PROMPT_OBJ) $(WIDGETS_OBJ) $(RENDERER_SW_OBJ) $(RENDERER_VIRTIO_OBJ) $(VIRTIO_OBJ) $(VIRTIO_GPU_OBJ) $(PNG_OBJ)
 
 $(FONT_HEADER): $(FONT_PSF) $(FONT_TOOL)
 	$(PYTHON) $(FONT_TOOL) $(FONT_PSF) $(FONT_HEADER)
@@ -303,6 +310,10 @@ compile: $(FONT_HEADER) $(ICON_HEADERS) $(BUILD_DIR) ## compila y enlaza el kern
 	$(CC) $(CFLAGS) -c gui/dialog.c -o $(DIALOG_OBJ)
 	$(CC) $(CFLAGS) -c gui/auth_prompt.c -o $(AUTH_PROMPT_OBJ)
 	$(CC) $(CFLAGS) -c gui/widgets.c -o $(WIDGETS_OBJ)
+	$(CC) $(CFLAGS) -c gui/renderer_sw.c -o $(RENDERER_SW_OBJ)
+	$(CC) $(CFLAGS) -c gui/renderer_virtio.c -o $(RENDERER_VIRTIO_OBJ)
+	$(CC) $(CFLAGS) -c drivers/virtio/virtio.c -o $(VIRTIO_OBJ)
+	$(CC) $(CFLAGS) -c drivers/virtio/virtio_gpu.c -o $(VIRTIO_GPU_OBJ)
 	$(CC) $(CFLAGS) -c lib/png.c -o $(PNG_OBJ)
 	$(AS) --64 arch/x86/gdt64.s -o $(GDT_ASM_OBJ)
 	$(AS) --64 arch/x86/interrupts64.s -o $(INTERRUPTS_ASM_OBJ)

@@ -88,6 +88,7 @@ typedef struct gui_window {
     gui_dblclick_fn on_dblclick;
 
     int z_order;
+    uint8_t alpha;     /* per-window opacity: 255=opaque, 0=invisible */
     void* app_data;
 } gui_window_t;
 

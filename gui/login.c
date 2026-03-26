@@ -7,6 +7,7 @@
 
 #include "login.h"
 #include "compositor.h"
+#include "renderer.h"
 #include "window.h"
 #include "desktop.h"
 #include "cursor.h"
@@ -55,9 +56,9 @@
 #define AVATAR_R    28   /* avatar circle radius */
 
 /* ---- State ---- */
-static int login_active;
-static int login_done;
-static unsigned int login_result_uid;
+static volatile int login_active;
+static volatile int login_done;
+static volatile unsigned int login_result_uid;
 
 static char username_buf[MAX_INPUT + 1];
 static int  username_len;
@@ -539,9 +540,6 @@ unsigned int login_manager_run(void) {
         }
 
         if (initial_paint || need_repaint || cursor_moved) {
-            uint8_t* fb = (uint8_t*)fb_get_buffer();
-            uint32_t pitch = fb_pitch();
-
             /* Erase old cursor before modifying backbuffer */
             cursor_erase(bb);
 
@@ -552,46 +550,33 @@ unsigned int login_manager_run(void) {
             cursor_set_pos(mouse_x, mouse_y);
             cursor_draw(bb);
 
-            /* Present to framebuffer */
-            if (fb && fb_bpp() == 32) {
-                if (initial_paint) {
-                    /* First frame: present entire screen */
-                    int row;
-                    for (row = 0; row < scr_h; row++) {
-                        memcpy(fb + row * pitch,
-                               &bb->pixels[row * bb->stride],
-                               (size_t)scr_w * 4);
-                    }
-                    initial_paint = 0;
+            /* Present through the renderer (works for both SW and virtio) */
+            if (initial_paint) {
+                gpu_present(0, 0, scr_w, scr_h);
+                initial_paint = 0;
+            } else {
+                int y0, y1;
+
+                if (need_repaint) {
+                    y0 = 0;
+                    y1 = scr_h;
                 } else {
-                    /* Incremental: present only dirty scanlines */
-                    int y0, y1, row;
-
-                    if (need_repaint) {
-                        y0 = 0;
-                        y1 = scr_h;  /* full screen repaint */
-                    } else {
-                        /* Cursor-only: start with empty range */
-                        y0 = scr_h;
-                        y1 = 0;
-                    }
-
-                    /* Expand for cursor bounding box (old + new) */
-                    {
-                        int cy_lo = prev_my < mouse_y ? prev_my : mouse_y;
-                        int cy_hi = prev_my > mouse_y ? prev_my : mouse_y;
-                        if (cy_lo - 2 < y0) y0 = cy_lo - 2;
-                        if (cy_hi + 20 > y1) y1 = cy_hi + 20;
-                    }
-                    if (y0 < 0) y0 = 0;
-                    if (y1 > scr_h) y1 = scr_h;
-
-                    for (row = y0; row < y1; row++) {
-                        memcpy(fb + row * pitch,
-                               &bb->pixels[row * bb->stride],
-                               (size_t)scr_w * 4);
-                    }
+                    y0 = scr_h;
+                    y1 = 0;
                 }
+
+                /* Expand for cursor bounding box (old + new) */
+                {
+                    int cy_lo = prev_my < mouse_y ? prev_my : mouse_y;
+                    int cy_hi = prev_my > mouse_y ? prev_my : mouse_y;
+                    if (cy_lo - 2 < y0) y0 = cy_lo - 2;
+                    if (cy_hi + 20 > y1) y1 = cy_hi + 20;
+                }
+                if (y0 < 0) y0 = 0;
+                if (y1 > scr_h) y1 = scr_h;
+
+                if (y1 > y0)
+                    gpu_present(0, y0, scr_w, y1 - y0);
             }
         }
 

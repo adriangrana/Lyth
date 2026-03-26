@@ -260,18 +260,18 @@
 ## FASE 3 — Compositor GPU
 
 ### 10. Render Backend GPU
-- [ ] API de renderer diseñada
-- [ ] Backend CPU funcional
-- [ ] Backend GPU inicial
-- [ ] Surfaces como texturas
+- [x] API de renderer diseñada
+- [x] Backend CPU funcional
+- [x] Backend GPU inicial
+- [x] Surfaces como texturas
 - [ ] Quads por ventana/layer
-- [ ] Clipping por nodo
-- [ ] Alpha por nodo
+- [x] Clipping por nodo
+- [x] Alpha por nodo
 - [ ] Transform por nodo
-- [ ] Scissor/clip regions
+- [x] Scissor/clip regions
 - [ ] Render targets intermedios
-- [ ] Upload eficiente de surfaces dañadas
-- [ ] Sincronización render/present
+- [x] Upload eficiente de surfaces dañadas
+- [x] Sincronización render/present
 
 ### 11. Scene Graph/Layers
 - [ ] Nodos: ventana, sombra, decoración, popup, tooltip, panel, cursor, overlay
