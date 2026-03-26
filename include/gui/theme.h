@@ -122,6 +122,53 @@
 #define THEME_COL_ICON_SYSINFO 0x26A69A
 
 /* ==================================================================
+ *  Unified App Icon Registry
+ *  Single source of truth for fallback letter + brand color per app.
+ * ================================================================== */
+
+enum {
+    APP_ICON_LYTH,        /* 0: Lyth OS / Start menu */
+    APP_ICON_TERMINAL,    /* 1 */
+    APP_ICON_CALC,        /* 2 */
+    APP_ICON_FILES,       /* 3 */
+    APP_ICON_SETTINGS,    /* 4 */
+    APP_ICON_EDITOR,      /* 5 */
+    APP_ICON_VIEWER,      /* 6 */
+    APP_ICON_NETCFG,      /* 7 */
+    APP_ICON_TASKMAN,     /* 8 */
+    APP_ICON_SYSINFO,     /* 9 */
+    APP_ICON_ABOUT,       /* 10 */
+    APP_ICON_COUNT
+};
+
+typedef struct {
+    char         letter;     /* single-char fallback glyph */
+    uint32_t     color;      /* brand colour for square bg */
+} app_icon_def_t;
+
+/* Inline lookup table — include in one .c or mark static */
+static inline app_icon_def_t app_icon_get(int id) {
+    static const app_icon_def_t tbl[APP_ICON_COUNT] = {
+        /* APP_ICON_LYTH     */ { 'L', 0x89B4FA },  /* accent-ish */
+        /* APP_ICON_TERMINAL */ { '>', 0x263238 },
+        /* APP_ICON_CALC     */ { 'C', 0xEF5350 },
+        /* APP_ICON_FILES    */ { 'F', 0x4FC3F7 },
+        /* APP_ICON_SETTINGS */ { 'S', 0x78909C },
+        /* APP_ICON_EDITOR   */ { 'N', 0xFFB74D },
+        /* APP_ICON_VIEWER   */ { 'V', 0xAB47BC },
+        /* APP_ICON_NETCFG   */ { 'W', 0x42A5F5 },
+        /* APP_ICON_TASKMAN  */ { 'T', 0x66BB6A },
+        /* APP_ICON_SYSINFO  */ { 'I', 0x26A69A },
+        /* APP_ICON_ABOUT    */ { 'A', 0x5C6BC0 },
+    };
+    if (id < 0 || id >= APP_ICON_COUNT) {
+        app_icon_def_t fallback = { '?', 0x585B70 };
+        return fallback;
+    }
+    return tbl[id];
+}
+
+/* ==================================================================
  *  2. SPACING SCALE (in pixels)
  * ================================================================== */
 

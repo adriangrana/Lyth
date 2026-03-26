@@ -451,7 +451,7 @@ static void draw_tabs(gui_surface_t *s, wid_t *w, int ox, int oy)
     int i;
 
     /* bottom border line */
-    sf_hline(s, bx, by + TAB_H - 1, w->width, THEME_COL_BORDER);
+    sf_hline(s, bx, by + TAB_H - 1, w->width, theme.border);
 
     for (i = 0; i < w->item_count; i++) {
         int len = (int)strlen(w->items[i]);
@@ -460,14 +460,14 @@ static void draw_tabs(gui_surface_t *s, wid_t *w, int ox, int oy)
         uint32_t fg, bg_col;
 
         if (sel) {
-            fg = THEME_COL_TEXT;
-            bg_col = THEME_COL_BASE;
+            fg = theme.text;
+            bg_col = theme.base;
         } else if (w->state & WID_ENABLED) {
-            fg = THEME_COL_SUBTEXT0;
-            bg_col = THEME_COL_MANTLE;
+            fg = theme.subtext0;
+            bg_col = theme.mantle;
         } else {
-            fg = THEME_COL_DIM;
-            bg_col = THEME_COL_MANTLE;
+            fg = theme.dim;
+            bg_col = theme.mantle;
         }
 
         sf_fill(s, tab_x, by, tw, TAB_H - 1, bg_col);
@@ -476,7 +476,7 @@ static void draw_tabs(gui_surface_t *s, wid_t *w, int ox, int oy)
                                 w->items[i], fg, 0, 0);
         /* active indicator — accent line at bottom */
         if (sel)
-            sf_fill(s, tab_x, by + TAB_H - 3, tw, 3, THEME_COL_ACCENT);
+            sf_fill(s, tab_x, by + TAB_H - 3, tw, 3, theme.accent);
 
         tab_x += tw;
     }
