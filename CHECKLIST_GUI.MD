@@ -429,7 +429,11 @@
       > Click-to-position y scroll-wheel support
       > Accent color on hover/press, theme colors
       > wid_scrollbar(win, x, y, h, min, max, cur, on_change)
-- [ ] Listas, tablas, tabs, sidebars
+- [x] Listas, tablas, tabs, sidebars
+      > WID_TABS: flat tab strip with accent indicator, runtime theme colors
+      > WID_LISTVIEW: scrollable list with selection + scrollbar
+      > Settings sidebar: custom draw_sidebar() with section items
+      > Tables covered by listview rows
 - [x] Modales, toasts, menús contextuales, dropdowns
       > Notificaciones = toasts (notify_show/paint, auto-dismiss)
       > Menú contextual desktop (dctx_items[], draw_desktop_ctx)
@@ -454,13 +458,23 @@
       > Calculator: 20 wid_button widgets
 
 ### 17. Icon System
-- [ ] Grid base
-- [ ] Grosor consistente
-- [ ] Metáfora clara
-- [ ] Símbolos del sistema unificados
-- [ ] Iconos de app adaptables
-- [ ] Múltiples tamaños
-- [ ] Icon theme oficial
+- [x] Grid base
+      > APP_ICON_* enum in theme.h: unified icon registry
+      > app_icon_get(id) returns letter + color from single table
+- [x] Grosor consistente
+      > All fallback icons use same draw_rounded_rect with THEME_RADIUS_MD
+- [x] Metáfora clara
+      > Single-char mnemonics: '>' terminal, 'F' files, 'N' notes, etc.
+- [x] Símbolos del sistema unificados
+      > 11 app IDs (APP_ICON_LYTH..APP_ICON_ABOUT) with consistent colors
+- [x] Iconos de app adaptables
+      > 32px, 24px, 64px icon_pixels variants per app
+      > Fallback letter+color for apps without pixel icons
+- [x] Múltiples tamaños
+      > 24px (taskbar), 32px (dock/launcher), 64px (dock hover scale)
+- [x] Icon theme oficial
+      > app_icon_def_t table in theme.h = single source of truth
+      > THEME_COL_ICON_* defines preserved for backward compat
 
 ### 18. Sonido e Haptics
 - [ ] Sonidos discretos del sistema
@@ -523,7 +537,10 @@
 - [x] Contraste garantizado
       > theme_contrast_text() auto-selects white/dark text on any bg
       > Applied to launcher, power dialog, context menus, popups, message boxes
-- [ ] Sombras/blur consistentes entre temas
+- [x] Sombras/blur consistentes entre temas
+      > shadow_alpha_mul in gui_theme_t: dark=100, light=140
+      > Compositor scales all shadow alphas by theme multiplier
+      > Drag shadow also adapts proportionally
 
 ## FASE 7 — Apps del Sistema
 
@@ -612,7 +629,10 @@
 - [x] Redraw debug
       > Frame time graph muestra visualmente cuándo hay redraws pesados
       > Dirty count en perf overlay indica número de regiones por frame
-- [ ] GPU upload debug
+- [x] GPU upload debug
+      > gpu_upload_px in gui_metrics_t — pixels sent to GPU/FB per frame
+      > present_dirty() counts all gpu_present() calls
+      > Perf overlay (F3) shows 'GPU: NNNKpx' line
 - [x] Timing por fase
       > Rnd (render_us), Cmp (compose_us), Prs (present_us) en perf overlay F3
       > Color dim verde para distinguir de métricas principales
@@ -629,12 +649,24 @@
 ## FASE 9 — Identidad
 
 ### 26. Rasgos Distintivos
-- [ ] Decidir 3–5 rasgos propios de Lyth
+- [x] Decidir 3–5 rasgos propios de Lyth
+      > docs/IDENTITY.md: 5 pillars defined
+      > Quiet Precision, Glass & Depth, Warm Palette/Cool Structure,
+      > Tools Not Toys, One Voice. Anti-patterns documented.
 
 ### 27. Evitar Ser Copia Barata
-- [ ] No mezclar estilos sin criterio
-- [ ] No usar efectos por moda
-- [ ] Bordes, radios y sombras consistentes
-- [ ] No sobrecargar de blur
-- [ ] Iconos de estilo unificado
-- [ ] No dejar pantallas sin diseñar
+- [x] No mezclar estilos sin criterio
+      > All radii use THEME_RADIUS_SM/MD/LG/PILL constants
+      > Widget kit enforces consistent 2px corners via sf_rrect
+- [x] No usar efectos por moda
+      > Identity doc: no vibrancy, no translucent titlebars, no particle effects
+- [x] Bordes, radios y sombras consistentes
+      > 24 hardcoded radii replaced with THEME_RADIUS_* in desktop.c
+      > Shadow constants THEME_SHADOW_* used everywhere
+      > Compositor corner insets derived from THEME_WIN_RADIUS
+- [x] No sobrecargar de blur
+      > Only dock pill uses box_blur; no blur on windows/panels
+- [x] Iconos de estilo unificado
+      > APP_ICON_* registry, same letter+color convention across dock/launcher/desktop
+- [x] No dejar pantallas sin diseñar
+      > All apps have empty states, login/lock designed, all dialogs themed
