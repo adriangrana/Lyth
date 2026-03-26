@@ -1016,7 +1016,7 @@ static void rebuild_desktop(void) {
             int iy = taskbar_y + (TASKBAR_H - TB_ICON_SZ) / 2;
             /* Background pill */
             draw_rounded_rect(&desk_surf, lx, taskbar_y + 4, item_w,
-                              TASKBAR_H - 8, 4,
+                              TASKBAR_H - 8, THEME_RADIUS_PILL,
                               minimized ? THEME_COL_SURFACE0 : COL_APP_LABEL_BG);
             /* Icon or fallback letter */
             if (win_icon_24) {
@@ -1032,7 +1032,7 @@ static void rebuild_desktop(void) {
                 int sq = TB_ICON_SZ - 4;
                 int sqx = lx + TB_ICON_PAD + 2;
                 int sqy = iy + 2;
-                draw_rounded_rect(&desk_surf, sqx, sqy, sq, sq, 3, win_icon_col);
+                draw_rounded_rect(&desk_surf, sqx, sqy, sq, sq, THEME_RADIUS_MD, win_icon_col);
                 gui_surface_draw_char(&desk_surf,
                     sqx + (sq - FONT_PSF_WIDTH) / 2,
                     sqy + (sq - FONT_PSF_HEIGHT) / 2,
@@ -1138,7 +1138,7 @@ static void rebuild_desktop(void) {
 
         /* Dock background pill — translucent */
         draw_rounded_rect_alpha(&desk_surf, pill_x, dock_y + 2,
-                                pill_w, DOCK_H - 4, 12, 0x0D1117, 200);
+                                pill_w, DOCK_H - 4, THEME_RADIUS_PILL, 0x0D1117, 200);
         /* Subtle accent border at top of pill */
         alpha_blend_fill(&desk_surf, pill_x, dock_y + 2, pill_w, 1, THEME_COL_ACCENT, 30);
 
@@ -1152,7 +1152,7 @@ static void rebuild_desktop(void) {
             } else {
                 /* Fallback: colored rounded square with letter */
                 draw_rounded_rect(&desk_surf, ix, iy, DOCK_ICON_SIZE,
-                                  DOCK_ICON_SIZE, 3, dock_items[i].icon_color);
+                                  DOCK_ICON_SIZE, THEME_RADIUS_MD, dock_items[i].icon_color);
                 gui_surface_draw_char(&desk_surf,
                     ix + (DOCK_ICON_SIZE - FONT_PSF_WIDTH) / 2,
                     iy + (DOCK_ICON_SIZE - FONT_PSF_HEIGHT) / 2,
@@ -1249,7 +1249,7 @@ static void draw_start_menu(void) {
     }
 
     /* Background panel — translucent glass */
-    draw_rounded_rect_alpha(dst, lx, ly, LAUNCHER_W, LAUNCHER_H, 3, COL_LAUNCH_BG, 210);
+    draw_rounded_rect_alpha(dst, lx, ly, LAUNCHER_W, LAUNCHER_H, THEME_RADIUS_LG, COL_LAUNCH_BG, 210);
     /* Subtle accent border at top */
     alpha_blend_fill(dst, lx + 3, ly, LAUNCHER_W - 6, 1, THEME_COL_ACCENT, 25);
 
@@ -1259,7 +1259,7 @@ static void draw_start_menu(void) {
     /* Search bar */
     {
         int sx = lx + 100, sy = ly + 12, swidth = LAUNCHER_W - 140, sheight = 24;
-        draw_rounded_rect(dst, sx, sy, swidth, sheight, 2, COL_LAUNCH_SEARCH_BG);
+        draw_rounded_rect(dst, sx, sy, swidth, sheight, THEME_RADIUS_SM, COL_LAUNCH_SEARCH_BG);
         /* Focus ring when search is active */
         if (launcher_search_len > 0)
             alpha_blend_fill(dst, sx, sy, swidth, 1, THEME_COL_ACCENT, 80);
@@ -1301,7 +1301,7 @@ static void draw_start_menu(void) {
                                      LAUNCHER_ICON_SZ, LAUNCHER_ICON_SZ);
                 } else {
                     draw_rounded_rect(dst, icon_x, icon_y, LAUNCHER_ICON_SZ,
-                                      LAUNCHER_ICON_SZ, 3, launcher_items[i].icon_color);
+                                      LAUNCHER_ICON_SZ, THEME_RADIUS_MD, launcher_items[i].icon_color);
                     gui_surface_draw_char(dst,
                         icon_x + (LAUNCHER_ICON_SZ - FONT_PSF_WIDTH) / 2,
                         icon_y + (LAUNCHER_ICON_SZ - FONT_PSF_HEIGHT) / 2,
@@ -1345,7 +1345,7 @@ static void draw_start_menu(void) {
                                          LAUNCHER_ICON_SZ, LAUNCHER_ICON_SZ);
                     } else {
                         draw_rounded_rect(dst, icon_x, icon_y, LAUNCHER_ICON_SZ,
-                                          LAUNCHER_ICON_SZ, 3, launcher_items[ri].icon_color);
+                                          LAUNCHER_ICON_SZ, THEME_RADIUS_MD, launcher_items[ri].icon_color);
                         gui_surface_draw_char(dst,
                             icon_x + (LAUNCHER_ICON_SZ - FONT_PSF_WIDTH) / 2,
                             icon_y + (LAUNCHER_ICON_SZ - FONT_PSF_HEIGHT) / 2,
@@ -1387,7 +1387,7 @@ static void draw_start_menu(void) {
         /* Hover highlight for selected item */
         if (i == menu_selected) {
             draw_rounded_rect_alpha(dst, cx, cy, LAUNCHER_CELL_W - 4,
-                              LAUNCHER_CELL_H - 4, 2, COL_LAUNCH_HOVER, 60);
+                              LAUNCHER_CELL_H - 4, THEME_RADIUS_SM, COL_LAUNCH_HOVER, 60);
         }
 
         /* Icon (colored rounded square or real icon) */
@@ -1404,7 +1404,7 @@ static void draw_start_menu(void) {
                                  LAUNCHER_ICON_SZ, LAUNCHER_ICON_SZ);
             } else {
                 draw_rounded_rect(dst, icon_x, icon_y, LAUNCHER_ICON_SZ,
-                                  LAUNCHER_ICON_SZ, 3, launcher_items[idx].icon_color);
+                                  LAUNCHER_ICON_SZ, THEME_RADIUS_MD, launcher_items[idx].icon_color);
                 gui_surface_draw_char(dst,
                     icon_x + (LAUNCHER_ICON_SZ - FONT_PSF_WIDTH) / 2,
                     icon_y + (LAUNCHER_ICON_SZ - FONT_PSF_HEIGHT) / 2,
@@ -1442,17 +1442,17 @@ static void draw_start_menu(void) {
 
         int bx = lx + 20;
         /* Logout */
-        draw_rounded_rect(dst, bx, by, 80, 24, 2, COL_LAUNCH_SEARCH_BG);
+        draw_rounded_rect(dst, bx, by, 80, 24, THEME_RADIUS_SM, COL_LAUNCH_SEARCH_BG);
         gui_surface_draw_string(dst, bx + 12, by + 4, "Logout", COL_LAUNCH_TEXT, 0, 0);
         bx += 90;
 
         /* Restart */
-        draw_rounded_rect(dst, bx, by, 80, 24, 2, COL_LAUNCH_SEARCH_BG);
+        draw_rounded_rect(dst, bx, by, 80, 24, THEME_RADIUS_SM, COL_LAUNCH_SEARCH_BG);
         gui_surface_draw_string(dst, bx + 8, by + 4, "Restart", COL_LAUNCH_TEXT, 0, 0);
         bx += 90;
 
         /* Shutdown */
-        draw_rounded_rect(dst, bx, by, 90, 24, 2, THEME_COL_ERROR);
+        draw_rounded_rect(dst, bx, by, 90, 24, THEME_RADIUS_SM, THEME_COL_ERROR);
         gui_surface_draw_string(dst, bx + 6, by + 4, "Shutdown", theme_contrast_text(THEME_COL_ERROR), 0, 0);
     }
 }
@@ -1462,7 +1462,7 @@ static void draw_context_menu(gui_surface_t* dst) {
     int i;
     int total_h = CTX_MAX_ITEMS * CTX_ITEM_H + 4;
 
-    draw_rounded_rect_alpha(dst, ctx_menu_x, ctx_menu_y, CTX_W, total_h, 3, COL_CTX_BG, 220);
+    draw_rounded_rect_alpha(dst, ctx_menu_x, ctx_menu_y, CTX_W, total_h, THEME_RADIUS_MD, COL_CTX_BG, 220);
     /* border lines */
     alpha_blend_fill(dst, ctx_menu_x, ctx_menu_y, CTX_W, 1, COL_CTX_BORDER, 150);
     alpha_blend_fill(dst, ctx_menu_x, ctx_menu_y + total_h - 1, CTX_W, 1, COL_CTX_BORDER, 150);
@@ -1529,7 +1529,7 @@ static void draw_power_dialog(gui_surface_t* dst) {
     alpha_blend_fill(dst, 0, 0, sw, sh, 0x000000, 120);
 
     /* Dialog body */
-    draw_rounded_rect_alpha(dst, dx, dy, PWR_DLG_W, PWR_DLG_H, 3,
+    draw_rounded_rect_alpha(dst, dx, dy, PWR_DLG_W, PWR_DLG_H, THEME_RADIUS_LG,
                             theme.mantle, 240);
     /* Border */
     alpha_blend_fill(dst, dx, dy, PWR_DLG_W, 1, theme.border, 180);
@@ -1552,19 +1552,19 @@ static void draw_power_dialog(gui_surface_t* dst) {
     bx = dx + (PWR_DLG_W - 3 * PWR_BTN_W - 20) / 2;
 
     /* Cancel */
-    draw_rounded_rect(dst, bx, brow_y, PWR_BTN_W, PWR_BTN_H, 2, theme.surface0);
+    draw_rounded_rect(dst, bx, brow_y, PWR_BTN_W, PWR_BTN_H, THEME_RADIUS_SM, theme.surface0);
     gui_surface_draw_string(dst, bx + (PWR_BTN_W - 7 * FONT_PSF_WIDTH) / 2,
                             brow_y + 6, "Cancelar", theme.text, 0, 0);
     bx += PWR_BTN_W + 10;
 
     /* Reboot */
-    draw_rounded_rect(dst, bx, brow_y, PWR_BTN_W, PWR_BTN_H, 2, THEME_COL_WARNING);
+    draw_rounded_rect(dst, bx, brow_y, PWR_BTN_W, PWR_BTN_H, THEME_RADIUS_SM, THEME_COL_WARNING);
     gui_surface_draw_string(dst, bx + (PWR_BTN_W - 8 * FONT_PSF_WIDTH) / 2,
                             brow_y + 6, "Reiniciar", theme_contrast_text(THEME_COL_WARNING), 0, 0);
     bx += PWR_BTN_W + 10;
 
     /* Shutdown */
-    draw_rounded_rect(dst, bx, brow_y, PWR_BTN_W, PWR_BTN_H, 2, THEME_COL_ERROR);
+    draw_rounded_rect(dst, bx, brow_y, PWR_BTN_W, PWR_BTN_H, THEME_RADIUS_SM, THEME_COL_ERROR);
     gui_surface_draw_string(dst, bx + (PWR_BTN_W - 6 * FONT_PSF_WIDTH) / 2,
                             brow_y + 6, "Apagar", theme_contrast_text(THEME_COL_ERROR), 0, 0);
 }
@@ -1622,7 +1622,7 @@ static void draw_desktop_ctx(gui_surface_t* dst) {
 
     /* Translucent background */
     draw_rounded_rect_alpha(dst, dctx_menu_x, dctx_menu_y, DCTX_W, total_h,
-                            3, COL_CTX_BG, 220);
+                            THEME_RADIUS_MD, COL_CTX_BG, 220);
     /* Top border accent */
     alpha_blend_fill(dst, dctx_menu_x + 3, dctx_menu_y, DCTX_W - 6, 1,
                      THEME_COL_ACCENT, 35);
@@ -1633,7 +1633,7 @@ static void draw_desktop_ctx(gui_surface_t* dst) {
         /* Hover highlight */
         if (i == dctx_hover)
             draw_rounded_rect_alpha(dst, dctx_menu_x + 4, iy,
-                                    DCTX_W - 8, DCTX_ITEM_H - 2, 2,
+                                    DCTX_W - 8, DCTX_ITEM_H - 2, THEME_RADIUS_SM,
                                     COL_CTX_HOVER, 60);
 
         gui_surface_draw_string(dst, dctx_menu_x + 14,
@@ -1655,7 +1655,7 @@ static void draw_net_popup(gui_surface_t* dst) {
     int ly;
     netif_t* iface = netif_get(0);
 
-    draw_rounded_rect_alpha(dst, px, py, NET_POPUP_W, NET_POPUP_H, 3, COL_POPUP_BG, 220);
+    draw_rounded_rect_alpha(dst, px, py, NET_POPUP_W, NET_POPUP_H, THEME_RADIUS_MD, COL_POPUP_BG, 220);
     /* border accent line at top */
     alpha_blend_fill(dst, px + 3, py, NET_POPUP_W - 6, 1, THEME_COL_ACCENT, 40);
 
@@ -1704,7 +1704,7 @@ static void draw_net_popup(gui_surface_t* dst) {
 
         /* "Open Network Config" clickable area */
         ly += 6;
-        draw_rounded_rect(dst, px + 10, ly, NET_POPUP_W - 20, 24, 4, COL_POPUP_BTN);
+        draw_rounded_rect(dst, px + 10, ly, NET_POPUP_W - 20, 24, THEME_RADIUS_SM, COL_POPUP_BTN);
         gui_surface_draw_string(dst, px + 10 + (NET_POPUP_W - 20 - 18 * FONT_PSF_WIDTH) / 2,
             ly + (24 - FONT_PSF_HEIGHT) / 2,
             "Open Network Config", theme_contrast_text(COL_POPUP_BTN), 0, 0);
@@ -2036,7 +2036,7 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
             /* Subtle glow behind scaled icon */
             draw_rounded_rect_alpha(dst, sx - 2, sy - 2,
                                      new_sz + 4, new_sz + 4,
-                                     3, COL_DOCK_HOVER, 50);
+                                     THEME_RADIUS_MD, COL_DOCK_HOVER, 50);
             if (dock_items[hover_i].icon_pixels_64) {
                 blit_icon_scaled(dst, sx, sy,
                                  dock_items[hover_i].icon_pixels_64, 64, 64,
@@ -2047,7 +2047,7 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
                                  new_sz, new_sz);
             } else {
                 draw_rounded_rect(dst, sx, sy, new_sz, new_sz,
-                                  3, dock_items[hover_i].icon_color);
+                                  THEME_RADIUS_MD, dock_items[hover_i].icon_color);
                 gui_surface_draw_char(dst,
                     sx + (new_sz - FONT_PSF_WIDTH) / 2,
                     sy + (new_sz - FONT_PSF_HEIGHT) / 2,
@@ -2065,7 +2065,7 @@ void desktop_paint_overlays(gui_surface_t* dst, int x0, int y0, int x1, int y1) 
                 if (tip_x < 2) tip_x = 2;
                 if (tip_x + tip_w > sw - 2) tip_x = sw - 2 - tip_w;
                 draw_rounded_rect_alpha(dst, tip_x, tip_y, tip_w, tip_h,
-                                         3, 0x0D1117, 220);
+                                         THEME_RADIUS_MD, 0x0D1117, 220);
                 gui_surface_draw_string(dst, tip_x + 6,
                     tip_y + 4, tip, COL_TASKBAR_TEXT, 0, 0);
             }

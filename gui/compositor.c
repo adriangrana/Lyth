@@ -717,13 +717,12 @@ static void compose_region(gui_dirty_rect_t *dr, gui_window_t **sorted, int wcou
                 else
                     gpu_blit(dstx, dsty, &win_tex, sx, sy, bw, bh);
 
-                /* Corner inset table: row 0→3px, row 1→2px, row 2→1px
-                 * applied at top-left, top-right, bottom-left, bottom-right */
+                /* Corner inset table derived from THEME_WIN_RADIUS:
+                 * row 0→R px, row 1→R-1 px, ... row R-1→1 px */
                 {
-                    static const int insets[] = { 3, 2, 1 };
                     int ci;
-                    for (ci = 0; ci < 3; ci++) {
-                        int ins = insets[ci];
+                    for (ci = 0; ci < THEME_WIN_RADIUS; ci++) {
+                        int ins = THEME_WIN_RADIUS - ci;
                         int top_src = ci;                     /* row in window */
                         int bot_src = w->surface.height - 1 - ci;
 

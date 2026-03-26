@@ -141,7 +141,8 @@
 #define THEME_RADIUS_SM     2   /* subtle rounding (buttons, inputs) */
 #define THEME_RADIUS_MD     3   /* cards, panels, popups */
 #define THEME_RADIUS_LG     3   /* windows, modals, launcher — max supported by draw_rounded_rect */
-/* NOTE: when GPU compositor lands, increase LG to 12-16 for glass look */
+#define THEME_RADIUS_PILL   3   /* pill-shaped elements (taskbar items, dock bg) — clamped by renderer */
+/* NOTE: when GPU compositor lands, increase LG/PILL for glass look */
 
 /* ==================================================================
  *  4. SHADOW LEVELS (conceptual — used for visual hierarchy)

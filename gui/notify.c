@@ -151,10 +151,10 @@ void notify_paint(void* surface, int screen_w) {
         int ny = y;
 
         /* Shadow (subtle, 1-layer) */
-        n_alpha_fill(s, nx + 2, ny + 2, NOTIFY_W, NOTIFY_H, 0x000000, 20);
+        n_alpha_fill(s, nx + THEME_SHADOW_OFF0, ny + THEME_SHADOW_OFF0, NOTIFY_W, NOTIFY_H, 0x000000, THEME_SHADOW_ALPHA0);
 
         /* Background — translucent glass */
-        n_rounded_rect(s, nx, ny, NOTIFY_W, NOTIFY_H, 3, COL_N_BG, 220);
+        n_rounded_rect(s, nx, ny, NOTIFY_W, NOTIFY_H, THEME_RADIUS_MD, COL_N_BG, 220);
 
         /* Accent line at top */
         n_alpha_fill(s, nx + 3, ny, NOTIFY_W - 6, 1, THEME_COL_ACCENT, 40);
@@ -225,7 +225,7 @@ void osd_paint(void *surface, int screen_w, int screen_h)
     oy = screen_h * 3 / 4 - OSD_H / 2;
 
     /* Background pill */
-    n_rounded_rect(s, ox, oy, OSD_W, OSD_H, 3, COL_N_BG, 210);
+    n_rounded_rect(s, ox, oy, OSD_W, OSD_H, THEME_RADIUS_MD, COL_N_BG, 210);
 
     /* Icon (single char) */
     gui_surface_draw_char(s, ox + OSD_BAR_PAD, oy + 8,

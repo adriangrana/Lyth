@@ -464,8 +464,10 @@
 
 ### 18. Sonido e Haptics
 - [ ] Sonidos discretos del sistema
-- [ ] Feedback visual (volumen, brillo, etc.)
-- [ ] OSD limpio
+- [x] Feedback visual (volumen, brillo, etc.)
+      > osd_show(icon, label, level) — centred bar auto-dismiss 1.5s
+- [x] OSD limpio
+      > Translucent pill + accent bar, painted per-dirty-rect
 - [ ] No abusar de sonidos
 
 ## FASE 6 — Pulido Premium
@@ -487,7 +489,8 @@
       > THEME_RADIUS_* scale, consistent padding across apps
 - [x] Estados vacíos bonitos
 - [x] Placeholders elegantes
-- [ ] Skeleton loading (si aplica)
+- [x] Skeleton loading (si aplica)
+      > Not applicable — no async content loading in bare-metal OS
 
 ### 20. Coherencia Absoluta
 - [x] Mismo radio en todo

@@ -25,7 +25,7 @@ static void sf_hline(gui_surface_t *s, int x, int y, int w, uint32_t c)
     gui_surface_hline(s, x, y, w, c);
 }
 
-/* Rounded rect (radius 2) filled */
+/* Rounded rect filled — shape matches THEME_RADIUS_SM (2px corners) */
 static void sf_rrect(gui_surface_t *s, int x, int y, int w, int h, uint32_t c)
 {
     if (h < 4 || w < 4) { sf_fill(s, x, y, w, h, c); return; }
@@ -36,7 +36,7 @@ static void sf_rrect(gui_surface_t *s, int x, int y, int w, int h, uint32_t c)
     sf_fill(s, x + 2, y + h - 1, w - 4, 1, c);
 }
 
-/* Outline rounded rect (radius 2) */
+/* Outline rounded rect — shape matches THEME_RADIUS_SM (2px corners) */
 static void sf_rrect_outline(gui_surface_t *s, int x, int y, int w, int h,
                              uint32_t c)
 {
