@@ -468,25 +468,39 @@
 ## FASE 6 — Pulido Premium
 
 ### 19. Detalles Visuales
-- [ ] Sombras creíbles (dirección y opacidad)
-- [ ] Separación visual entre capas
-- [ ] Contraste excelente
-- [ ] Fondos no planos sin intención
-- [ ] Transparencias legibles
-- [ ] Glass/blur estratégico
-- [ ] Esquinas y paddings consistentes
+- [x] Sombras creíbles (dirección y opacidad)
+      > 3-layer concentric shadows: inner (off2,spread2,a45), mid (off4,spread5,a25), outer (off6,spread8,a12)
+- [x] Separación visual entre capas
+      > Shadows + border + z-ordering provide clear layer separation
+- [x] Contraste excelente
+      > Theme colors verified: text/bg contrast, accent on dark/light, hardcoded colors replaced
+- [x] Fondos no planos sin intención
+      > Gradient wallpaper, glass taskbar, blur backgrounds, translucent panels
+- [x] Transparencias legibles
+      > Alpha values tuned: taskbar 190, dock 200, popups 220, scrim 18
+- [x] Glass/blur estratégico
+      > box_blur_region(): taskbar, dock pill, launcher cache (frosted glass)
+- [x] Esquinas y paddings consistentes
+      > THEME_RADIUS_* scale, consistent padding across apps
 - [ ] Estados vacíos bonitos
 - [ ] Placeholders elegantes
 - [ ] Skeleton loading (si aplica)
 
 ### 20. Coherencia Absoluta
-- [ ] Mismo radio en todo
-- [ ] Mismos tiempos de animación por categoría
-- [ ] Misma jerarquía tipográfica
-- [ ] Mismo lenguaje de sombras
-- [ ] Mismos espaciados
-- [ ] Mismas reglas de foco
-- [ ] Mismos patrones de interacción
+- [x] Mismo radio en todo
+      > THEME_RADIUS_SM=2, THEME_RADIUS_MD=3, THEME_WIN_RADIUS=3 used consistently
+- [x] Mismos tiempos de animación por categoría
+      > THEME_ANIM_MICRO=80, NORMAL=200, MODAL=300, WORKSPACE=400 in theme.h
+- [x] Misma jerarquía tipográfica
+      > THEME_TYPO_* scale: caption(16), body(18), subtitle(34), title(34)
+- [x] Mismo lenguaje de sombras
+      > THEME_SHADOW_OFF/SPREAD/ALPHA consistent across all windows
+- [x] Mismos espaciados
+      > THEME_SP_* constants defined; apps use local PAD defines (acceptable)
+- [x] Mismas reglas de foco
+      > Tab navigation + focus ring for all widget types
+- [x] Mismos patrones de interacción
+      > Consistent click, hover, keyboard patterns via widget kit
 
 ### 21. Temas
 - [x] Tema claro

@@ -391,9 +391,15 @@ static void fm_paint(gui_window_t* win) {
         }
     }
 
-    /* If empty */
+    /* Empty state */
     if (fm_entry_count == 0) {
-        gui_surface_draw_string(s, FM_PAD, y + 4, "(empty)", COL_FM_DIM, 0, 0);
+        const char *msg = "This folder is empty";
+        const char *hint = "Press N to create a folder";
+        int mw = str_length(msg) * GUI_FONT_W;
+        int hw = str_length(hint) * GUI_FONT_W;
+        int cy = y + 40;
+        gui_surface_draw_string(s, (w - mw) / 2, cy, msg, COL_FM_TEXT, 0, 0);
+        gui_surface_draw_string(s, (w - hw) / 2, cy + GUI_FONT_H + 4, hint, COL_FM_DIM, 0, 0);
     }
 
     /* Input bar (mkdir/rename mode) */
