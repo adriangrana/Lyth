@@ -522,34 +522,51 @@ static void blit_icon(gui_surface_t *dst, int dx, int dy,
     }
 }
 
-/* Blit a pre-decoded ARGB icon scaled to tw x th (nearest-neighbor + alpha) */
+/* Blit a pre-decoded ARGB icon scaled to tw x th (bilinear + alpha) */
 static void blit_icon_scaled(gui_surface_t *dst, int dx, int dy,
                              const uint32_t *pixels, int iw, int ih,
                              int tw, int th) {
     int row_i, col_i;
-    if (tw <= 0 || th <= 0) return;
+    if (tw <= 0 || th <= 0 || iw <= 0 || ih <= 0) return;
     for (row_i = 0; row_i < th; row_i++) {
         int py = dy + row_i;
         if (py < 0 || py >= dst->height) continue;
-        int sr = row_i * ih / th;
+        int fy16 = row_i * ((ih - 1) << 16) / (th > 1 ? th - 1 : 1);
+        int y0 = fy16 >> 16, y1 = y0 + 1;
+        int fy = fy16 & 0xFFFF, ify = 0x10000 - fy;
+        if (y1 >= ih) y1 = ih - 1;
         for (col_i = 0; col_i < tw; col_i++) {
             int px = dx + col_i;
             if (px < 0 || px >= dst->width) continue;
-            int sc = col_i * iw / tw;
-            uint32_t p = pixels[sr * iw + sc];
-            int alpha = (int)((p >> 24) & 0xFF);
-            if (alpha == 0) continue;
-            if (alpha == 255) {
-                dst->pixels[py * dst->stride + px] = p & 0x00FFFFFF;
+            int fx16 = col_i * ((iw - 1) << 16) / (tw > 1 ? tw - 1 : 1);
+            int x0 = fx16 >> 16, x1 = x0 + 1;
+            int fx = fx16 & 0xFFFF, ifx = 0x10000 - fx;
+            if (x1 >= iw) x1 = iw - 1;
+            uint32_t c00 = pixels[y0 * iw + x0];
+            uint32_t c10 = pixels[y0 * iw + x1];
+            uint32_t c01 = pixels[y1 * iw + x0];
+            uint32_t c11 = pixels[y1 * iw + x1];
+            int a = (int)((((c00>>24)&0xFF)*ifx+((c10>>24)&0xFF)*fx)>>16)*ify
+                  + (int)((((c01>>24)&0xFF)*ifx+((c11>>24)&0xFF)*fx)>>16)*fy;
+            a >>= 16; if (a > 255) a = 255;
+            if (a == 0) continue;
+            int r = (int)((((c00>>16)&0xFF)*ifx+((c10>>16)&0xFF)*fx)>>16)*ify
+                  + (int)((((c01>>16)&0xFF)*ifx+((c11>>16)&0xFF)*fx)>>16)*fy;
+            int g = (int)((((c00>>8)&0xFF)*ifx+((c10>>8)&0xFF)*fx)>>16)*ify
+                  + (int)((((c01>>8)&0xFF)*ifx+((c11>>8)&0xFF)*fx)>>16)*fy;
+            int b = (int)(((c00&0xFF)*ifx+(c10&0xFF)*fx)>>16)*ify
+                  + (int)(((c01&0xFF)*ifx+(c11&0xFF)*fx)>>16)*fy;
+            r >>= 16; g >>= 16; b >>= 16;
+            if (r > 255) r = 255; if (g > 255) g = 255; if (b > 255) b = 255;
+            if (a == 255) {
+                dst->pixels[py * dst->stride + px] =
+                    ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
             } else {
                 uint32_t bg = dst->pixels[py * dst->stride + px];
-                int ia = 255 - alpha;
-                int r = ((int)((p >> 16) & 0xFF) * alpha +
-                         (int)((bg >> 16) & 0xFF) * ia) / 255;
-                int g = ((int)((p >> 8) & 0xFF) * alpha +
-                         (int)((bg >> 8) & 0xFF) * ia) / 255;
-                int b = ((int)(p & 0xFF) * alpha +
-                         (int)(bg & 0xFF) * ia) / 255;
+                int ia = 255 - a;
+                r = (r * a + (int)((bg >> 16) & 0xFF) * ia) / 255;
+                g = (g * a + (int)((bg >> 8) & 0xFF) * ia) / 255;
+                b = (b * a + (int)(bg & 0xFF) * ia) / 255;
                 dst->pixels[py * dst->stride + px] =
                     ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
             }
@@ -810,18 +827,13 @@ static void rebuild_desktop(void) {
         }
 
         for (y = 0; y < dh; y++) {
-            int sy = (int)((long)(y + sy_off) * scale_den / scale_num);
-            const uint32_t *src_row;
+            int fy16 = (int)((long)(y + sy_off) * scale_den * 65536 / scale_num);
             uint32_t *dst_row;
-            if (sy < 0) sy = 0;
-            if (sy >= ih) sy = ih - 1;
-            src_row = &wallpaper_img.pixels[sy * iw];
             dst_row = &desk_surf.pixels[y * sw];
             for (int x = 0; x < sw; x++) {
-                int sxi = (int)((long)(x + sx_off) * scale_den / scale_num);
-                if (sxi < 0) sxi = 0;
-                if (sxi >= iw) sxi = iw - 1;
-                dst_row[x] = src_row[sxi];
+                int fx16 = (int)((long)(x + sx_off) * scale_den * 65536 / scale_num);
+                dst_row[x] = bilinear_sample_wp(wallpaper_img.pixels,
+                                                 iw, ih, fx16, fy16);
             }
         }
     } else {

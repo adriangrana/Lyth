@@ -398,22 +398,44 @@ static void sw_blit_scaled(int dx, int dy, int dw, int dh,
     int row, col;
     if (!src || !src->pixels || !t->pixels) return;
     if (dw <= 0 || dh <= 0 || sw_w <= 0 || sh <= 0) return;
-
+    int ystep = (sh > 1 && dh > 1) ? ((sh - 1) << 16) / (dh - 1) : 0;
+    int xstep = (sw_w > 1 && dw > 1) ? ((sw_w - 1) << 16) / (dw - 1) : 0;
     for (row = 0; row < dh; row++) {
         int py = dy + row;
         if (py < 0 || py >= t->height) continue;
         if (sw_clip.active && (py < sw_clip.y || py >= sw_clip.y + sw_clip.h))
             continue;
-        int sr = sy + row * sh / dh;
-        if (sr >= src->height) continue;
+        int fy16 = row * ystep;
+        int y0 = sy + (fy16 >> 16);
+        int y1 = y0 + 1;
+        if (y0 >= src->height) continue;
+        if (y1 >= src->height) y1 = src->height - 1;
+        int fy = fy16 & 0xFFFF;
+        int ify = 0x10000 - fy;
         for (col = 0; col < dw; col++) {
             int px = dx + col;
             if (px < 0 || px >= t->width) continue;
             if (sw_clip.active && (px < sw_clip.x || px >= sw_clip.x + sw_clip.w))
                 continue;
-            int sc = sx + col * sw_w / dw;
-            if (sc >= src->width) continue;
-            t->pixels[py * t->stride + px] = src->pixels[sr * src->stride + sc];
+            int fx16 = col * xstep;
+            int x0 = sx + (fx16 >> 16);
+            int x1 = x0 + 1;
+            if (x0 >= src->width) continue;
+            if (x1 >= src->width) x1 = src->width - 1;
+            int fx = fx16 & 0xFFFF;
+            int ifx = 0x10000 - fx;
+            uint32_t c00 = src->pixels[y0 * src->stride + x0];
+            uint32_t c10 = src->pixels[y0 * src->stride + x1];
+            uint32_t c01 = src->pixels[y1 * src->stride + x0];
+            uint32_t c11 = src->pixels[y1 * src->stride + x1];
+            int r = (int)(((((c00>>16)&0xFF)*ifx + ((c10>>16)&0xFF)*fx) >> 16) * ify
+                        + ((((c01>>16)&0xFF)*ifx + ((c11>>16)&0xFF)*fx) >> 16) * fy) >> 16;
+            int g = (int)(((((c00>>8)&0xFF)*ifx + ((c10>>8)&0xFF)*fx) >> 16) * ify
+                        + ((((c01>>8)&0xFF)*ifx + ((c11>>8)&0xFF)*fx) >> 16) * fy) >> 16;
+            int b = (int)((((c00&0xFF)*ifx + (c10&0xFF)*fx) >> 16) * ify
+                        + (((c01&0xFF)*ifx + (c11&0xFF)*fx) >> 16) * fy) >> 16;
+            t->pixels[py * t->stride + px] =
+                ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
         }
     }
 }
@@ -512,30 +534,53 @@ static void sw_blit_icon_scaled(int dx, int dy, int dw, int dh,
 {
     gpu_texture_t *t = tgt();
     int row, col;
-    if (!pixels || !t->pixels || dw <= 0 || dh <= 0) return;
+    if (!pixels || !t->pixels || dw <= 0 || dh <= 0 || iw <= 0 || ih <= 0) return;
+    int ystep = (ih > 1 && dh > 1) ? ((ih - 1) << 16) / (dh - 1) : 0;
+    int xstep = (iw > 1 && dw > 1) ? ((iw - 1) << 16) / (dw - 1) : 0;
     for (row = 0; row < dh; row++) {
         int py = dy + row;
         if (py < 0 || py >= t->height) continue;
         if (sw_clip.active && (py < sw_clip.y || py >= sw_clip.y + sw_clip.h))
             continue;
-        int sr = row * ih / dh;
+        int fy16 = row * ystep;
+        int y0 = fy16 >> 16;
+        int y1 = y0 + 1;
+        if (y1 >= ih) y1 = ih - 1;
+        int fy = fy16 & 0xFFFF;
+        int ify = 0x10000 - fy;
         for (col = 0; col < dw; col++) {
             int px = dx + col;
             if (px < 0 || px >= t->width) continue;
             if (sw_clip.active && (px < sw_clip.x || px >= sw_clip.x + sw_clip.w))
                 continue;
-            int sc = col * iw / dw;
-            uint32_t p = pixels[sr * iw + sc];
-            int a = (int)((p >> 24) & 0xFF);
-            if (a == 0) continue;
-            if (a == 255) {
-                t->pixels[py * t->stride + px] = p & 0x00FFFFFF;
+            int fx16 = col * xstep;
+            int x0 = fx16 >> 16;
+            int x1 = x0 + 1;
+            if (x1 >= iw) x1 = iw - 1;
+            int fx = fx16 & 0xFFFF;
+            int ifx = 0x10000 - fx;
+            uint32_t c00 = pixels[y0 * iw + x0];
+            uint32_t c10 = pixels[y0 * iw + x1];
+            uint32_t c01 = pixels[y1 * iw + x0];
+            uint32_t c11 = pixels[y1 * iw + x1];
+            int a0 = (int)(((((c00>>24)&0xFF)*ifx + ((c10>>24)&0xFF)*fx) >> 16) * ify
+                         + ((((c01>>24)&0xFF)*ifx + ((c11>>24)&0xFF)*fx) >> 16) * fy) >> 16;
+            if (a0 <= 0) continue;
+            int r0 = (int)(((((c00>>16)&0xFF)*ifx + ((c10>>16)&0xFF)*fx) >> 16) * ify
+                         + ((((c01>>16)&0xFF)*ifx + ((c11>>16)&0xFF)*fx) >> 16) * fy) >> 16;
+            int g0 = (int)(((((c00>>8)&0xFF)*ifx + ((c10>>8)&0xFF)*fx) >> 16) * ify
+                         + ((((c01>>8)&0xFF)*ifx + ((c11>>8)&0xFF)*fx) >> 16) * fy) >> 16;
+            int b0 = (int)((((c00&0xFF)*ifx + (c10&0xFF)*fx) >> 16) * ify
+                         + (((c01&0xFF)*ifx + (c11&0xFF)*fx) >> 16) * fy) >> 16;
+            if (a0 >= 255) {
+                t->pixels[py * t->stride + px] =
+                    ((uint32_t)r0 << 16) | ((uint32_t)g0 << 8) | (uint32_t)b0;
             } else {
                 uint32_t bg = t->pixels[py * t->stride + px];
-                int ia = 255 - a;
-                int r = (int)DIV255((uint32_t)((p >> 16) & 0xFF) * (uint32_t)a + (uint32_t)((bg >> 16) & 0xFF) * (uint32_t)ia);
-                int g = (int)DIV255((uint32_t)((p >> 8) & 0xFF) * (uint32_t)a + (uint32_t)((bg >> 8) & 0xFF) * (uint32_t)ia);
-                int b = (int)DIV255((uint32_t)(p & 0xFF) * (uint32_t)a + (uint32_t)(bg & 0xFF) * (uint32_t)ia);
+                int ia = 255 - a0;
+                int r = (int)DIV255((uint32_t)r0 * (uint32_t)a0 + (uint32_t)((bg >> 16) & 0xFF) * (uint32_t)ia);
+                int g = (int)DIV255((uint32_t)g0 * (uint32_t)a0 + (uint32_t)((bg >> 8) & 0xFF) * (uint32_t)ia);
+                int b = (int)DIV255((uint32_t)b0 * (uint32_t)a0 + (uint32_t)(bg & 0xFF) * (uint32_t)ia);
                 t->pixels[py * t->stride + px] =
                     ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
             }
