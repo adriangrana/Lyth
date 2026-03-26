@@ -24,6 +24,7 @@
 #include "dhcp.h"
 #include "netif.h"
 #include "e1000.h"
+#include "wifi.h"
 #include "timer.h"
 #include "klog.h"
 
@@ -136,6 +137,10 @@ static void normal_boot_step(void) {
                 klog_write(KLOG_LEVEL_INFO, "init", "No link, skipping DHCP");
             }
         }
+
+        /* Initialise WiFi subsystem (virtual adapter over eth0) */
+        if (wifi_init() == 0)
+            klog_write(KLOG_LEVEL_INFO, "init", "WiFi adapter ready");
 
         current_boot_state = BOOT_STATE_SESSION;
         break;

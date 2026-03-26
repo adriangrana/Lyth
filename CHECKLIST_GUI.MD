@@ -581,6 +581,10 @@
       > gui/apps/taskman.c: procesos, PID, estado, prioridad, kill/force-close
 - [x] Centro de notificaciones
       > notify_paint() en compositor, auto-dismiss 4s, accent bar
+- [x] Configuración WiFi
+      > gui/apps/wificfg.c: scan redes, lista SSID con barras señal, password, connect/disconnect
+      > Driver WiFi virtual (drivers/net/wifi.c): wlan0 sobre eth0, scan simulado, WPA2
+      > Popup de red ampliado con sección WiFi y botón "Open WiFi Config"
 - [ ] App de actualizaciones
 - [x] Login/lock screen
       > gui/login.c: sky background, reloj grande, avatar, campo password

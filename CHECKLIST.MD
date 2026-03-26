@@ -163,6 +163,9 @@
 - [x] IPv4 (routing, checksum)
 - [x] Driver E1000 (Intel 82540EM)
 - [x] Comandos de red (ping, ifconfig, netstat, arp, dhcp, nslookup, nc)
+- [x] WiFi: driver virtual (wlan0), scan, connect, disconnect
+- [x] WiFi: GUI de configuración (scan, selección SSID, password, connect)
+- [x] WiFi: integración popup de red y launcher
 
 ## 13. Seguridad
 - [x] Separación kernel/user
@@ -237,3 +240,4 @@
 - [x] MQ con syscalls temporizadas de userland
 - [x] Gestión de errores (errno)
 - [x] Gestión de recursos (FD limits)
+
