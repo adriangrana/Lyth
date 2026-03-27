@@ -595,7 +595,9 @@
       > gui/apps/wificfg.c: scan redes, lista SSID con barras señal, password, connect/disconnect
       > Driver WiFi virtual (drivers/net/wifi.c): wlan0 sobre eth0, scan simulado, WPA2
       > Popup de red ampliado con sección WiFi y botón "Open WiFi Config"
-- [ ] App de actualizaciones
+- [x] App de actualizaciones
+      > gui/apps/updater.c: version card, check/download progress bar, changelog history
+      > Integrado en launcher (categoria SYS), Makefile, desktop.c
 - [x] Login/lock screen
       > gui/login.c: sky background, reloj grande, avatar, campo password
 
@@ -620,7 +622,9 @@
       > dialog_msgbox(type, title, message) en gui/dialog.c
       > MSGBOX_INFO (azul), MSGBOX_WARNING (amarillo), MSGBOX_ERROR (rojo)
       > Word-wrapped text, OK button, Enter/Escape dismiss, animated close
-- [ ] Actualizaciones
+- [x] Actualizaciones
+      > Updates app con estado (idle/checking/up-to-date/downloading/installed), progress bar animada
+      > Taskbar volume icon abre popup con slider, mute toggle, device list (Intel HDA)
 - [x] File picker
       > gui/dialog.c: Open/Save dialog con navegación directorios, filename entry
 

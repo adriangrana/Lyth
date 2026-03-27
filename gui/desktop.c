@@ -67,6 +67,7 @@ void calculator_app_open(void);
 void about_app_open(void);
 void viewer_app_open(void);
 void browser_app_open(void);
+void updater_app_open(void);
 
 static void power_shutdown(void) { acpi_shutdown(); }
 static void power_reboot(void) { acpi_reboot(); }
@@ -156,15 +157,23 @@ typedef struct {
     const uint32_t *icon_pixels_64;   /* 64x64 ARGB (hover/large) */
 } dock_item_t;
 
-/* ---- start menu / app launcher ---- */
-#define LAUNCHER_W      480
-#define LAUNCHER_H      560
+/* ---- start menu / app launcher (modern design) ---- */
+#define LAUNCHER_W      520      /* wider for breathing room */
+#define LAUNCHER_H      580      /* taller for better spacing */
 #define LAUNCHER_COLS   5
-#define LAUNCHER_ICON_SZ 48
-#define LAUNCHER_ICON_PAD 12
-#define LAUNCHER_CELL_W  ((LAUNCHER_W - 40) / LAUNCHER_COLS)
-#define LAUNCHER_CELL_H  72
+#define LAUNCHER_ICON_SZ 56      /* larger icons */
+#define LAUNCHER_ICON_PAD 16     /* more padding between icons */
+#define LAUNCHER_CELL_W  96      /* fixed cell width for clean grid */
+#define LAUNCHER_CELL_H  88      /* taller cells for labels */
 #define LAUNCHER_MAX     20
+
+/* Layout spacing constants (macOS/Win11 inspired) */
+#define LAUNCHER_PAD_X      24   /* horizontal padding */
+#define LAUNCHER_PAD_Y      20   /* vertical padding */
+#define LAUNCHER_HEADER_H   72   /* header section height */
+#define LAUNCHER_SEARCH_H   36   /* search bar height */
+#define LAUNCHER_SECTION_GAP 16  /* gap between sections */
+#define LAUNCHER_FOOTER_H   56   /* footer with system actions */
 
 /* App categories */
 #define CAT_CORE   0   /* Core apps */
@@ -271,6 +280,40 @@ static int net_popup_height(void) {
     /* Bottom padding + button */
     h += 8 + 30 + 8;
     return h;
+}
+
+/* ---- volume popup ---- */
+#define VOL_POPUP_W     280
+#define VOL_POPUP_BASE_H 80   /* mute icon + slider + device icon row */
+#define VOL_POPUP_DEV_ROW_H 28
+static int vol_popup_open;
+static int vol_popup_devlist;  /* 1 = device list expanded */
+static int vol_popup_slider_drag; /* 1 = dragging the volume slider */
+static int vol_popup_px;       /* cached popup X, set when opened */
+
+static int vol_popup_height(void) {
+    int h = VOL_POPUP_BASE_H;
+    if (vol_popup_devlist) {
+        /* One row per "device" + header */
+        h += VOL_POPUP_DEV_ROW_H + 8; /* header: "Dispositivo de salida" */
+        /* We always have exactly 1 device (Intel HDA) or 0 */
+        int state = audio_get_state();
+        if (state != AUDIO_STATE_NONE)
+            h += VOL_POPUP_DEV_ROW_H;
+        else
+            h += VOL_POPUP_DEV_ROW_H; /* "No devices" row */
+    }
+    return h;
+}
+
+static void close_vol_popup(void) {
+    if (!vol_popup_open) return;
+    int py = TASKBAR_H + 4;
+    int ph = vol_popup_height();
+    gui_dirty_add(vol_popup_px, py, VOL_POPUP_W, ph);
+    vol_popup_open = 0;
+    vol_popup_devlist = 0;
+    vol_popup_slider_drag = 0;
 }
 
 /* ---- power dialog ---- */
@@ -2082,6 +2125,152 @@ static void draw_net_popup(gui_surface_t* dst) {
         "Network Settings", COL_POPUP_TEXT, 0, 0);
 }
 
+/* ---- Volume popup ---- */
+
+static void draw_speaker_icon(gui_surface_t* dst, int ox, int oy,
+                               uint32_t col, int muted) {
+    /* Speaker cone */
+    gui_surface_fill(dst, ox, oy + 3, 3, 6, col);
+    gui_surface_fill(dst, ox + 3, oy + 1, 2, 10, col);
+    /* Sound waves (only if not muted) */
+    if (!muted) {
+        gui_surface_putpixel(dst, ox + 6, oy + 3, col);
+        gui_surface_putpixel(dst, ox + 7, oy + 2, col);
+        gui_surface_putpixel(dst, ox + 6, oy + 8, col);
+        gui_surface_putpixel(dst, ox + 7, oy + 9, col);
+        gui_surface_putpixel(dst, ox + 6, oy + 5, col);
+        gui_surface_putpixel(dst, ox + 6, oy + 6, col);
+    } else {
+        /* X mark for muted */
+        gui_surface_putpixel(dst, ox + 6, oy + 3, THEME_COL_ERROR);
+        gui_surface_putpixel(dst, ox + 7, oy + 4, THEME_COL_ERROR);
+        gui_surface_putpixel(dst, ox + 8, oy + 5, THEME_COL_ERROR);
+        gui_surface_putpixel(dst, ox + 7, oy + 6, THEME_COL_ERROR);
+        gui_surface_putpixel(dst, ox + 6, oy + 7, THEME_COL_ERROR);
+        gui_surface_putpixel(dst, ox + 8, oy + 3, THEME_COL_ERROR);
+        gui_surface_putpixel(dst, ox + 8, oy + 7, THEME_COL_ERROR);
+    }
+}
+
+static void draw_device_list_icon(gui_surface_t* dst, int ox, int oy,
+                                   uint32_t col) {
+    /* Simple chevron ">" arrow icon */
+    gui_surface_putpixel(dst, ox, oy, col);
+    gui_surface_putpixel(dst, ox + 1, oy + 1, col);
+    gui_surface_putpixel(dst, ox + 2, oy + 2, col);
+    gui_surface_putpixel(dst, ox + 3, oy + 3, col);
+    gui_surface_putpixel(dst, ox + 2, oy + 4, col);
+    gui_surface_putpixel(dst, ox + 1, oy + 5, col);
+    gui_surface_putpixel(dst, ox, oy + 6, col);
+}
+
+static void draw_vol_popup(gui_surface_t* dst) {
+    int px = vol_popup_px;
+    if (px < 4) px = 4;
+    int py = TASKBAR_H + 4;
+    int ph = vol_popup_height();
+    int muted = audio_get_mute();
+    int vol = audio_get_volume();
+
+    /* Background */
+    draw_rounded_rect_alpha(dst, px, py, VOL_POPUP_W, ph,
+                            THEME_RADIUS_MD, COL_POPUP_BG, 230);
+    /* Border */
+    alpha_blend_fill(dst, px, py, VOL_POPUP_W, 1, theme.border, 80);
+    alpha_blend_fill(dst, px, py + ph - 1, VOL_POPUP_W, 1, theme.border, 80);
+    alpha_blend_fill(dst, px, py, 1, ph, theme.border, 80);
+    alpha_blend_fill(dst, px + VOL_POPUP_W - 1, py, 1, ph, theme.border, 80);
+    /* Accent top line */
+    alpha_blend_fill(dst, px + 3, py, VOL_POPUP_W - 6, 1, THEME_COL_ACCENT, 50);
+
+    /* Title */
+    gui_surface_draw_string(dst, px + 10, py + 8, "Salida de sonido",
+                            COL_POPUP_TEXT, 0, 0);
+    gui_surface_hline(dst, px + 8, py + 8 + FONT_PSF_HEIGHT + 4,
+                      VOL_POPUP_W - 16, COL_POPUP_BORDER);
+
+    int ly = py + 8 + FONT_PSF_HEIGHT + 10;
+
+    /* ── Main control row: [mute icon] [slider] [device list icon] ── */
+    int row_h = 28;
+    int icon_y = ly + (row_h - 12) / 2;
+
+    /* Mute button area (left) */
+    {
+        uint32_t icon_col = muted ? THEME_COL_ERROR : COL_POPUP_TEXT;
+        draw_speaker_icon(dst, px + 12, icon_y, icon_col, muted);
+    }
+
+    /* Volume slider */
+    {
+        int sl_x = px + 32;
+        int sl_w = VOL_POPUP_W - 32 - 36;  /* leave room for device icon */
+        int sl_y = ly + row_h / 2 - 2;
+        int sl_h = 4;
+
+        /* Track background */
+        gui_surface_fill(dst, sl_x, sl_y, sl_w, sl_h, theme.surface1);
+        /* Fill */
+        int fill_w = (sl_w * vol) / 100;
+        if (fill_w > 0)
+            gui_surface_fill(dst, sl_x, sl_y, fill_w, sl_h, theme.accent);
+        /* Knob */
+        int knob_x = sl_x + fill_w - 4;
+        if (knob_x < sl_x) knob_x = sl_x;
+        gui_surface_fill(dst, knob_x, sl_y - 3, 8, sl_h + 6, theme.text);
+    }
+
+    /* Device list toggle button (right) */
+    {
+        uint32_t dcol = vol_popup_devlist ? theme.accent : COL_POPUP_DIM;
+        draw_device_list_icon(dst, px + VOL_POPUP_W - 20, icon_y + 2, dcol);
+    }
+
+    ly += row_h;
+
+    /* Volume percentage label */
+    {
+        char vbuf[8];
+        int vi = 0;
+        if (vol >= 100) { vbuf[vi++] = '1'; vbuf[vi++] = '0'; vbuf[vi++] = '0'; }
+        else if (vol >= 10) { vbuf[vi++] = (char)('0' + vol / 10); vbuf[vi++] = (char)('0' + vol % 10); }
+        else { vbuf[vi++] = (char)('0' + vol); }
+        vbuf[vi++] = '%'; vbuf[vi] = '\0';
+        int vw = vi * FONT_PSF_WIDTH;
+        gui_surface_draw_string(dst, px + 32 + ((VOL_POPUP_W - 32 - 36) - vw) / 2,
+                                ly + 2, vbuf, COL_POPUP_DIM, 0, 0);
+    }
+    ly += FONT_PSF_HEIGHT + 8;
+
+    /* ── Device list (if expanded) ── */
+    if (vol_popup_devlist) {
+        gui_surface_hline(dst, px + 8, ly, VOL_POPUP_W - 16, COL_POPUP_BORDER);
+        ly += 6;
+
+        gui_surface_draw_string(dst, px + 10, ly, "Dispositivo de salida",
+                                COL_POPUP_TEXT, 0, 0);
+        ly += VOL_POPUP_DEV_ROW_H;
+
+        int state = audio_get_state();
+        if (state != AUDIO_STATE_NONE) {
+            /* Show active device with check mark */
+            draw_rounded_rect_alpha(dst, px + 8, ly, VOL_POPUP_W - 16,
+                                    VOL_POPUP_DEV_ROW_H - 2,
+                                    THEME_RADIUS_SM, theme.accent, 30);
+            /* Speaker mini icon */
+            draw_speaker_icon(dst, px + 14, ly + (VOL_POPUP_DEV_ROW_H - 12) / 2,
+                              COL_POPUP_TEXT, 0);
+            gui_surface_draw_string(dst, px + 30,
+                                    ly + (VOL_POPUP_DEV_ROW_H - FONT_PSF_HEIGHT) / 2,
+                                    audio_backend_name(), COL_POPUP_TEXT, 0, 0);
+        } else {
+            gui_surface_draw_string(dst, px + 14,
+                                    ly + (VOL_POPUP_DEV_ROW_H - FONT_PSF_HEIGHT) / 2,
+                                    "Sin dispositivos", COL_POPUP_DIM, 0, 0);
+        }
+    }
+}
+
 static void open_start_menu(void) {
     start_menu_open = 1;
     menu_selected = 0;
@@ -2090,6 +2279,7 @@ static void open_start_menu(void) {
     launcher_cache_invalidate();
     close_context_menu();
     close_net_popup();
+    close_vol_popup();
     {
         int lx = (sw - LAUNCHER_W) / 2;
         int ly = sh - DOCK_H - LAUNCHER_H - 8;
@@ -2264,6 +2454,7 @@ void desktop_init(int screen_w, int screen_h) {
     ADD_LAUNCHER("Task Mgr",    taskman_app_open,     COL_ICON_TASKMAN,  'T', 0, 0, 0, 0, CAT_SYS);
     ADD_LAUNCHER("Sys Info",    sysinfo_app_open,     COL_ICON_SYSINFO,  'I', 0, 0, 0, 0, CAT_SYS);
     ADD_LAUNCHER("About",       about_app_open,       COL_ICON_ABOUT,    'A', icon_lyth_pixels, icon_lyth_24_pixels, icon_lyth_64_pixels, 0, CAT_SYS);
+    ADD_LAUNCHER("Updates",     updater_app_open,     0x40A02B,          'U', 0, 0, 0, 0, CAT_SYS);
 
 #undef ADD_LAUNCHER
 
@@ -2346,6 +2537,28 @@ void desktop_paint_region(gui_surface_t* dst, int x0, int y0, int x1, int y1) {
                            (size_t)(ax1 - ax0) * 4);
             }
             draw_net_popup(dst);
+        }
+    }
+
+    /* overlay volume popup if open and intersects dirty region */
+    if (vol_popup_open) {
+        int vpx = vol_popup_px;
+        int vpy = TASKBAR_H + 4;
+        int vph = vol_popup_height();
+        if (!(vpx + VOL_POPUP_W <= x0 || x1 <= vpx ||
+              vpy + vph <= y0 || y1 <= vpy)) {
+            {
+                int ax0 = vpx, ay0 = vpy;
+                int ax1 = vpx + VOL_POPUP_W, ay1 = vpy + vph;
+                int ar;
+                if (ax0 < 0) ax0 = 0; if (ay0 < 0) ay0 = 0;
+                if (ax1 > sw) ax1 = sw; if (ay1 > sh) ay1 = sh;
+                for (ar = ay0; ar < ay1; ar++)
+                    memcpy(&dst->pixels[ar * dst->stride + ax0],
+                           &desk_surf.pixels[ar * sw + ax0],
+                           (size_t)(ax1 - ax0) * 4);
+            }
+            draw_vol_popup(dst);
         }
     }
 
@@ -2839,6 +3052,61 @@ int desktop_handle_click(int mx, int my, int button) {
     if (power_dlg_open)
         return power_dialog_handle_click(mx, my, button);
 
+    /* handle volume popup clicks */
+    if (vol_popup_open) {
+        int vpx = vol_popup_px;
+        int vpy = TASKBAR_H + 4;
+        int vph = vol_popup_height();
+        if (mx >= vpx && mx < vpx + VOL_POPUP_W &&
+            my >= vpy && my < vpy + vph) {
+            if (button == 1) {
+                int ly = vpy + 8 + FONT_PSF_HEIGHT + 10;
+                int row_h = 28;
+
+                /* Mute icon hit area (left side) */
+                if (mx >= vpx + 4 && mx < vpx + 30 &&
+                    my >= ly && my < ly + row_h) {
+                    audio_set_mute(!audio_get_mute());
+                    desk_valid = 0;
+                    gui_dirty_add(vpx, vpy, VOL_POPUP_W, vph);
+                    return 1;
+                }
+
+                /* Volume slider hit area */
+                {
+                    int sl_x = vpx + 32;
+                    int sl_w = VOL_POPUP_W - 32 - 36;
+                    if (mx >= sl_x && mx < sl_x + sl_w &&
+                        my >= ly && my < ly + row_h) {
+                        int new_vol = ((mx - sl_x) * 100) / sl_w;
+                        if (new_vol < 0) new_vol = 0;
+                        if (new_vol > 100) new_vol = 100;
+                        audio_set_volume(new_vol);
+                        if (audio_get_mute() && new_vol > 0)
+                            audio_set_mute(0);
+                        desk_valid = 0;
+                        gui_dirty_add(vpx, vpy, VOL_POPUP_W, vph);
+                        return 1;
+                    }
+                }
+
+                /* Device list toggle icon (right side) */
+                if (mx >= vpx + VOL_POPUP_W - 28 && mx < vpx + VOL_POPUP_W &&
+                    my >= ly && my < ly + row_h) {
+                    int old_h = vph;
+                    vol_popup_devlist = !vol_popup_devlist;
+                    int new_h = vol_popup_height();
+                    int max_h = old_h > new_h ? old_h : new_h;
+                    gui_dirty_add(vpx, vpy, VOL_POPUP_W, max_h);
+                    return 1;
+                }
+            }
+            return 1;  /* consume click inside popup */
+        }
+        /* Click outside popup → close */
+        close_vol_popup();
+    }
+
     /* handle net popup clicks */
     if (net_popup_open) {
         int px = sw - NET_POPUP_W - 8;
@@ -3149,6 +3417,7 @@ int desktop_handle_click(int mx, int my, int button) {
             if (mx >= tray_net_x && mx < tray_net_x + 20 && button == 1) {
                 close_start_menu();
                 close_context_menu();
+                close_vol_popup();
                 if (net_popup_open) {
                     close_net_popup();
                 } else {
@@ -3164,16 +3433,23 @@ int desktop_handle_click(int mx, int my, int button) {
             }
         }
 
-        /* Volume icon: left-click toggles mute, scroll changes volume */
+        /* Volume icon: left-click opens volume popup */
         {
             if (mx >= tray_vol_x && mx < tray_vol_x + 20 && button == 1) {
-                audio_set_mute(!audio_get_mute());
-                int vol = audio_get_volume();
-                if (audio_get_mute())
-                    osd_show('M', "Muted", 0);
-                else
-                    osd_show('V', "Volume", vol);
-                desk_valid = 0;
+                close_start_menu();
+                close_context_menu();
+                close_net_popup();
+                if (vol_popup_open) {
+                    close_vol_popup();
+                } else {
+                    vol_popup_open = 1;
+                    vol_popup_devlist = 0;
+                    vol_popup_slider_drag = 0;
+                    vol_popup_px = tray_vol_x - VOL_POPUP_W + 20;
+                    if (vol_popup_px < 4) vol_popup_px = 4;
+                    int vpy = TASKBAR_H + 4;
+                    gui_dirty_add(vol_popup_px, vpy, VOL_POPUP_W, vol_popup_height());
+                }
                 return 1;
             }
         }
