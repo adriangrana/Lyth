@@ -7,6 +7,7 @@
 #include "physmem.h"
 #include "timer.h"
 #include "utf8.h"
+#include "emoji_font.h"
 
 static gui_window_t windows[GUI_MAX_WINDOWS];
 static int window_used[GUI_MAX_WINDOWS];
@@ -111,18 +112,102 @@ void gui_surface_draw_char(gui_surface_t* s, int x, int y, unsigned char ch,
     }
 }
 
+/* Draw a single Unicode codepoint: emoji bitmap if available, CP437 fallback otherwise. */
+static void draw_codepoint(gui_surface_t* s, int x, int y, uint32_t cp,
+                           uint32_t fg, uint32_t bg, int draw_bg) {
+    const uint8_t* em;
+    int row, col;
+    uint8_t bits;
+
+    /* Try emoji table first for non-ASCII */
+    if (cp >= 0x80) {
+        em = emoji_lookup(cp);
+        if (em) {
+            if (x + EMOJI_GLYPH_W <= 0 || x >= s->width ||
+                y + EMOJI_GLYPH_H <= 0 || y >= s->height) return;
+            for (row = 0; row < EMOJI_GLYPH_H; row++) {
+                int py = y + row;
+                if (py < 0 || py >= s->height) continue;
+                bits = em[row];
+                uint32_t* dst = &s->pixels[py * s->stride];
+                for (col = 0; col < EMOJI_GLYPH_W; col++) {
+                    int px = x + col;
+                    if (px < 0 || px >= s->width) continue;
+                    if (bits & (0x80u >> col))
+                        dst[px] = fg;
+                    else if (draw_bg)
+                        dst[px] = bg;
+                }
+            }
+            return;
+        }
+    }
+
+    /* Fallback: CP437 glyph */
+    gui_surface_draw_char(s, x, y, (unsigned char)unicode_to_cp437(cp), fg, bg, draw_bg);
+}
+
+/* Draw a 2x antialiased emoji glyph or 2x AA CP437 glyph for a codepoint. */
+static void draw_codepoint_2x_aa(gui_surface_t* s, int x, int y, uint32_t cp,
+                                  uint32_t fg, uint32_t bg, int draw_bg) {
+    const uint8_t* em;
+    int row, col;
+    uint8_t bits_row, bits_above, bits_left;
+
+    if (cp >= 0x80) {
+        em = emoji_lookup(cp);
+        if (em) {
+            /* Scale2x-style 2x emoji rendering */
+            if (x + EMOJI_GLYPH_W * 2 <= 0 || x >= s->width ||
+                y + EMOJI_GLYPH_H * 2 <= 0 || y >= s->height) return;
+            for (row = 0; row < EMOJI_GLYPH_H; row++) {
+                bits_row   = em[row];
+                bits_above = (row > 0) ? em[row - 1] : 0;
+                for (col = 0; col < EMOJI_GLYPH_W; col++) {
+                    int px = x + col * 2;
+                    int py = y + row * 2;
+                    int P = (bits_row   >> (7 - col)) & 1;
+                    int A = (bits_above >> (7 - col)) & 1;
+                    int B = (row < EMOJI_GLYPH_H - 1) ? ((em[row+1] >> (7 - col)) & 1) : 0;
+                    int C = col > 0 ? ((bits_row >> (8 - col)) & 1) : 0;
+                    int D = col < EMOJI_GLYPH_W - 1 ? ((bits_row >> (6 - col)) & 1) : 0;
+                    int E = (C == A && C != B && A != D) ? A : P;
+                    int F = (A == D && A != C && D != B) ? D : P;
+                    int G = (C == B && C != A && B != D) ? B : P;
+                    int H = (B == D && B != A && D != C) ? D : P;
+                    uint32_t cE = E ? fg : (draw_bg ? bg : 0);
+                    uint32_t cF = F ? fg : (draw_bg ? bg : 0);
+                    uint32_t cG = G ? fg : (draw_bg ? bg : 0);
+                    uint32_t cH = H ? fg : (draw_bg ? bg : 0);
+                    if (px >= 0 && py >= 0 && px < s->width && py < s->height)
+                        s->pixels[py * s->stride + px] = cE;
+                    if (px+1 >= 0 && py >= 0 && px+1 < s->width && py < s->height)
+                        s->pixels[py * s->stride + px + 1] = cF;
+                    if (px >= 0 && py+1 >= 0 && px < s->width && py+1 < s->height)
+                        s->pixels[(py+1) * s->stride + px] = cG;
+                    if (px+1 >= 0 && py+1 >= 0 && px+1 < s->width && py+1 < s->height)
+                        s->pixels[(py+1) * s->stride + px + 1] = cH;
+                }
+            }
+            (void)bits_left;
+            return;
+        }
+    }
+
+    gui_surface_draw_char_2x_aa(s, x, y,
+        (unsigned char)unicode_to_cp437(cp), fg, bg, draw_bg);
+}
+
 void gui_surface_draw_string(gui_surface_t* s, int x, int y, const char* str,
                              uint32_t fg, uint32_t bg, int draw_bg) {
     const unsigned char* p = (const unsigned char*)str;
     int advance;
     uint32_t cp;
-    unsigned int glyph;
-    if (!str) return;
+    if (!str || !s || !s->pixels) return;
     while (*p) {
         advance = utf8_decode_one(p, &cp);
         if (advance <= 0) { p++; continue; }
-        glyph = unicode_to_cp437(cp);
-        gui_surface_draw_char(s, x, y, (unsigned char)glyph, fg, bg, draw_bg);
+        draw_codepoint(s, x, y, cp, fg, bg, draw_bg);
         x += FONT_PSF_WIDTH;
         p += advance;
     }
@@ -133,13 +218,11 @@ void gui_surface_draw_string_n(gui_surface_t* s, int x, int y, const char* str,
     const unsigned char* p = (const unsigned char*)str;
     int i = 0, advance;
     uint32_t cp;
-    unsigned int glyph;
-    if (!str) return;
+    if (!str || !s || !s->pixels) return;
     while (*p && i < max_chars) {
         advance = utf8_decode_one(p, &cp);
         if (advance <= 0) { p++; i++; continue; }
-        glyph = unicode_to_cp437(cp);
-        gui_surface_draw_char(s, x, y, (unsigned char)glyph, fg, bg, draw_bg);
+        draw_codepoint(s, x, y, cp, fg, bg, draw_bg);
         x += FONT_PSF_WIDTH;
         p += advance;
         i++;
@@ -183,13 +266,11 @@ void gui_surface_draw_string_2x(gui_surface_t* s, int x, int y, const char* str,
     const unsigned char* p = (const unsigned char*)str;
     int advance;
     uint32_t cp;
-    unsigned int glyph;
-    if (!str) return;
+    if (!str || !s || !s->pixels) return;
     while (*p) {
         advance = utf8_decode_one(p, &cp);
         if (advance <= 0) { p++; continue; }
-        glyph = unicode_to_cp437(cp);
-        gui_surface_draw_char_2x(s, x, y, (unsigned char)glyph, fg, bg, draw_bg);
+        draw_codepoint_2x_aa(s, x, y, cp, fg, bg, draw_bg);
         x += FONT_PSF_WIDTH * 2;
         p += advance;
     }
@@ -293,19 +374,8 @@ void gui_surface_draw_char_2x_aa(gui_surface_t* s, int x, int y, unsigned char c
 
 void gui_surface_draw_string_2x_aa(gui_surface_t* s, int x, int y, const char* str,
                                     uint32_t fg, uint32_t bg, int draw_bg) {
-    const unsigned char* p = (const unsigned char*)str;
-    int advance;
-    uint32_t cp;
-    unsigned int glyph;
-    if (!str) return;
-    while (*p) {
-        advance = utf8_decode_one(p, &cp);
-        if (advance <= 0) { p++; continue; }
-        glyph = unicode_to_cp437(cp);
-        gui_surface_draw_char_2x_aa(s, x, y, (unsigned char)glyph, fg, bg, draw_bg);
-        x += FONT_PSF_WIDTH * 2;
-        p += advance;
-    }
+    /* draw_string_2x already uses draw_codepoint_2x_aa — this is an alias */
+    gui_surface_draw_string_2x(s, x, y, str, fg, bg, draw_bg);
 }
 
 void gui_surface_blit(gui_surface_t* dst, int dx, int dy,

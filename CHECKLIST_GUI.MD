@@ -63,7 +63,10 @@
 - [x] Unicode sólido
       > All draw_string functions UTF-8 aware via utf8_decode_one() + unicode_to_cp437()
       > Spanish accented chars (á,é,í,ó,ú,ñ,¡,¿), arrows, math symbols all render correctly
-- [ ] Emoji support
+- [x] Emoji support
+      > emoji_font.h: 24 monochrome 8×16 emoji bitmaps (✅❌⚠️🔔📁💾🖥️⚙️🔑🔊🌐📡👤💻📝🔍 and more)
+      > draw_codepoint() checks emoji table before CP437 fallback; all string fns use it
+      > Scale2x antialiasing applied to 2x emoji rendering via draw_codepoint_2x_aa()
 
 ## FASE 2 — Shell de Escritorio
 
