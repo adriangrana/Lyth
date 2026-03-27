@@ -831,9 +831,9 @@ static void brw_paint(gui_window_t *win) {
             line_h = FONT_PSF_HEIGHT * 2 + LINE_SPACING;
             int ty = cy;
             if (ty + line_h > content_y && ty < content_y + content_h) {
-                /* Draw heading text at 2x scale */
-                gui_surface_draw_string_2x(s, l->x_offset, ty,
-                                           l->text, COL_HEADING, 0, 0);
+                /* Draw heading text at 2x scale with antialiasing */
+                gui_surface_draw_string_2x_aa(s, l->x_offset, ty,
+                                             l->text, COL_HEADING, 0, 0);
             }
         } else {
             line_h = FONT_PSF_HEIGHT + LINE_SPACING;

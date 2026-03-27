@@ -119,14 +119,14 @@ static void upd_paint(gui_window_t* win) {
     {
         const char* title = "System Updates";
         int tw = str_length(title) * THEME_TYPO_TITLE_W;
-        gui_surface_draw_string_2x(s, (w - tw) / 2, y, title, COL_ACCENT, 0, 0);
+        gui_surface_draw_string_2x_aa(s, (w - tw) / 2, y, title, COL_ACCENT, 0, 0);
         y += THEME_TYPO_TITLE_H + 8;
     }
 
     /* Current version card */
     upd_draw_card(s, PAD, y, w - 2 * PAD, 56, COL_PANEL, COL_BORDER);
     gui_surface_draw_string(s, PAD + 12, y + 8, "Version actual", COL_LABEL, 0, 0);
-    gui_surface_draw_string_2x(s, PAD + 12, y + 24, LYTH_KERNEL_PRETTY_NAME,
+    gui_surface_draw_string_2x_aa(s, PAD + 12, y + 24, LYTH_KERNEL_PRETTY_NAME,
                                COL_TEXT, 0, 0);
     y += 56 + 10;
 
@@ -181,7 +181,7 @@ static void upd_paint(gui_window_t* win) {
     y += 12;
 
     /* Changelog */
-    gui_surface_draw_string_2x(s, PAD, y, "Historial de cambios", COL_ACCENT, 0, 0);
+    gui_surface_draw_string_2x_aa(s, PAD, y, "Historial de cambios", COL_ACCENT, 0, 0);
     y += THEME_TYPO_SUBTITLE_H + 8;
 
     {

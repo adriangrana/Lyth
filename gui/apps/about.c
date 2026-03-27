@@ -71,7 +71,7 @@ static void ab_paint(gui_window_t* win) {
     {
         const char* logo = LYTH_KERNEL_NAME;
         int lw = str_length(logo) * THEME_TYPO_TITLE_W;
-        gui_surface_draw_string_2x(s, (w - lw) / 2, y, logo, COL_AB_LOGO, 0, 0);
+        gui_surface_draw_string_2x_aa(s, (w - lw) / 2, y, logo, COL_AB_LOGO, 0, 0);
         y += THEME_TYPO_TITLE_H + 4;
     }
     {
@@ -92,7 +92,7 @@ static void ab_paint(gui_window_t* win) {
     y += 12;
 
     /* Section: Hardware — 2x subtitle */
-    gui_surface_draw_string_2x(s, AB_PAD, y, "Hardware", COL_AB_ACCENT, 0, 0);
+    gui_surface_draw_string_2x_aa(s, AB_PAD, y, "Hardware", COL_AB_ACCENT, 0, 0);
     y += THEME_TYPO_SUBTITLE_H + 6;
 
     /* Display */
@@ -175,7 +175,7 @@ static void ab_paint(gui_window_t* win) {
     y += 12;
 
     /* Section: System — 2x subtitle */
-    gui_surface_draw_string_2x(s, AB_PAD, y, "System", COL_AB_ACCENT, 0, 0);
+    gui_surface_draw_string_2x_aa(s, AB_PAD, y, "System", COL_AB_ACCENT, 0, 0);
     y += THEME_TYPO_SUBTITLE_H + 6;
 
     /* Uptime */

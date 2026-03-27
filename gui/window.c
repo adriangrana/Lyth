@@ -6,6 +6,7 @@
 #include "string.h"
 #include "physmem.h"
 #include "timer.h"
+#include "utf8.h"
 
 static gui_window_t windows[GUI_MAX_WINDOWS];
 static int window_used[GUI_MAX_WINDOWS];
@@ -112,22 +113,35 @@ void gui_surface_draw_char(gui_surface_t* s, int x, int y, unsigned char ch,
 
 void gui_surface_draw_string(gui_surface_t* s, int x, int y, const char* str,
                              uint32_t fg, uint32_t bg, int draw_bg) {
+    const unsigned char* p = (const unsigned char*)str;
+    int advance;
+    uint32_t cp;
+    unsigned int glyph;
     if (!str) return;
-    while (*str) {
-        gui_surface_draw_char(s, x, y, (unsigned char)*str, fg, bg, draw_bg);
+    while (*p) {
+        advance = utf8_decode_one(p, &cp);
+        if (advance <= 0) { p++; continue; }
+        glyph = unicode_to_cp437(cp);
+        gui_surface_draw_char(s, x, y, (unsigned char)glyph, fg, bg, draw_bg);
         x += FONT_PSF_WIDTH;
-        str++;
+        p += advance;
     }
 }
 
 void gui_surface_draw_string_n(gui_surface_t* s, int x, int y, const char* str,
                                int max_chars, uint32_t fg, uint32_t bg, int draw_bg) {
-    int i = 0;
+    const unsigned char* p = (const unsigned char*)str;
+    int i = 0, advance;
+    uint32_t cp;
+    unsigned int glyph;
     if (!str) return;
-    while (*str && i < max_chars) {
-        gui_surface_draw_char(s, x, y, (unsigned char)*str, fg, bg, draw_bg);
+    while (*p && i < max_chars) {
+        advance = utf8_decode_one(p, &cp);
+        if (advance <= 0) { p++; i++; continue; }
+        glyph = unicode_to_cp437(cp);
+        gui_surface_draw_char(s, x, y, (unsigned char)glyph, fg, bg, draw_bg);
         x += FONT_PSF_WIDTH;
-        str++;
+        p += advance;
         i++;
     }
 }
@@ -166,11 +180,131 @@ void gui_surface_draw_char_2x(gui_surface_t* s, int x, int y, unsigned char ch,
 
 void gui_surface_draw_string_2x(gui_surface_t* s, int x, int y, const char* str,
                                  uint32_t fg, uint32_t bg, int draw_bg) {
+    const unsigned char* p = (const unsigned char*)str;
+    int advance;
+    uint32_t cp;
+    unsigned int glyph;
     if (!str) return;
-    while (*str) {
-        gui_surface_draw_char_2x(s, x, y, (unsigned char)*str, fg, bg, draw_bg);
+    while (*p) {
+        advance = utf8_decode_one(p, &cp);
+        if (advance <= 0) { p++; continue; }
+        glyph = unicode_to_cp437(cp);
+        gui_surface_draw_char_2x(s, x, y, (unsigned char)glyph, fg, bg, draw_bg);
         x += FONT_PSF_WIDTH * 2;
-        str++;
+        p += advance;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Antialiased 2x text (grayscale edge smoothing)                     */
+/* ------------------------------------------------------------------ */
+
+/* Blend two XRGB colours at alpha 0-255 where alpha=255 → 100% a. */
+static uint32_t blend2(uint32_t a, uint32_t b, int alpha) {
+    int inv = 255 - alpha;
+    unsigned int ra = (a >> 16) & 0xFF, ga = (a >> 8) & 0xFF, ba2 = a & 0xFF;
+    unsigned int rb = (b >> 16) & 0xFF, gb = (b >> 8) & 0xFF, bb2 = b & 0xFF;
+    unsigned int rr = (ra * alpha + rb * inv) / 255;
+    unsigned int gr = (ga * alpha + gb * inv) / 255;
+    unsigned int br = (ba2 * alpha + bb2 * inv) / 255;
+    return 0xFF000000u | (rr << 16) | (gr << 8) | br;
+}
+
+/* Map a glyph bit: returns 1 if pixel (col,row) of ch is set, else 0.
+   Out-of-bounds treated as 0. */
+static int glyph_bit(unsigned char ch, int col, int row) {
+    if (col < 0 || col >= FONT_PSF_WIDTH || row < 0 || row >= FONT_PSF_HEIGHT)
+        return 0;
+    return (font_psf_data[ch][row] >> (7 - col)) & 1;
+}
+
+/*
+ * Antialiased 2x character rendering using Scale2x-inspired edge blending.
+ *
+ * Each source pixel (col, row) expands to 4 output pixels:
+ *
+ *   E F   where E=TL, F=TR, G=BL, H=BR
+ *   G H
+ *
+ * Scale2x rules (adapted for 1-bit source):
+ *   given neighbourhood:
+ *       A
+ *     C P D
+ *       B
+ *   E = (C==A && C!=B && A!=D) ? A : P
+ *   F = (A==D && A!=C && D!=B) ? D : P
+ *   G = (C==B && C!=A && B!=D) ? B : P
+ *   H = (B==D && B!=A && B!=C) ? D : P   [corrected: B==D && ...]
+ *
+ * This removes jagged aliasing on diagonal strokes.
+ */
+void gui_surface_draw_char_2x_aa(gui_surface_t* s, int x, int y, unsigned char ch,
+                                  uint32_t fg, uint32_t bg, int draw_bg) {
+    int row, col;
+    if (!s || !s->pixels) return;
+    if (ch >= FONT_PSF_GLYPH_COUNT) ch = '?';
+    if (x + FONT_PSF_WIDTH * 2 <= 0 || x >= s->width ||
+        y + FONT_PSF_HEIGHT * 2 <= 0 || y >= s->height) return;
+
+    for (row = 0; row < FONT_PSF_HEIGHT; row++) {
+        for (col = 0; col < FONT_PSF_WIDTH; col++) {
+            int px = x + col * 2;
+            int py = y + row * 2;
+            if (px + 1 >= s->width || py + 1 >= s->height) continue;
+            if (px < -1 || py < -1) continue;
+
+            int P = glyph_bit(ch, col,     row);
+            int A = glyph_bit(ch, col,     row - 1);
+            int B = glyph_bit(ch, col,     row + 1);
+            int C = glyph_bit(ch, col - 1, row);
+            int D = glyph_bit(ch, col + 1, row);
+
+            /* Scale2x sub-pixel assignments */
+            int E = (C == A && C != B && A != D) ? A : P;
+            int F = (A == D && A != C && D != B) ? D : P;
+            int G = (C == B && C != A && B != D) ? B : P;
+            int H = (B == D && B != A && D != C) ? D : P;
+
+            uint32_t col_E = E ? fg : (draw_bg ? bg : 0);
+            uint32_t col_F = F ? fg : (draw_bg ? bg : 0);
+            uint32_t col_G = G ? fg : (draw_bg ? bg : 0);
+            uint32_t col_H = H ? fg : (draw_bg ? bg : 0);
+
+            /* Also blend original pixel edge transitions for smoother diagonals */
+            if (!P && (A || B || C || D)) {
+                /* Edge pixel: blend at 25% fg for soft anti-alias fringe */
+                col_E = blend2(fg, draw_bg ? bg : s->pixels[py       * s->stride + px    ], (E ? 255 : (C || A ? 48 : 0)));
+                col_F = blend2(fg, draw_bg ? bg : s->pixels[py       * s->stride + px + 1], (F ? 255 : (D || A ? 48 : 0)));
+                col_G = blend2(fg, draw_bg ? bg : s->pixels[(py + 1) * s->stride + px    ], (G ? 255 : (C || B ? 48 : 0)));
+                col_H = blend2(fg, draw_bg ? bg : s->pixels[(py + 1) * s->stride + px + 1], (H ? 255 : (D || B ? 48 : 0)));
+            }
+
+            if (px >= 0 && py >= 0 && px < s->width && py < s->height)
+                s->pixels[py * s->stride + px] = col_E;
+            if (px + 1 >= 0 && py >= 0 && px + 1 < s->width && py < s->height)
+                s->pixels[py * s->stride + px + 1] = col_F;
+            if (px >= 0 && py + 1 >= 0 && px < s->width && py + 1 < s->height)
+                s->pixels[(py + 1) * s->stride + px] = col_G;
+            if (px + 1 >= 0 && py + 1 >= 0 && px + 1 < s->width && py + 1 < s->height)
+                s->pixels[(py + 1) * s->stride + px + 1] = col_H;
+        }
+    }
+}
+
+void gui_surface_draw_string_2x_aa(gui_surface_t* s, int x, int y, const char* str,
+                                    uint32_t fg, uint32_t bg, int draw_bg) {
+    const unsigned char* p = (const unsigned char*)str;
+    int advance;
+    uint32_t cp;
+    unsigned int glyph;
+    if (!str) return;
+    while (*p) {
+        advance = utf8_decode_one(p, &cp);
+        if (advance <= 0) { p++; continue; }
+        glyph = unicode_to_cp437(cp);
+        gui_surface_draw_char_2x_aa(s, x, y, (unsigned char)glyph, fg, bg, draw_bg);
+        x += FONT_PSF_WIDTH * 2;
+        p += advance;
     }
 }
 

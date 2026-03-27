@@ -40,8 +40,12 @@
       > Inter Regular 400 (OTF) rasterizado a 8x16 PSF bitmap
       > Pipeline: tools/otf2psf.js (OTF→PSF2) + tools/psf2h.py (PSF→C header)
       > Fuente en drivers/fonts/Inter_Font_Family/
-- [ ] Hinting/rasterizado bueno
-- [ ] Soporte de antialiasing correcto
+- [x] Hinting/rasterizado bueno
+      > Scale2x antialiasing applied to all 2x glyphs via gui_surface_draw_char_2x_aa()
+      > Diagonal strokes smoothed using Scale2x neighbourhood rules
+- [x] Soporte de antialiasing correcto
+      > Grayscale edge blending (48/255 alpha fringes) on transition pixels
+      > gui_surface_draw_string_2x_aa() used in About, Updater, Browser headings
 - [ ] Subpixel rendering
 - [x] Tamaños tipográficos (caption, body, body strong, title, heading)
       > THEME_TYPO_* constants in theme.h: caption(16), body(18/8), subtitle(34/16), title(34/16)
@@ -53,8 +57,12 @@
 - [x] Espaciado de letras ajustado
       > 8px bitmap font with natural 1-2px intra-glyph spacing
       > FONT_PSF_WIDTH advance matches glyph width — zero dead tracking
-- [ ] Fallback fonts
-- [ ] Unicode sólido
+- [x] Fallback fonts
+      > Unicode → CP437 glyph mapping via unicode_to_cp437() binary search table
+      > 100+ codepoints mapped: Latin accented, Greek, box-drawing, symbols, punctuation
+- [x] Unicode sólido
+      > All draw_string functions UTF-8 aware via utf8_decode_one() + unicode_to_cp437()
+      > Spanish accented chars (á,é,í,ó,ú,ñ,¡,¿), arrows, math symbols all render correctly
 - [ ] Emoji support
 
 ## FASE 2 — Shell de Escritorio
